@@ -1,0 +1,22 @@
+{
+  "fill": {
+    "automatic-gradient": "srgb:0.98824,0.94118,0.86667,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "bubble.png",
+          "name": "bubble"
+        },
+        {
+          "image-name": "capy.png",
+          "name": "capy"
+        }
+      ]
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

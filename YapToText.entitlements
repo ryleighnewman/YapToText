@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- YapToText ships SANDBOXED so it is eligible for the Mac App Store and is
+	     positioned as an accessibility (assistive voice input) tool. System-wide text
+	     insertion still works because TextInserter posts synthetic key events to the HID
+	     event tap (.cghidEventTap), which the sandbox permits and which injects below the
+	     WindowServer's Accessibility-trust filter (the same technique Karabiner /
+	     BetterMouse / InputConfig use). Because of that, Accessibility permission is
+	     OPTIONAL: dictation + insertion work without it; granting it only unlocks reading
+	     selected text and richer per-app context. For the non-sandboxed Developer ID
+	     variant (which can also read other apps' UI via the Accessibility API), set
+	     app-sandbox to false. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Microphone: the one required permission (to hear you). -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- Download optional speech / language models. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Export history and import model files the user picks. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+</dict>
+</plist>

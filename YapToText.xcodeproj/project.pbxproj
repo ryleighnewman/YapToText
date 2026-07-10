@@ -1,0 +1,418 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		2B000000000000000000000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1A0000000000000000000008;
+			remoteInfo = YapToText;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1A000000000000000000000F /* YapToText.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = YapToText.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2B0000000000000000000005 /* YapToTextTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = YapToTextTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		1A0000000000000000000007 /* YapToText */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = YapToText;
+			sourceTree = "<group>";
+		};
+		2B0000000000000000000006 /* YapToTextTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = YapToTextTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXBuildFile section */
+		3C0000000000000000000002 /* whisper in Frameworks */ = {isa = PBXBuildFile; productRef = 3C0000000000000000000001 /* whisper */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A000000000000000000000D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3C0000000000000000000002 /* whisper in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2B0000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A0000000000000000000005 = {
+			isa = PBXGroup;
+			children = (
+				1A0000000000000000000007 /* YapToText */,
+				2B0000000000000000000006 /* YapToTextTests */,
+				1A0000000000000000000006 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A0000000000000000000006 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A000000000000000000000F /* YapToText.app */,
+				2B0000000000000000000005 /* YapToTextTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A0000000000000000000008 /* YapToText */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000000009 /* Build configuration list for PBXNativeTarget "YapToText" */;
+			buildPhases = (
+				1A000000000000000000000C /* Sources */,
+				1A000000000000000000000D /* Frameworks */,
+				1A000000000000000000000E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1A0000000000000000000007 /* YapToText */,
+			);
+			name = YapToText;
+			packageProductDependencies = (
+				3C0000000000000000000001 /* whisper */,
+			);
+			productName = YapToText;
+			productReference = 1A000000000000000000000F /* YapToText.app */;
+			productType = "com.apple.product-type.application";
+		};
+		2B0000000000000000000001 /* YapToTextTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2B0000000000000000000002 /* Build configuration list for PBXNativeTarget "YapToTextTests" */;
+			buildPhases = (
+				2B0000000000000000000007 /* Sources */,
+				2B0000000000000000000008 /* Frameworks */,
+				2B0000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2B000000000000000000000B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				2B0000000000000000000006 /* YapToTextTests */,
+			);
+			name = YapToTextTests;
+			packageProductDependencies = (
+			);
+			productName = YapToTextTests;
+			productReference = 2B0000000000000000000005 /* YapToTextTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					1A0000000000000000000008 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					2B0000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 1A0000000000000000000008;
+					};
+				};
+			};
+			buildConfigurationList = 1A0000000000000000000002 /* Build configuration list for PBXProject "YapToText" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1A0000000000000000000005;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1A0000000000000000000006 /* Products */;
+			packageReferences = (
+				3C0000000000000000000000 /* XCLocalSwiftPackageReference "Vendor/whisper.cpp" */,
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1A0000000000000000000008 /* YapToText */,
+				2B0000000000000000000001 /* YapToTextTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A000000000000000000000E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2B0000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A000000000000000000000C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2B0000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2B000000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1A0000000000000000000008 /* YapToText */;
+			targetProxy = 2B000000000000000000000A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1A0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1A0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		1A000000000000000000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = YapToText.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGNING_REQUIRED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65JK8K8VGM;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "YapToText, an assistive input tool, types your dictated text into whatever app you are using.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "YapToText is an assistive voice-input tool that uses the microphone to turn your speech into text, entirely on device.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "YapToText uses on-device speech recognition to provide voice typing as an accessibility input method.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryleighnewman.YapToText;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		1A000000000000000000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = YapToText.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGNING_REQUIRED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 65JK8K8VGM;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "YapToText, an assistive input tool, types your dictated text into whatever app you are using.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "YapToText is an assistive voice-input tool that uses the microphone to turn your speech into text, entirely on device.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "YapToText uses on-device speech recognition to provide voice typing as an accessibility input method.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryleighnewman.YapToText;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		2B0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGNING_REQUIRED = NO;
+				DEVELOPMENT_TEAM = 65JK8K8VGM;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryleighnewman.YapToTextTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/YapToText.app/Contents/MacOS/YapToText";
+			};
+			name = Debug;
+		};
+		2B0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGNING_REQUIRED = NO;
+				DEVELOPMENT_TEAM = 65JK8K8VGM;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ryleighnewman.YapToTextTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/YapToText.app/Contents/MacOS/YapToText";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A0000000000000000000002 /* Build configuration list for PBXProject "YapToText" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000003 /* Debug */,
+				1A0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000000009 /* Build configuration list for PBXNativeTarget "YapToText" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A000000000000000000000A /* Debug */,
+				1A000000000000000000000B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2B0000000000000000000002 /* Build configuration list for PBXNativeTarget "YapToTextTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2B0000000000000000000003 /* Debug */,
+				2B0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		3C0000000000000000000000 /* XCLocalSwiftPackageReference "Vendor/whisper.cpp" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Vendor/whisper.cpp";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3C0000000000000000000001 /* whisper */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = whisper;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1A0000000000000000000001 /* Project object */;
+}

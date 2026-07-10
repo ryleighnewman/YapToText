@@ -1,0 +1,9 @@
+# Xcode / macOS
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.xcarchive
+.swiftpm/
