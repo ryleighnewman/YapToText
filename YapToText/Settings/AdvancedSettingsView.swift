@@ -19,6 +19,9 @@ struct AdvancedSettingsView: View {
                         Picker("Method", selection: $settings.insertionMethod) {
                             ForEach(InsertionMethod.allCases) { Text($0.label).tag($0) }
                         }
+                        if settings.insertionMethod != .clipboardOnly, !state.permissions.accessibilityGranted {
+                            Caption("Automatic pasting needs the Accessibility permission. Until it's granted, dictations are copied to the clipboard instead. Grant it on the Home page.")
+                        }
                         if settings.insertionMethod == .paste {
                             Picker("Afterwards, the clipboard keeps", selection: $settings.restoreClipboard) {
                                 Text("What I had copied before").tag(true)

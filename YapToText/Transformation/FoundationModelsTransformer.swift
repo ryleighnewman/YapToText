@@ -150,7 +150,7 @@ struct FoundationModelsTransformer: TextTransformer {
 
     /// Backstop for a small model that ignores the "no scaffolding" instruction: strip any
     /// echoed tags, a leading conversational preamble line, and wrapping quotes.
-    /// Deterministic backstop for the leaked-app-name signature ("...Thank you.\n\nClaude"):
+    /// Deterministic backstop for the leaked-app-name signature ("...Thank you.\n\nSlack"):
     /// remove trailing standalone lines that are exactly the destination app's name (with or
     /// without a sign-off dash). The prompt already forbids it; the model ignored that once, so
     /// the output is scrubbed regardless. Mentions INSIDE the text are left untouched.
@@ -246,7 +246,10 @@ struct FoundationModelsTransformer: TextTransformer {
                          "according to", "no changes were", "nothing was changed", "i made no"]
             let topics = ["rewritten", "rewrite rule", "transcript", "formatted", "sign-off", "signoff",
                           "greeting", "provided", "dictation", "output only", "no added content",
-                          "punctuation", "capitalization", "misheard", "hallucinated", "correct"]
+                          "punctuation", "capitalization", "misheard", "hallucinated", "correct",
+                          // the "I kept/removed your language" commentary class
+                          "explicit language", "original wording", "professional setting",
+                          "profanity", "as per the user", "such language", "the user's"]
             let isNarration = leads.contains(where: { lower.hasPrefix($0) })
                 && topics.contains(where: { lower.contains($0) })
             guard isNarration else { break }

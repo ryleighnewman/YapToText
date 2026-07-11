@@ -1,109 +1,79 @@
 # YapToText
 
-Free, private, on-device voice-to-text for your whole Mac. A native rebuild of what
-superwhisper does (system-wide dictation that inserts text into any app), with no
-subscription, no account, and nothing leaving your machine. Positioned and built as an
-accessibility (assistive voice input) tool.
+**Yap it. Bam. It's typed.**
 
-The whole pipeline runs on Apple's on-device frameworks, so it is free:
+Free, private speech to text for your whole Mac. Press one key, talk, and your words land
+wherever your cursor is. Everything runs on your Mac, and nothing ever leaves it.
 
-- **Transcription:** macOS 26 `SpeechAnalyzer` + `SpeechTranscriber` (streaming, no time limit).
-- **AI cleanup / formatting:** Apple Intelligence `FoundationModels` (on-device LLM, no API keys).
-- **Insertion anywhere:** synthesized key events posted to the HID event tap, with clipboard save-and-restore.
-- **Optional downloaded models:** Whisper (speech) and GGUF LLMs (cleanup) stored in the app's data container.
+[<img src=".github/assets/mac-app-store-badge.svg" alt="Download on the Mac App Store" height="48">](https://apps.apple.com/us/app/yaptotext/id6786382289?mt=12)
+
+![YapToText](Marketing/posters/01-hero.jpg)
+
+## Why it exists
+
+I built YapToText because I need it. My hands make typing difficult, so I dictate
+everything. The good dictation apps all wanted a subscription and sent my voice to their
+servers. I didn't want either, so I made my own, and I'm giving it away.
+
+## What it does
+
+- **Dictate anywhere.** One tap of Right Command starts dictation in any app. Your text is
+  typed right at the cursor.
+- **Fully on device.** The speech model and the AI cleanup model ship inside the app. It
+  works offline from the first launch. No account, no cloud, no analytics.
+- **Auto mode.** It reads each dictation and picks the right format on its own. An email
+  comes out as an email, a quick message stays casual, everything else just gets cleaned up.
+- **Modes for everything.** Raw Transcription, Clean Up, Email, Note, Message, Code, or
+  write your own with custom instructions. Press 1 through 9 mid-dictation to switch.
+- **Teach it your words.** Dictionaries fix the names it mishears. Commands type anything
+  you say: "insert phone number" types your real number.
+- **Never lose a word.** Crash recovery rescues interrupted dictations. Full history with
+  playback, search, editing, and export.
+- **Transcribe any file.** Drop in audio or video, get the text.
+- **Built for accessibility.** Works with VoiceOver and Voice Control, one key runs
+  everything, and dictation can fully replace typing.
+
+![Auto mode](Marketing/posters/04-auto-mode.jpg)
+
+![Menu bar](Marketing/posters/05-menubar.jpg)
+
+![Teach it your words](Marketing/posters/08-personalize.jpg)
+
+![Privacy](Marketing/posters/07-privacy.jpg)
 
 ## Requirements
 
 - macOS 26 (Tahoe) or later, Apple Silicon.
-- Xcode 26+ to build.
-- AI modes (Clean Up, Email, etc.) need Apple Intelligence enabled. Raw transcription works without it.
+- Xcode 26+ to build from source.
+- AI modes use Apple Intelligence when it's on, or the bundled local model when it isn't.
+  Raw transcription needs neither.
 
 ## Permissions
 
-- **Microphone (required):** to hear you. This is the only required permission.
-- **Accessibility (optional):** dictation and text insertion already work without it, because
-  YapToText injects key events at the HID layer (the same technique Karabiner / BetterMouse /
-  InputConfig use). Granting Accessibility only unlocks reading your selected text and detecting
-  the active app for smarter per-app modes.
-
-## Distribution and the sandbox
-
-YapToText ships **sandboxed**, so it is eligible for the Mac App Store. System-wide insertion
-still works because it posts to `.cghidEventTap`, which the sandbox permits. Entitlements:
-app-sandbox, `device.audio-input`, `network.client`, `files.user-selected.read-write`.
-
-To build the **non-sandboxed Developer ID** variant (which can additionally read other apps'
-UI via the Accessibility API), set `com.apple.security.app-sandbox` to `false` in
-`YapToText.entitlements`. Distribute that via notarized DMG / GitHub Releases.
-
-## Build and run
-
-```bash
-open ~/Desktop/YapToText/YapToText.xcodeproj
-```
-
-Select the **YapToText** scheme and press Cmd-R. Set your team under Signing & Capabilities
-for a real signed build (the project ships ad-hoc-signed so it also builds from the CLI):
-
-```bash
-cd ~/Desktop/YapToText
-xcodebuild -scheme YapToText -configuration Debug build
-```
-
-YapToText runs as a menu-bar app (no Dock icon). Look for the microphone glyph in the menu bar.
-
-## Using it
-
-- Press the shortcut (default Control-Option-Space) to start; press again to stop. The text is
-  cleaned (if the mode uses AI) and inserted at your cursor.
-- Switch to hold-to-talk, set a cycle-mode shortcut, tune silence auto-stop and the pop-up
-  animation/position in Settings > General.
-- Pick a Mode from the menu bar. Download extra Whisper / LLM models in Settings > Models.
-
-## Features
-
-- System-wide dictation into any focused field; streaming live panel with a waveform.
-- Built-in modes: Raw, Clean Up, Note, Email, Message, Code Comment. Plus unlimited custom modes.
-- Per-app mode auto-activation. Output targets: insert, clipboard, or insert-and-Return.
-- Downloadable models (Settings > Models), stored in the app data container so updates keep them.
-- Custom vocabulary replacements. Searchable, exportable local history with retention controls.
-- Silence auto-stop, max length, animated/positioned pop-up, launch at login, subtle sounds.
-- Support tab: StoreKit tip jar plus GitHub Sponsors / issues / releases links.
-- Secure-Input aware: falls back to typing when a password field blocks paste.
+- **Microphone (required):** so it can hear you.
+- **Accessibility (required for automatic pasting):** macOS only lets apps with this
+  permission type into other apps. Without it, YapToText still transcribes everything and
+  copies the result to your clipboard.
 
 ## Privacy
 
-- Audio is processed on device and is never written to disk or uploaded.
-- History stores text only, as JSON in the app's Application Support container.
-- No network calls except model downloads you explicitly start. No analytics, no account.
+- Audio is processed on device and is never uploaded.
+- History stores text only, as JSON in the app's own container on your Mac.
+- No network calls. No analytics, no account, no tracking of any kind.
+- The entire source is here, so none of this has to be taken on faith.
 
-## Project layout
+## Building
 
-| Area | Path |
-|------|------|
-| App shell | `YapToText/App/` (App, AppDelegate, AppState) |
-| Capture | `YapToText/Audio/AudioRecorder.swift` |
-| Transcription | `YapToText/Transcription/` (protocol, AppleSpeechEngine, WhisperEngine seam) |
-| AI transform | `YapToText/Transformation/FoundationModelsTransformer.swift` |
-| Models | `YapToText/Models/` (ModelInfo, ModelCatalog, ModelDownloadManager, ModelLibrary) |
-| Insertion | `YapToText/Insertion/` (TextInserter, AccessibilityReader) |
-| Trigger | `YapToText/Hotkey/` (HotkeyManager, KeyCombo) |
-| Orchestration | `YapToText/Dictation/DictationController.swift` |
-| Data | `Modes/`, `Vocabulary/`, `History/`, `Support/AppSettings.swift` |
-| Support / tips | `YapToText/Support/` (TipJarService, SupportLinks) |
-| UI | `YapToText/UI/`, `YapToText/Settings/` |
+```bash
+git clone https://github.com/ryleighnewman/YapToText.git
+open YapToText/YapToText.xcodeproj
+```
 
-See `DESIGN.md` for the full spec and roadmap.
+Select the YapToText scheme and press Cmd-R. The app is sandboxed and builds the same way
+it ships.
 
-## Roadmap
+## Support
 
-Wire real whisper.cpp / llama.cpp inference for the downloaded models (the download, storage,
-and selection framework is complete); ScreenCaptureKit meeting capture; Shortcuts / URL scheme
-automation; notarization + DMG and App Store submission.
-
-## App Store note
-
-Your registered App ID is the explicit `YapToText`. The project uses
-`com.ryleighnewman.YapToText` (conventional reverse-DNS). If you submit to the App Store, set
-`PRODUCT_BUNDLE_IDENTIFIER` to exactly match your registered App ID, and add the tip-jar
-products (`com.ryleighnewman.YapToText.tip.*`) in App Store Connect.
+YapToText is free with no locked features. If it helps you, there's a tip jar in the app,
+and that's it. Bug reports and ideas are welcome in
+[Issues](https://github.com/ryleighnewman/YapToText/issues).

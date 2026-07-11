@@ -216,7 +216,7 @@ enum HelpContent {
             summary: "On your Mac. Full stop.",
             blocks: [
                 .paragraph("Your voice is processed on your Mac. Your transcripts stay on your Mac. There are no accounts, no analytics, and no tracking of any kind. The only network activity is downloading a model when you ask for one."),
-                .paragraph("Microphone access is the one required permission. Accessibility permission is optional: dictation and insertion work without it, and granting it only unlocks reading selected text for the Regenerate feature."),
+                .paragraph("Microphone access is required to hear you. Accessibility permission is required for automatic pasting: macOS only lets apps with that permission type into other apps. Without it, YapToText still transcribes everything and copies the result to your clipboard, and reading selected text for Regenerate is unavailable."),
             ]),
 
         HelpArticle(

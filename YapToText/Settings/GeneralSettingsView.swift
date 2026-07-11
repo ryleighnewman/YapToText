@@ -142,7 +142,7 @@ struct GeneralSettingsView: View {
                     .onChange(of: settings.launchAtLogin) { LaunchAtLogin.set(settings.launchAtLogin) }
                 HStack(spacing: 12) {
                     permissionPill(granted: state.permissions.microphoneGranted, on: "Microphone", off: "Microphone needed")
-                    permissionPill(granted: state.permissions.accessibilityGranted, on: "Accessibility on", off: "Accessibility optional", optional: true)
+                    permissionPill(granted: state.permissions.accessibilityGranted, on: "Accessibility on", off: "Accessibility needed to paste", optional: true)
                     Spacer()
                     Button("Review setup") { NotificationCenter.default.post(name: .yapShowHome, object: nil) }
                         .buttonStyle(.solidSecondary).controlSize(.small)

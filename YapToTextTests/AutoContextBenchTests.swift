@@ -163,25 +163,25 @@ final class AutoContextBenchTests: XCTestCase {
 
     func testStripLeakedAppNameExactFieldFailure() {
         // The verbatim output the user received.
-        let leaked = "Dear Jessica,\n\nPlease send the email by 3 p.m.\n\nThank you.\n\nClaude"
-        let out = FoundationModelsTransformer.stripLeakedAppName(leaked, appName: "Claude")
+        let leaked = "Dear Jessica,\n\nPlease send the email by 3 p.m.\n\nThank you.\n\nSlack"
+        let out = FoundationModelsTransformer.stripLeakedAppName(leaked, appName: "Slack")
         XCTAssertEqual(out, "Dear Jessica,\n\nPlease send the email by 3 p.m.\n\nThank you.")
     }
 
     func testStripLeakedAppNameVariants() {
-        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Body text.\n\n-- Claude", appName: "Claude"),
+        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Body text.\n\n-- Slack", appName: "Slack"),
                        "Body text.")
-        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Body text.\nclaude", appName: "Claude"),
+        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Body text.\nslack", appName: "Slack"),
                        "Body text.")
-        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Body text.\n\nClaude\n\n", appName: "Claude"),
+        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Body text.\n\nSlack\n\n", appName: "Slack"),
                        "Body text.")
     }
 
     func testStripLeavesInlineMentionsAndOtherNamesAlone() {
-        let inline = "I asked Claude about the schedule and it helped."
-        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName(inline, appName: "Claude"), inline)
+        let inline = "I asked Slack about the schedule and it helped."
+        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName(inline, appName: "Slack"), inline)
         let signedByUser = "Thanks for everything.\n\nRyleigh"
-        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName(signedByUser, appName: "Claude"), signedByUser)
+        XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName(signedByUser, appName: "Slack"), signedByUser)
         XCTAssertEqual(FoundationModelsTransformer.stripLeakedAppName("Hello there.", appName: nil), "Hello there.")
     }
 
@@ -238,5 +238,13 @@ final class AutoContextBenchTests: XCTestCase {
     func testStripsRecipientBracketPlaceholder() {
         XCTAssertEqual(FoundationModelsTransformer.sanitize("Dear [Recipient],\n\nThe meeting ran long.\n\nBest regards,\nRyleigh"),
                        "Dear ,\n\nThe meeting ran long.\n\nBest regards,\nRyleigh")
+    }
+
+    /// Field hallucination (Jul 11): a fully parenthesized trailing paragraph commenting on the
+    /// user's explicit language. Must be scrubbed; the real content stays intact.
+    func testTrailingExplicitLanguageNoteIsScrubbed() {
+        let raw = "Fix the goddamn build before Monday.\n\n(Note: The explicit language has been retained as per the user's original wording, but for a professional setting, it would typically be edited to remove such language.)"
+        let cleaned = FoundationModelsTransformer.sanitize(raw)
+        XCTAssertEqual(cleaned, "Fix the goddamn build before Monday.")
     }
 }

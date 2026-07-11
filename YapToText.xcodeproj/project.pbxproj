@@ -198,7 +198,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nSRC=\"$HOME/Library/Application Support/YapToText-bundled-models\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\nmkdir -p \"$DEST\"\nfor f in ggml-large-v3-turbo.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do\n  if [ -f \"$SRC/$f\" ]; then\n    if [ ! -f \"$DEST/$f\" ] || [ \"$SRC/$f\" -nt \"$DEST/$f\" ]; then\n      rm -f \"$DEST/$f\"\n      /bin/cp -c \"$SRC/$f\" \"$DEST/$f\" 2>/dev/null || /bin/cp \"$SRC/$f\" \"$DEST/$f\"\n    fi\n  else\n    echo \"warning: bundled model missing: $f\" >&2\n  fi\ndone\n";
+			shellScript = "set -e\nif [ \"$CONFIGURATION\" != \"Release\" ]; then\n  # Debug: skip 3.8GB model copy+re-sign; the loader falls back to Application Support\n  rm -rf \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\n  exit 0\nfi\nSRC=\"$HOME/Library/Application Support/YapToText-bundled-models\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\nmkdir -p \"$DEST\"\nfor f in ggml-large-v3-turbo.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do\n  if [ -f \"$SRC/$f\" ]; then\n    if [ ! -f \"$DEST/$f\" ] || [ \"$SRC/$f\" -nt \"$DEST/$f\" ]; then\n      rm -f \"$DEST/$f\"\n      /bin/cp -c \"$SRC/$f\" \"$DEST/$f\" 2>/dev/null || /bin/cp \"$SRC/$f\" \"$DEST/$f\"\n    fi\n  else\n    echo \"warning: bundled model missing: $f\" >&2\n  fi\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -294,7 +294,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -328,7 +328,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;

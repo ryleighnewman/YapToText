@@ -602,7 +602,18 @@ final class DictationController {
                 // Make sure the app the user dictated into is frontmost before we paste, so the
                 // text can't land in a window they clicked mid-transcription (or in YapToText).
                 var deliveryTarget = target
-                if target != .clipboardOnly {
+                // Synthetic paste/type events are silently DROPPED by macOS without the
+                // Accessibility permission - and the clipboard restore would then erase the text
+                // entirely. Degrade honestly: leave the text on the clipboard and say so.
+                let method = sessionMode.insertionMethod ?? settings.insertionMethod
+                var announcedAXFallback = false
+                if target != .clipboardOnly, method != .clipboardOnly, !AXIsProcessTrusted() {
+                    yapdiag("finish: no Accessibility permission; delivering to clipboard instead")
+                    deliveryTarget = .clipboardOnly
+                    announcedAXFallback = true
+                    announce("Copied to clipboard. Grant Accessibility in Settings to paste automatically.")
+                }
+                if deliveryTarget != .clipboardOnly {
                     // If the user DELIBERATELY switched to another app mid-dictation, honor it:
                     // paste where their cursor is now. Only drag focus back to the origin app
                     // when the thing in front is YapToText itself (panel click) or nothing usable.
@@ -627,7 +638,7 @@ final class DictationController {
                 TextInserter.deliver(delivered, target: deliveryTarget,
                                      method: sessionMode.insertionMethod ?? settings.insertionMethod,
                                      restoreClipboard: settings.restoreClipboard)
-                if deliveryTarget == .clipboardOnly, target != .clipboardOnly {
+                if deliveryTarget == .clipboardOnly, target != .clipboardOnly, !announcedAXFallback {
                     announce("Copied to clipboard")
                 }
             }

@@ -140,7 +140,7 @@ struct WelcomeView: View {
     // Page 2 - permissions.
     private var permissionsStep: some View {
         stepScaffold(icon: nil, title: "A couple of permissions",
-                     subtitle: "Microphone so it can hear you; Accessibility so the Right Command key and number keys work everywhere.") {
+                     subtitle: "Microphone so it can hear you; Accessibility so your words can be pasted into other apps and the Right Command key works everywhere.") {
             VStack(spacing: 12) {
                 permissionCard(icon: "mic.fill", title: "Microphone", required: false,
                                granted: state.permissions.microphoneGranted,
@@ -148,7 +148,7 @@ struct WelcomeView: View {
                                grant: { Task { await state.permissions.requestMicrophone() } })
                 permissionCard(icon: "accessibility", title: "Accessibility", required: false,
                                granted: state.permissions.accessibilityGranted,
-                               detail: "Recommended, for the global shortcuts.",
+                               detail: "Required to paste your dictations into other apps, and for the global shortcuts. Without it, text is copied to the clipboard.",
                                grant: { state.permissions.promptAccessibility() })
                 // Re-read the live grant state and re-arm the key readers, so flipping a switch in
                 // System Settings updates here (and starts working) without relaunching the app.

@@ -227,8 +227,8 @@ struct HomeView: View {
                           }
                       }
             Divider()
-            statusRow(symbol: "accessibility", title: "Accessibility (optional)",
-                      subtitle: "Unlocks the Right \u{2318} dictation key and reading selected text. The keyboard shortcut works without it.",
+            statusRow(symbol: "accessibility", title: "Accessibility (needed for auto-paste)",
+                      subtitle: "Required to paste your words into other apps automatically, for the Right \u{2318} key, and for reading selected text. Without it, dictations are copied to the clipboard instead.",
                       granted: state.permissions.accessibilityGranted,
                       actionTitle: "Grant") {
                           state.permissions.promptAccessibility()

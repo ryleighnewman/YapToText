@@ -74,6 +74,6 @@ Initial release.
 Data Not Collected. No data is gathered, stored, or transmitted. Model downloads are anonymous fetches.
 
 ## Review notes (for App Review)
-- The app is a sandboxed assistive voice-input tool. Text insertion uses synthetic key events on the HID event tap, which the sandbox permits; Accessibility permission is optional and only unlocks reading selected text for the Regenerate feature.
+- The app is a sandboxed assistive voice-input tool. Automatic text insertion posts synthetic key events, which macOS permits only with the Accessibility permission; without it the app still transcribes and copies results to the clipboard. Accessibility also enables reading selected text for the Regenerate feature.
 - The tip jar is voluntary; all features work without paying (guideline 3.2.1 friendly).
 - Speech models are downloaded on demand from public model hosts chosen by the user; nothing is uploaded.

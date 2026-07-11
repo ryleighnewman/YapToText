@@ -45,11 +45,11 @@ final class TormentHarnessTests: XCTestCase {
         ]
 
         // Contexts
-        var ctxPoison = TransformContext(); ctxPoison.appName = "Claude"; ctxPoison.userName = nil
+        var ctxPoison = TransformContext(); ctxPoison.appName = "Slack"; ctxPoison.userName = nil
         var ctxNamed = TransformContext(); ctxNamed.appName = "Mail"; ctxNamed.userName = "Ryleigh"
         let ctxEmpty = TransformContext()
         let contexts: [(String, TransformContext)] = [
-            ("appClaude/noName", ctxPoison),
+            ("appSlack/noName", ctxPoison),
             ("appMail/Ryleigh", ctxNamed),
             ("empty", ctxEmpty),
         ]
@@ -63,7 +63,7 @@ final class TormentHarnessTests: XCTestCase {
             ("wordNote", "quick note to self remember to grab the note from the fridge before leaving"),
             ("colonList", "okay so we need three things: a new charger, two cables, and a case"),
             ("askAssistant", "can you summarize this for me the meeting ran long and we only covered budget"),
-            ("mentionsClaude", "I was talking to Claude about the design yesterday and it suggested a darker header"),
+            ("mentionsSlack", "I was talking to Slack about the design yesterday and it suggested a darker header"),
             ("rambling150", "so um yeah I was thinking about the whole project timeline thing and honestly I feel like we keep pushing stuff back and back and it's kind of getting out of hand you know like the design phase was supposed to wrap in March and then it slipped to April and now people are saying May and meanwhile the client keeps emailing me asking for updates and I don't really have anything solid to tell them so I think what we should probably do is just lock the scope like actually freeze it no more additions and then work backwards from a hard launch date and if something doesn't fit it goes in version two and also we should probably tell the client that this week not next week because the longer we wait the worse it looks and yeah that's basically where my head is at let me know what you all think"),
             ("spanish", "hola equipo la reunión de mañana se movió a las tres de la tarde gracias"),
             ("ellipsis", "I guess we could try the other vendor but I don't know..."),

@@ -54,7 +54,7 @@ final class LLMGauntletTests: XCTestCase {
         mode.instructions += "\n- " + AutoContext.preserveGuard
         let input = "Dear Jessica, how are you today? Please send me that file when you can. Thank you, Ryleigh."
         var context = TransformContext()
-        context.appName = "Claude"   // the poison that produced the "Claude" signature
+        context.appName = "Slack"   // the poison that produced the "Slack" signature
         context.userName = "Ryleigh"
         let out = try await t.transform(input, mode: mode, context: context)
         let lower = out.lowercased()
@@ -62,7 +62,7 @@ final class LLMGauntletTests: XCTestCase {
         XCTAssertFalse(lower.contains("rewritten"), "meta-narration leaked: \(out)")
         XCTAssertTrue(lower.contains("jessica"), "recipient lost: \(out)")
         // The app name must never appear as content or signature.
-        XCTAssertFalse(out.contains("Claude"), "app name leaked into the email: \(out)")
+        XCTAssertFalse(out.contains("Slack"), "app name leaked into the email: \(out)")
     }
 
     /// The one-word classifier the AI tiebreak relies on.
@@ -95,18 +95,18 @@ final class LLMGauntletTests: XCTestCase {
     }
 
     /// THE FIELD CASE: empty username + app-name poison, run 3x because models are stochastic.
-    /// This is the exact condition that leaked "Claude" as an email signature in real use.
+    /// This is the exact condition that leaked "Slack" as an email signature in real use.
     func testEmailWithNoUserNameNeverInventsSignature() async throws {
         let t = try transformer()
         var mode = BuiltInModes.email
         mode.instructions += "\n- " + AutoContext.preserveGuard
         var context = TransformContext()
-        context.appName = "Claude"
+        context.appName = "Slack"
         context.userName = nil          // fresh-install condition: the app does not know the name
         let input = "Dear Jessica, please send the email by 3 p.m. Thank you, Ryleigh."
         for round in 1...3 {
             let out = try await t.transform(input, mode: mode, context: context)
-            XCTAssertFalse(out.contains("Claude"), "round \(round): app name leaked: \(out)")
+            XCTAssertFalse(out.contains("Slack"), "round \(round): app name leaked: \(out)")
             XCTAssertTrue(out.lowercased().contains("ryleigh"),
                           "round \(round): the user's OWN spoken sign-off was dropped: \(out)")
             XCTAssertFalse(out.lowercased().contains("here is"), "round \(round): preamble: \(out)")
@@ -120,13 +120,13 @@ final class LLMGauntletTests: XCTestCase {
         var mode = BuiltInModes.email
         mode.instructions += "\n- " + AutoContext.preserveGuard
         var context = TransformContext()
-        context.appName = "Claude"
+        context.appName = "Slack"
         context.userName = nil
         let input = "Dear Jessica, please send me that email by 3 p.m. Thank you."
         for round in 1...2 {
             let out = try await t.transform(input, mode: mode, context: context)
             XCTAssertFalse(out.contains("["), "round \(round): placeholder bracket: \(out)")
-            XCTAssertFalse(out.contains("Claude"), "round \(round): app name: \(out)")
+            XCTAssertFalse(out.contains("Slack"), "round \(round): app name: \(out)")
         }
     }
 }

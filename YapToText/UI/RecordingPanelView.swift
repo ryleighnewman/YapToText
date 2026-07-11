@@ -126,15 +126,28 @@ struct RecordingPanelView: View {
     }
 
     private var compactLayout: some View {
-        HStack(spacing: 8) {
-            WaveformView(data: controller.visualData,
-                         isActive: controller.isRecording && !controller.isPaused)
-                .frame(maxWidth: .infinity)
-            controls
-            optionsMenu
-            jumpToAppButton
+        VStack(alignment: .leading, spacing: 4) {
+            // One-line transcript tail: the latest words, shown only while actively dictating so
+            // the idle mini player stays a single row.
+            if isPreviewing {
+                Text(controller.liveText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+            }
+            HStack(spacing: 8) {
+                WaveformView(data: controller.visualData,
+                             isActive: controller.isRecording && !controller.isPaused)
+                    .frame(maxWidth: .infinity)
+                controls
+                optionsMenu
+                jumpToAppButton
+            }
+            .frame(height: 34)
         }
-        .frame(height: 34)
     }
 
     // MARK: Live transcript (cycles upward; latest words pinned at the bottom)
