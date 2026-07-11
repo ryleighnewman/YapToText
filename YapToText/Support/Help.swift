@@ -19,7 +19,7 @@ final class HelpWindowController {
         }
         let hosting = NSHostingController(rootView: HelpView()
             .environment(state)
-            .background(VisualEffectBackground().ignoresSafeArea()))
+            .background(AppWindowBackground()))
         let win = NSWindow(contentViewController: hosting)
         win.title = "YapToText Help"
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
@@ -123,6 +123,20 @@ enum HelpContent {
                 .paragraph("Press a number key from 1 to 9 while dictating to pick the mode for that dictation. The order matches the Modes list, so 1 is always the first mode in your list."),
                 .heading("Make it yours"),
                 .paragraph("Every mode is editable, including the built-in ones. Open a mode to change its instructions, and the AI will follow them. If a mode almost does what you want, rewrite its instructions until it does. You can also create entirely new modes and give each app its own default mode."),
+            ]),
+
+        HelpArticle(
+            id: "automode", section: "Writing", icon: "wand.and.sparkles",
+            title: "Auto mode",
+            summary: "Say it; the app figures out what it is.",
+            blocks: [
+                .paragraph("With Auto mode on, you stop picking modes. Every dictation is screened in an instant and routed to the right treatment: a letter with a greeting and sign-off becomes a formatted email, casual chat stays exactly as spoken, notes read like notes, and everything else gets the standard cleanup."),
+                .paragraph("It reads more than the words. The app you are dictating into counts: Mail leans email, Messages leans casual, editors lean code, Notes leans note. If you dictated a name like \u{201C}Dear Jessica\u{201D}, the email is addressed to her. And the output always stays in the language you spoke."),
+                .heading("Steer it with your voice"),
+                .paragraph("End a dictation with a directive and it becomes an instruction instead of text: \u{201C}\u{2026} make that formal\u{201D}, \u{201C}\u{2026} make it concise\u{201D}, or \u{201C}\u{2026} as a bullet list\u{201D}."),
+                .heading("Replying to something?"),
+                .paragraph("Select the text you are answering before you start dictating. Auto mode reads the selection (through Accessibility, nothing is copied) and writes your reply to fit what it is responding to."),
+                .tip("Turn Auto mode on or off in Settings, in the Home page's quick controls, or during setup. Only genuinely ambiguous dictations consult the AI, so the common cases add no delay."),
             ]),
 
         HelpArticle(

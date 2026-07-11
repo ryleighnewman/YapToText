@@ -42,8 +42,8 @@ struct WelcomeView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 44)
-            .padding(.top, 44)
-            .padding(.bottom, 130)
+            .padding(.top, 30)
+            .padding(.bottom, 118)
 
         }
         // Back and Skip sit in the true bottom corners, each an EQUAL inset (32) from both edges.
@@ -68,7 +68,7 @@ struct WelcomeView: View {
             VStack(spacing: 12) { primaryButton; pageDots }.padding(.bottom, 30)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(VisualEffectBackground().ignoresSafeArea())
+        .background(AppWindowBackground())
         .onAppear { state.permissions.refresh() }
     }
 
@@ -191,6 +191,49 @@ struct WelcomeView: View {
                     .frame(maxWidth: 470)
             }
             ModesDemoView().frame(maxWidth: 460)
+            autoModeRow.frame(maxWidth: 460)
+        }
+    }
+
+    /// Auto mode opt-in, right where modes are introduced: let the app pick the recipe itself.
+    /// When it's on and no name is set yet, ask for the name HERE - Auto mode signs emails, and
+    /// without a name the model has nothing truthful to sign with.
+    private var autoModeRow: some View {
+        VStack(spacing: 10) {
+            autoModeToggleLine
+            if state.settings.autoContextMode,
+               state.settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
+                HStack(spacing: 8) {
+                    Text("Sign emails as:").font(.caption).foregroundStyle(.secondary)
+                    TextField("Your name", text: Binding(
+                        get: { state.settings.userName },
+                        set: { state.settings.userName = $0 }))
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .innerWell(radius: 7)
+                }
+            }
+        }
+        .padding(13)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
+    }
+
+    private var autoModeToggleLine: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "wand.and.sparkles")
+                .font(.system(size: 15, weight: .semibold))
+                .iconTint(Color.accentColor)
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Auto mode").font(.callout.weight(.medium))
+                Text("Let the app read each dictation and pick the right format by itself.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: Binding(get: { state.settings.autoContextMode },
+                                     set: { state.settings.autoContextMode = $0 }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
     }
 
@@ -222,7 +265,7 @@ struct WelcomeView: View {
                 }
                 ControlsPopupDemo(pushToTalk: pushToTalk)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 150)
+                    .frame(height: 128)
                     .background(Color.secondary.opacity(0.05),
                                 in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous)
@@ -423,11 +466,6 @@ struct WelcomeView: View {
     /// "[Your Name]" placeholder.
     private var nameField: some View {
         HStack(spacing: 12) {
-            Image(systemName: "person.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .iconTint(Color.accentColor)
-                .frame(width: 32, height: 32)
-                .glassEffect(.regular, in: Circle())
             // A visibly recessed text box so it clearly reads as "type here", not a label.
             TextField("Type your name here", text: Binding(
                 get: { state.settings.userName },
@@ -445,17 +483,34 @@ struct WelcomeView: View {
         VStack(spacing: 10) {
             Toggle(label, isOn: on).toggleStyle(.switch).controlSize(.small)
             if on.wrappedValue {
-                HStack {
-                    Text("Press your keys:").font(.callout).foregroundStyle(.secondary)
-                    Spacer()
-                    HotkeyRecorderField(combo: combo, allowsEmpty: true)
-                        .frame(width: 170, height: 26)
+                VStack(spacing: 6) {
+                    HStack {
+                        Text("Press your keys now:").font(.callout).foregroundStyle(.secondary)
+                        Spacer()
+                        HotkeyRecorderField(combo: combo, allowsEmpty: true, autoStart: true)
+                            .frame(width: 170, height: 26)
+                    }
+                    Text(captionFor(combo.wrappedValue))
+                        .font(.caption).foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.horizontal, 2)
         .animation(.easeInOut(duration: 0.2), value: on.wrappedValue)
+    }
+
+    /// Live caption for the shortcut recorder: what state it is in, and an honest warning when
+    /// a modifier-less key is chosen (it will trigger dictation every time it is pressed, anywhere).
+    private func captionFor(_ combo: KeyCombo?) -> String {
+        guard let combo else {
+            return "The box is listening. Press any key or combo, like \u{2325}\u{2318}D or F13. If nothing registers, click the box once and try again."
+        }
+        if combo.modifiers == 0 {
+            return "Saved. Heads up: a bare key starts dictation every time you press it, in every app. A combo with \u{2318} or \u{2325} avoids surprises."
+        }
+        return "Saved. Click the box to change it."
     }
 
     // MARK: Flow

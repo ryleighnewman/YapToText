@@ -2,16 +2,17 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// Editor for spoken insert commands: two categories (Punctuation, Emoji) of trigger -> output
+/// Editor for spoken insert commands: three categories (Snippets, Punctuation, Emoji) of trigger -> output
 /// substitutions that run as you dictate. Same idea as the dictionary system, but purpose-built
 /// for dropping in symbols. Everything is editable and there's a master on/off switch.
 struct CommandsView: View {
     @Environment(AppState.self) private var state
-    @State private var category: CommandCategory = .punctuation
+    @State private var category: CommandCategory = .snippet
     @State private var emojiTarget: UUID?
 
     var body: some View {
         SettingsPage {
+            personalSuggestions
             Text("Voice commands turn what you say into symbols while you dictate. Say a trigger phrase and it becomes the punctuation or emoji. Edit any trigger to whatever feels natural, like shortening \"exclamation point\" to just \"exclamation\".")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
@@ -78,6 +79,47 @@ struct CommandsView: View {
             return "Give one emoji several phrases, like \u{201C}fire emoji, flame emoji, lit emoji\u{201D}."
         case .snippet:
             return "Snippets paste whole blocks of text: addresses, sign-offs, links. Live tokens work in the Inserts box: {date}, {time}, and {clipboard}."
+        }
+    }
+
+    // MARK: Personal snippet suggestions
+
+    /// One-tap starters for things people dictate constantly: say "insert phone number"
+    /// and the real number is typed. Each disappears once a command with that trigger exists.
+    private static let personalSnippets: [(label: String, icon: String, trigger: String, output: String)] = [
+        ("Phone number", "phone", "phone number", "(your number)"),
+        ("Work email", "briefcase", "work email", "(your work email)"),
+        ("Personal email", "envelope", "personal email", "(your personal email)"),
+        ("Home address", "house", "home address", "(your address)"),
+        ("Website", "globe", "website", "(your website)"),
+    ]
+
+    @ViewBuilder
+    private var personalSuggestions: some View {
+        let existing = Set(state.commands.commands.flatMap { $0.triggers.map { $0.lowercased() } })
+        let pending = Self.personalSnippets.filter { !existing.contains($0.trigger) }
+        if !pending.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "lightbulb.max").iconTint(Color.accentColor)
+                    Text("Suggestions").font(.headline)
+                }
+                Text("Tap one, fill in your real value, and then saying \u{201C}insert phone number\u{201D} types the actual number.")
+                    .font(.caption).foregroundStyle(.secondary)
+                FlowChips(items: pending.map { snip in
+                    ChipItem(id: snip.trigger, label: snip.label, icon: snip.icon) {
+                        var command = state.commands.add(category: .snippet)
+                        command.triggers = [snip.trigger]
+                        command.output = snip.output
+                        state.commands.update(command)
+                        // Show where it went: switch to the Snippets tab so the new row is visible
+                        // instead of the chip just vanishing.
+                        category = .snippet
+                    }
+                })
+            }
+            .padding(Metrics.cardPad)
+            .innerWell(radius: Metrics.sectionRadius)
         }
     }
 

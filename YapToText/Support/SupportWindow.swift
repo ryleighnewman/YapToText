@@ -17,7 +17,7 @@ final class SupportWindowController {
         }
         let hosting = NSHostingController(rootView: SupportSettingsView()
             .environment(state)
-            .background(VisualEffectBackground().ignoresSafeArea()))
+            .background(AppWindowBackground()))
         let win = NSWindow(contentViewController: hosting)
         win.title = "Support YapToText"
         win.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]

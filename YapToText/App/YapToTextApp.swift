@@ -9,9 +9,9 @@ struct YapToTextApp: App {
         WindowGroup {
             ContentView()
                 .environment(appDelegate.state)
-                .frame(minWidth: 820, minHeight: 560)
+                .frame(minWidth: 820, minHeight: 660)
         }
-        .defaultSize(width: 1080, height: 720)
+        .defaultSize(width: 1080, height: 790)
         .commands { AppCommands(state: appDelegate.state) }
 
         // The menu bar item is a MANUAL NSStatusItem owned by AppDelegate, NOT a MenuBarExtra:
@@ -37,7 +37,9 @@ enum MenuBarIcon {
     // aspect-fitting the whole canvas (which made the visible mark tiny), `fitted` maps the art's
     // CONTENT box to fill this frame. The box is wider than tall to match the content's aspect,
     // which is still a normal menu-bar footprint.
-    private static let box = NSSize(width: 28.5, height: 22)
+    // INTEGRAL canvas only: a fractional image size (27.1x20.9) made AppKit place the whole
+    // bitmap between pixels, resampling every edge - that read as a permanently blurry capy.
+    private static let box = NSSize(width: 27, height: 23)
     // Where the visible content sits inside the square art canvas (fractions, top-down):
     // x 0.033-0.969, y 0.135-0.861 - measured from the 512 art.
     private static let contentW = 0.9355, contentH = 0.7266
@@ -127,15 +129,17 @@ enum MenuBarIcon {
     /// layers and the spinner all use the same coordinate mapping. The canvas extends past `rect`
     /// on all sides; only transparent margin gets cropped.
     private static func fitted(_ rect: NSRect) -> NSRect {
-        let side = min(rect.width / contentW, rect.height / contentH)
+        // Art size is pinned to a 21pt reference, NOT the canvas height: the canvas is taller
+        // (23pt) purely as headroom so the raised mark can't crop against its own image edge.
+        let side = min(rect.width / contentW, 21.0 / contentH)
         // Content center in bottom-up canvas coordinates is (contentCX, 1 - contentCY).
         // Snap to the retina pixel grid (0.5pt) - fractional offsets resample every edge and
         // made the whole mark blurry.
         func snap(_ v: CGFloat) -> CGFloat { (v * 2).rounded() / 2 }
-        // Optical balance: the speech bubble sits at the very top of the art, which makes the
-        // mark read top-heavy even though it's geometrically centered - bias it down 1pt.
+        // Optical balance: the art is bottom-heavy (the capy body), so it sits centered with
+        // a 1pt UPWARD bias - centered still read low against the bottom-heavy art.
         return NSRect(x: snap(rect.midX - side * contentCX),
-                      y: snap(rect.midY - side * (1 - contentCY) - 1.0),
+                      y: snap(rect.midY - side * (1 - contentCY) + 1.0),
                       width: snap(side), height: snap(side))
     }
 

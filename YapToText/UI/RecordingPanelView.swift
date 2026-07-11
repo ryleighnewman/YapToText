@@ -113,9 +113,10 @@ struct RecordingPanelView: View {
                     }
                 }
                 .padding(.horizontal, 1)   // keep the current chip's stroke from clipping at the edge
+                .padding(.vertical, 2 * scale)   // capsules were getting their tops/bottoms shaved
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 22 * scale)
+            .frame(height: 26 * scale)
             .onChange(of: controller.activeMode.id) { _, id in
                 // Elastic glide: a spring with a little overshoot so 5 -> 4 settles with a soft
                 // bounce instead of a flat ease.

@@ -157,3 +157,39 @@ private struct AddReplacementRow: View {
         .font(.callout)
     }
 }
+
+
+// MARK: - Suggestion chips
+
+struct ChipItem: Identifiable {
+    let id: String
+    let label: String
+    let icon: String
+    let action: () -> Void
+}
+
+/// A simple wrapping row of add-chips.
+struct FlowChips: View {
+    let items: [ChipItem]
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)],
+                  alignment: .leading, spacing: 8) {
+            ForEach(items) { item in
+                Button(action: item.action) {
+                    HStack(spacing: 6) {
+                        Image(systemName: item.icon).font(.caption).iconTint(Color.accentColor)
+                        Text(item.label).font(.callout).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "plus.circle.fill").font(.caption).iconTint(Color.accentColor)
+                    }
+                    .padding(.horizontal, 11).padding(.vertical, 7)
+                    .background(Color.secondary.opacity(0.06), in: Capsule())
+                    .overlay(Capsule().stroke(Color.secondary.opacity(0.12), lineWidth: 0.5))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Add \"\(item.id)\" as a substitution")
+            }
+        }
+    }
+}

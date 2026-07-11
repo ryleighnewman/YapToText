@@ -27,7 +27,7 @@ struct HomeView: View {
             .frame(maxWidth: Metrics.pageWidth)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 28)
-            .padding(.top, 10)
+            .padding(.top, -2)
             .padding(.bottom, 28)
         }
         .navigationTitle("Home")
@@ -54,11 +54,18 @@ struct HomeView: View {
 
     /// A friendly nudge so nobody feels buried by the feature set: one key is all it takes.
     /// Dismissible - the X hides it for good (it can't nag once you've read it).
+    /// The note names whatever key ACTUALLY starts dictation right now, so it never lies after
+    /// someone changes the trigger: Right Command when that trigger is on, else the custom hotkey.
+    private var dictationKeyName: String {
+        if state.settings.rightCommandTrigger != .off { return "Right \u{2318}" }
+        return state.settings.hotkey.displayString
+    }
+
     private var funNote: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("One key is all it takes").font(.callout.weight(.semibold))
-                Text("This app is loaded with features, but you don't need any of them to start. Just tap Right \u{2318} and talk. Feeling curious? Every panel on the left is yours to play with.")
+                Text("This app is loaded with features, but you don't need any of them to start. Just tap \(dictationKeyName) and talk. Feeling curious? Every panel on the left is yours to play with.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -80,6 +87,34 @@ struct HomeView: View {
         }
     }
 
+
+    /// Compact, closable pointer to Dictionaries - same pattern as the one-key note.
+    private var dictionaryTip: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Fix a misheard word once").font(.caption.weight(.semibold))
+                Text("If a word keeps coming out wrong, set a fix in Dictionaries. For example, the AI often gets my name wrong, so I have it change \u{201C}Riley\u{201D} to \u{201C}Ryleigh\u{201D}.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .padding(.trailing, 14)
+        .innerWell(radius: Metrics.panelRadius)
+        .overlay(alignment: .topTrailing) {
+            Button { state.settings.hasDismissedDictionaryTip = true } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .padding(5)
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss this tip")
+        }
+    }
+
     // MARK: Primary actions
 
     private var primaryActions: some View {
@@ -91,7 +126,7 @@ struct HomeView: View {
             }
             .buttonStyle(.solid)
             .controlSize(.large)
-            .help("Choose your mode and dictionaries")
+            .help("Start dictating right now")
 
             Button(action: onNewMode) {
                 Label("New Mode", systemImage: "plus")
@@ -114,6 +149,21 @@ struct HomeView: View {
                 Text("Right \u{2318} key")
             }
             .onChange(of: settings.rightCommandTrigger) { AppDelegate.shared?.reloadRightCommandTrigger() }
+            Toggle("Auto mode: adapt to what you're saying", isOn: $settings.autoContextMode)
+                .toggleStyle(.switch).controlSize(.small)
+            if settings.autoContextMode {
+                SubOptions {
+                    Caption("Each dictation is screened in an instant: emails get formatted as emails, casual chat stays as spoken, everything else is cleaned up.")
+                    if settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Caption("Add your name so Auto mode signs emails as you:")
+                        TextField("Your name, e.g. Ryleigh", text: $settings.userName)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .innerWell(radius: 7)
+                            .frame(maxWidth: 260)
+                    }
+                }
+            }
             Toggle("Show the menu bar icon", isOn: $settings.showMenuBarIcon).toggleStyle(.switch).controlSize(.small)
                 .onChange(of: settings.showMenuBarIcon) { AppDelegate.shared?.reloadStatusItem() }
             if !settings.showMenuBarIcon {
@@ -128,6 +178,7 @@ struct HomeView: View {
                     Caption("The Dock icon is hidden. Reopen this window from the menu bar capybara or your dictation shortcut.")
                 }
             }
+            if !settings.hasDismissedDictionaryTip { dictionaryTip }
             HStack {
                 Caption("Every setting, including per-mode overrides, lives in Settings.")
                 Spacer()
@@ -192,6 +243,32 @@ struct HomeView: View {
                     Button("Show in Finder") { state.permissions.revealAppInFinder() }.buttonStyle(.solidSecondary).controlSize(.small)
                 }
             }
+            HStack {
+                Caption("Granted something in System Settings and it isn't showing here yet?")
+                Spacer()
+                Button {
+                    state.permissions.refresh()
+                    AppDelegate.shared?.reloadRightCommandTrigger()
+                    AppDelegate.shared?.reloadHotkey()
+                } label: {
+                    Label("Recheck", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.solidSecondary).controlSize(.small)
+                .help("Re-read permissions and re-arm the shortcuts")
+            }
+        }
+        // Poll while the card is visible: TCC grants made in System Settings don't push a
+        // notification, so without this the card looked stale until the app was reactivated.
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                let before = state.permissions.accessibilityGranted
+                state.permissions.refresh()
+                if !before && state.permissions.accessibilityGranted {
+                    AppDelegate.shared?.reloadRightCommandTrigger()
+                    AppDelegate.shared?.reloadHotkey()
+                }
+            }
         }
     }
 
@@ -226,7 +303,7 @@ private struct QuickTipsPill: View {
         Tip(text: "Select text in any app, then use the menu bar\u{2019}s Regenerate menu to rewrite it with any mode.", dest: nil),
         Tip(text: "Not happy with how a mode writes? Open it and edit its instructions. Every mode is yours to tweak.", dest: .modes),
         Tip(text: "Dictionaries auto-correct names and jargon the mic keeps mishearing.", dest: .dictionaries),
-        Tip(text: "Say \u{201C}smiley face\u{201D} and Commands turn it into the emoji, right in your text.", dest: .commands),
+        Tip(text: "Say \u{201C}insert smiley face\u{201D} and Commands turn it into the emoji, right in your text.", dest: .commands),
         Tip(text: "Regenerate your last dictation as an email straight from the menu bar.", dest: nil),
         Tip(text: "Search the sidebar to jump to any setting in seconds.", dest: nil),
         Tip(text: "Everything runs on your Mac. Your voice is never uploaded.", dest: .models),

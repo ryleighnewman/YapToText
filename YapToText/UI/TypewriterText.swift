@@ -1,20 +1,20 @@
 import SwiftUI
 
-/// Renders a live transcription preview one character at a time, so partials arriving in
-/// batches READ as continuous real-time processing.
+/// Renders a live transcription preview that inks in smoothly, one letter at a time, so partials
+/// arriving in batches READ as continuous real-time writing.
 ///
-/// - The reveal is FRAME-SYNCED: a TimelineView(.animation) advances the visible character count
-///   as a pure function of elapsed time, so the cadence is locked to the display refresh and stays
-///   perfectly even (no scheduler jitter, no stutter). A per-character sleep loop, which we used
-///   before, lands characters at random phases vs vsync and reads as choppy - this does not.
-/// - The newest few characters fade up from dim to full - a soft "ink" trail that makes it look
-///   like the words are being written as you watch.
-/// - When the engine REVISES earlier words (whisper re-decodes the window and changes its mind),
-///   the revealed prefix always mirrors the CURRENT target, so a corrected word swaps in place
-///   instead of retyping from scratch.
-/// - When a big partial lands far ahead, the cadence quickens (chars/sec) rather than jumping many
-///   characters at once, so catch-up stays smooth. Once caught up it settles to full opacity and
-///   the timeline pauses (no idle CPU).
+/// - FRAME-SYNCED at the FULL display refresh (no fps cap): the reveal is a pure function of
+///   elapsed time, so the cadence is locked to vsync and stays perfectly even. This view lives in
+///   the panel's glass-FREE content layer (the two-graph architecture), so running at display rate
+///   doesn't pressure the macOS 26.5 glass renderer the way an animated glass view would.
+/// - SUB-CHARACTER smoothing: the reveal position is fractional. The character currently being
+///   written fades in by its fractional progress (a smoothstep on its alpha), and a short trail
+///   behind it eases from dim to full - so letters don't pop in, they ink in.
+/// - When the engine REVISES earlier words, the revealed prefix mirrors the CURRENT target, so a
+///   corrected word swaps in place instead of retyping.
+/// - The cadence spreads each chunk across the typical gap between partials, so the writing is
+///   still flowing when the next chunk lands (no type-burst-then-idle stutter). Once caught up it
+///   settles to full opacity and the timeline pauses (no idle CPU).
 struct TypewriterText: View {
     let target: String
     var fontSize: CGFloat = 15
@@ -23,27 +23,25 @@ struct TypewriterText: View {
     /// full target instantly - no reveal timeline, no per-frame render transactions.
     nonisolated(unsafe) static var frozenForDiagnostics = false
 
-    /// How many trailing characters carry the fade-in trail.
-    private let trail = 7
+    /// Trailing characters that carry the ease-in fade behind the writing edge.
+    private let trail = 6
 
-    // The reveal clock. `revealed(at:) = anchorCount + elapsed * rate`, clamped to the target.
-    // Anchor is re-based whenever a new partial arrives, so the rate can adapt per chunk while the
-    // motion within a chunk stays constant and even.
+    // The reveal clock. `revealF(at:) = anchorCount + elapsed * rate`, clamped to the target.
+    // anchorCount is fractional and re-based whenever a new partial arrives, so the rate can adapt
+    // per chunk while the motion within a chunk stays constant and even.
     @State private var anchorDate = Date()
-    @State private var anchorCount = 0
-    @State private var rate: Double = 45          // chars/sec for the current chunk
+    @State private var anchorCount: Double = 0
+    @State private var rate: Double = 42          // chars/sec for the current chunk
     @State private var isAnimating = true         // false = caught up, timeline paused
     @State private var settleTask: Task<Void, Never>?
 
     var body: some View {
-        // Cap at ~60fps rather than every display frame: the reveal is time-derived so it stays
-        // smooth, and fewer render transactions ease pressure on macOS 26.5's glass renderer
-        // (DesignLibrary), which can segfault under heavy animated redraw.
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0,
-                                paused: !isAnimating || Self.frozenForDiagnostics)) { timeline in
-            let revealed = (isAnimating && !Self.frozenForDiagnostics) ? revealedCount(at: timeline.date) : target.count
-            composited(revealed)
-                .font(.system(size: fontSize))
+        // Full display-rate schedule (no minimumInterval): the reveal is time-derived and lives in
+        // the glass-free layer, so it stays smooth at 120/165Hz without touching the glass renderer.
+        TimelineView(.animation(paused: !isAnimating || Self.frozenForDiagnostics)) { timeline in
+            let revealF = (isAnimating && !Self.frozenForDiagnostics)
+                ? revealedF(at: timeline.date) : Double(target.count)
+            composited(revealF).font(.system(size: fontSize))
         }
         .onAppear { retarget() }
         .onChange(of: target) { retarget() }
@@ -51,74 +49,84 @@ struct TypewriterText: View {
         .accessibilityLabel(target)
     }
 
-    /// The revealed prefix of the CURRENT target, with a graduated-opacity tail so freshly typed
-    /// letters visibly ink in. Once caught up (revealed == target.count) everything is full opacity.
-    private func composited(_ revealed: Int) -> Text {
-        let chars = Array(target.prefix(revealed))
-        let full = Color.primary.opacity(0.88)
-        guard revealed < target.count, !chars.isEmpty else {
-            return Text(String(chars)).foregroundColor(full)
+    /// The revealed prefix of the CURRENT target with a smooth writing edge: full-opacity body, a
+    /// short easing trail, and the currently-inking character faded by its fractional progress.
+    private func composited(_ revealF: Double) -> Text {
+        let chars = Array(target)
+        let n = chars.count
+        let full = Color.primary.opacity(0.9)
+        guard n > 0 else { return Text("") }
+
+        let clamped = min(Double(n), max(0, revealF))
+        let solid = Int(clamped.rounded(.down))     // characters fully (or nearly) written
+        if solid >= n { return Text(target).foregroundColor(full) }
+
+        // Stable body at full opacity, up to where the easing trail begins.
+        let stable = max(0, solid - trail)
+        var text = Text(String(chars[0..<stable])).foregroundColor(full)
+
+        // Trailing few: ease from dim (near the edge) up to full (further back).
+        if solid > stable {
+            for i in stable..<solid {
+                let dist = solid - i                 // 1 = closest to the writing edge
+                let ramp = Double(trail - dist + 1) / Double(trail + 1)   // 0..1 (back -> edge)
+                let a = 0.9 * (0.30 + 0.70 * ramp)
+                text = text + Text(String(chars[i])).foregroundColor(.primary.opacity(a))
+            }
         }
-        let stableCount = max(0, chars.count - trail)
-        var text = Text(String(chars[0..<stableCount])).foregroundColor(full)
-        for i in stableCount..<chars.count {
-            let distFromEnd = chars.count - 1 - i               // 0 = newest
-            let ramp = Double(min(distFromEnd, trail)) / Double(trail)   // 0 (new) -> 1 (older)
-            let opacity = 0.88 * (0.22 + 0.78 * ramp)
-            text = text + Text(String(chars[i])).foregroundColor(.primary.opacity(opacity))
-        }
+
+        // The character being written right now: alpha = smoothstep(fractional progress).
+        let frac = clamped - Double(solid)
+        let eased = frac * frac * (3 - 2 * frac)
+        text = text + Text(String(chars[solid])).foregroundColor(.primary.opacity(0.9 * eased))
         return text
     }
 
-    /// Characters visible at `date`, from the current anchor. Pure function of time, so the reveal
-    /// is even and self-correcting even if a frame is dropped.
-    private func revealedCount(at date: Date) -> Int {
+    /// Fractional characters visible at `date`, from the current anchor. Pure function of time, so
+    /// the reveal is even and self-correcting even if a frame is dropped.
+    private func revealedF(at date: Date) -> Double {
         guard rate > 0 else { return anchorCount }
         let secs = max(0, date.timeIntervalSince(anchorDate))
-        let n = anchorCount + Int(secs * rate)
-        return min(target.count, max(anchorCount, n))
+        return min(Double(target.count), max(anchorCount, anchorCount + secs * rate))
     }
 
-    /// Re-base the reveal clock on the current target. Keeps whatever has already inked in, picks a
-    /// cadence for the remaining backlog, and schedules a single settle when the reveal will finish.
-    /// IMPORTANT: while NOT animating the clock is frozen at anchorCount - the panel's view now
-    /// lives for the whole app session (two-graph crash architecture), so a time-derived read here
-    /// would keep "earning" reveal budget between dictations and make every new partial appear
-    /// instantly (word-by-word chunks instead of the letter-by-letter reveal).
+    /// Re-base the reveal clock on the current target. Keeps whatever has inked in, picks a cadence
+    /// for the remaining backlog, and schedules a single settle when the reveal will finish.
+    /// IMPORTANT: while NOT animating the clock is frozen at anchorCount - the panel's view lives
+    /// for the whole app session (two-graph crash architecture), so a time-derived read here would
+    /// keep "earning" reveal budget between dictations and make every new partial appear instantly.
     private func retarget() {
         let now = Date()
-        let current = min(target.count, isAnimating ? revealedCount(at: now) : anchorCount)
+        let current = min(Double(target.count), isAnimating ? revealedF(at: now) : anchorCount)
         settleTask?.cancel()
         anchorCount = current
         anchorDate = now
 
-        let remaining = target.count - current
-        guard remaining > 0 else {
+        let remaining = Double(target.count) - current
+        guard remaining > 0.5 else {
+            anchorCount = Double(target.count)
             isAnimating = false
             return
         }
         rate = cadence(forRemaining: remaining)
         isAnimating = true
-        // A hair of slack (+1 char) so the timeline reveals the final character before it pauses.
-        let duration = Double(remaining + 1) / rate
-        let goalCount = target.count
+        let duration = (remaining + 1) / rate
+        let goalCount = Double(target.count)
         settleTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            // Pin the frozen clock at the fully revealed position before pausing.
             anchorCount = goalCount
             anchorDate = Date()
             isAnimating = false
         }
     }
 
-    /// chars/sec for the reveal. Normal speech leaves a ~1.5s gap between partials, so ~45 c/s reads
-    /// as steady live typing; a bigger backlog quickens the cadence to catch up without a chunk jump.
-    private func cadence(forRemaining remaining: Int) -> Double {
-        switch remaining {
-        case ..<40:  return 45
-        case ..<90:  return 72
-        default:     return 140
-        }
+    /// chars/sec, paced so the writing NEVER stops between partials. Spread the backlog across the
+    /// typical gap between partials (~1.4s) so the reveal is still flowing when the next chunk lands,
+    /// then clamp to a sane range so a big backlog catches up fast but a tiny one still reads letter
+    /// by letter.
+    private func cadence(forRemaining remaining: Double) -> Double {
+        let expectedGap = 1.4
+        return min(200, max(16, remaining / expectedGap))
     }
 }

@@ -109,7 +109,7 @@ struct ContentView: View {
                     )
             }
             .focusEffectDisabled()
-            .background(VisualEffectBackground().ignoresSafeArea())
+            .background(AppWindowBackground())
             .toolbarBackground(.hidden, for: .windowToolbar)
             // During onboarding the welcome overlay owns the whole window, so hide the sidebar
             // toggle and "Home" title that would otherwise peek through the titlebar.
@@ -368,7 +368,7 @@ struct ContentView: View {
     private var detail: some View {
         switch destination {
         case .home:
-            HomeView(onStartDictation: { destination = .modes },
+            HomeView(onStartDictation: { state.controller.toggle() },
                      onNewMode: { newMode() })
         case .utility:
             UtilityView()

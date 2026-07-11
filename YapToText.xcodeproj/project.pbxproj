@@ -85,6 +85,7 @@
 				1A000000000000000000000C /* Sources */,
 				1A000000000000000000000D /* Frameworks */,
 				1A000000000000000000000E /* Resources */,
+				1A00000000000000000000B1 /* Bundle AI models */,
 			);
 			buildRules = (
 			);
@@ -183,6 +184,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		1A00000000000000000000B1 /* Bundle AI models */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle AI models";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nSRC=\"$HOME/Library/Application Support/YapToText-bundled-models\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\nmkdir -p \"$DEST\"\nfor f in ggml-large-v3-turbo.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do\n  if [ -f \"$SRC/$f\" ]; then\n    if [ ! -f \"$DEST/$f\" ] || [ \"$SRC/$f\" -nt \"$DEST/$f\" ]; then\n      rm -f \"$DEST/$f\"\n      /bin/cp -c \"$SRC/$f\" \"$DEST/$f\" 2>/dev/null || /bin/cp \"$SRC/$f\" \"$DEST/$f\"\n    fi\n  else\n    echo \"warning: bundled model missing: $f\" >&2\n  fi\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		1A000000000000000000000C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -275,7 +294,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -290,7 +309,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ryleighnewman.YapToText;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = YapToText;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -308,7 +328,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -323,7 +343,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.ryleighnewman.YapToText;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = YapToText;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;

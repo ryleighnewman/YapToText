@@ -5,6 +5,16 @@ import Foundation
 enum BuiltInModes {
     static let rawTranscriptionID = UUID(uuidString: "11111111-0000-0000-0000-000000000001")!
 
+    /// VIRTUAL mode representing Auto mode in every mode list. Not stored and never runs
+    /// directly - selecting it turns Auto routing on, and the routed-to real mode does the work.
+    static let auto = Mode(
+        id: UUID(uuidString: "11111111-0000-0000-0000-0000000000AA")!,
+        name: "Auto",
+        iconSystemName: "wand.and.sparkles",
+        summary: "Reads each dictation and picks the right mode by itself.",
+        usesAI: true,
+        isBuiltIn: true)
+
     static let raw = Mode(
         id: rawTranscriptionID,
         name: "Raw Transcription",
@@ -44,6 +54,7 @@ enum BuiltInModes {
         - Pull out any action items into a list.
         - Preserve every idea; do not invent content or answer questions in the text.
         - Keep the user's language. Output ONLY the note.
+        - Bullets and headings may ONLY restate what was said. Never add items, actions, or reminders that were not spoken.
         """,
         isBuiltIn: true)
 

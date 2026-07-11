@@ -5,16 +5,27 @@ struct MenuBarView: View {
     @Environment(AppState.self) private var state
     /// When the current regenerate was tapped, used to drive its progress ring.
     @State private var regenStartedAt: Date?
+    /// The Regenerate square flips the popover to an inline options page (a nested SwiftUI Menu
+    /// inside a transient popover misfires - the popover closes the moment the menu opens).
+    @State private var showRegenerate = false
+    /// Non-nil while the brief "Regenerating as …" confirmation plays before the popover fades.
+    @State private var launching: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            modeInputRow
-            quickActions
-            Divider()
-            recentSection
-            Divider()
-            footer
+        Group {
+            if showRegenerate {
+                regenerateOptions
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    header
+                    modeInputRow
+                    quickActions
+                    Divider()
+                    recentSection
+                    Divider()
+                    footer
+                }
+            }
         }
         .padding(12)
         .frame(width: 320)
@@ -104,11 +115,14 @@ struct MenuBarView: View {
                 let switchable = state.controller.switchableModes
                 Section("Press its number while dictating:") {
                     ForEach(Array(switchable.prefix(9).enumerated()), id: \.element.id) { index, mode in
+                        let isAuto = mode.id == BuiltInModes.auto.id
+                        let isCurrent = isAuto ? state.settings.autoContextMode
+                                               : (!state.settings.autoContextMode && mode.id == state.settings.activeModeID)
                         Button {
                             state.controller.selectMode(mode)
                         } label: {
                             Label("\(index + 1)   \(mode.name)",
-                                  systemImage: mode.id == state.settings.activeModeID ? "checkmark" : mode.iconSystemName)
+                                  systemImage: isCurrent ? "checkmark" : mode.iconSystemName)
                         }
                     }
                 }
@@ -226,68 +240,124 @@ struct MenuBarView: View {
         .help(title)
     }
 
-    /// Regenerate: expands to pick which mode to re-run the last dictation as; picking one
-    /// regenerates in place (progress ring), then shows "Copied" - it's copied to the clipboard.
-    /// Never starts recording. Disabled when there's nothing to regenerate.
+    /// Regenerate: opens the inline options page. A plain button (no nested menu), so the click
+    /// always registers inside the popover. Disabled only while a regeneration is running.
     private var regenerateButton: some View {
         let busy = !state.controller.regeneratingIDs.isEmpty
-        let copied = state.controller.lastRegeneratedID != nil && !busy
-        let enabled = state.controller.canRegenerateLast
+        return squareButton("Regenerate", "arrow.clockwise") { showRegenerate = true }
+            .disabled(busy)
+            .help("Regenerate your last dictation, or rewrite selected text, in any mode")
+    }
+
+    // MARK: Regenerate options (inline page)
+
+    private var regenerateOptions: some View {
         let aiModes = state.modeStore.allModes.filter { $0.usesAI }
-        // SINGLE CLICK opens the options (no hidden right-click): rewrite the selected text or
-        // regenerate the last dictation, each through any mode. The label is built from the same
-        // pieces as Transcribe file / Insert last so all three squares render identically.
-        return Menu {
-            Section("Selected text as:") {
-                ForEach(aiModes) { mode in
-                    Button {
-                        AppDelegate.shared?.regenerateSelection(using: mode)
-                    } label: { Label(mode.name, systemImage: mode.iconSystemName) }
-                }
-            }
-            Section("Last dictation as:") {
-                ForEach(aiModes) { mode in
-                    Button {
-                        regenStartedAt = Date()
-                        state.controller.regenerateLast(using: mode)
-                    } label: { Label(mode.name, systemImage: mode.iconSystemName) }
-                }
-            }
-        } label: {
-            VStack(spacing: 6) {
-                if busy {
-                    TimelineView(.periodic(from: regenStartedAt ?? .now, by: 0.08)) { timeline in
-                        let elapsed = regenStartedAt.map { max(0, timeline.date.timeIntervalSince($0)) } ?? 0
-                        let pct = min(0.95, elapsed / 4.5)   // smooth estimate; snaps away when done
-                        ZStack {
-                            Circle().stroke(Color.secondary.opacity(0.25), lineWidth: 2.5)
-                            Circle().trim(from: 0, to: pct)
-                                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                            Text("\(Int(pct * 100))").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
-                        }
-                        .frame(width: 22, height: 22)
+        let canLast = state.controller.canRegenerateLast
+        return ZStack {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Button { showRegenerate = false } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Color.secondary.opacity(0.14)))
                     }
-                } else if copied {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).iconTint(.green)
-                } else {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 18))
-                        .iconTint(Color.accentColor)
-                        .opacity(enabled ? 1 : 0.45)
+                    .buttonStyle(.plain)
+                    Text("Regenerate").font(.headline)
+                    Spacer()
                 }
-                Text(busy ? "Working" : copied ? "Copied" : "Regenerate").font(.system(size: 10)).foregroundStyle(.secondary)
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        optionSection("Last dictation as", hint: canLast ? nil : "Dictate something first") {
+                            ForEach(aiModes) { mode in
+                                optionRow(mode.name, mode.iconSystemName, enabled: canLast) {
+                                    regenStartedAt = Date()
+                                    launch(mode.name) { state.controller.regenerateLast(using: mode) }
+                                }
+                            }
+                        }
+                        optionSection("Selected text as", hint: "Rewrites the text selected in your last app") {
+                            ForEach(aiModes) { mode in
+                                optionRow(mode.name, mode.iconSystemName, enabled: true) {
+                                    launch(mode.name) { AppDelegate.shared?.regenerateSelection(using: mode) }
+                                }
+                            }
+                        }
+                        if !state.actions.actions.isEmpty {
+                            optionSection("AI Actions on selection", hint: nil) {
+                                ForEach(state.actions.actions) { action in
+                                    optionRow(action.name, action.iconSystemName, enabled: true) {
+                                        launch(action.name) { AppDelegate.shared?.regenerateSelection(applying: action) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+                .frame(maxHeight: 360)
             }
-            .frame(maxWidth: .infinity).frame(height: 62)
-            .innerWell(radius: 11)
-            .contentShape(RoundedRectangle(cornerRadius: 11))
+            .opacity(launching == nil ? 1 : 0)
+
+            if let launching {
+                workingCard(launching)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
         }
-        .menuStyle(.button)
+    }
+
+    /// A brief, pretty confirmation shown right where the options were: a spinner and the mode
+    /// name, held for a beat so the click lands with intent, then the popover fades closed and the
+    /// actual work runs (which must switch apps to paste, so it can't run while the popover shows).
+    private func workingCard(_ label: String) -> some View {
+        VStack(spacing: 14) {
+            ProgressView().controlSize(.large)
+            Text("Regenerating as \(label)")
+                .font(.callout.weight(.medium)).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).frame(height: 220)
+    }
+
+    /// Play the confirmation, fade the popover out, then start the work. The two short delays let
+    /// the "Regenerating…" card breathe and the NSPopover's own close animation finish before any
+    /// app-switching happens, so the exit reads as a smooth fade instead of a spazzy snap.
+    private func launch(_ label: String, run: @escaping () -> Void) {
+        withAnimation(.easeOut(duration: 0.22)) { launching = label }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+            AppDelegate.shared?.closeMenuPopover()   // animated fade-out
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                run()
+                showRegenerate = false
+                launching = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func optionSection<C: View>(_ title: String, hint: String?, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.tertiary).tracking(0.5)
+            if let hint {
+                Text(hint).font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(spacing: 2) { content() }
+        }
+    }
+
+    private func optionRow(_ title: String, _ icon: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: icon).font(.system(size: 12)).iconTint(Color.accentColor).frame(width: 18)
+                Text(title).font(.callout)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .disabled(busy || !enabled)
-        .help(enabled ? "Rewrite your selected text, or regenerate the last dictation, in any mode"
-                      : "Dictate something first to regenerate")
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
     }
 
     // MARK: Recent

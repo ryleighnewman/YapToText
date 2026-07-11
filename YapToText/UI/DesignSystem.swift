@@ -39,6 +39,16 @@ extension LinearGradient {
                                               startPoint: .leading, endPoint: .trailing)
 }
 
+/// The app window's frosted backdrop: the behind-window blur plus a whisper of darkening so
+/// content keeps contrast on bright wallpapers (the raw blur washed out on light desktops).
+struct AppWindowBackground: View {
+    var body: some View {
+        VisualEffectBackground()
+            .overlay(Color.black.opacity(0.07))
+            .ignoresSafeArea()
+    }
+}
+
 extension View {
     /// THE colored-icon treatment. A tinted SF Symbol is NEVER a flat 100% solid block of color:
     /// every colored icon carries a little transparency so it reads as a layered, glassy mark. This

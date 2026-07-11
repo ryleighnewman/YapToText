@@ -47,6 +47,8 @@ final class DictationController {
     private(set) var transformingDetail: String?
     /// True while recording is held (phase stays `.recording`, but audio is dropped).
     private(set) var isPaused = false
+    /// Auto mode: a mid-dictation digit pick suspends auto routing for THIS session only.
+    private var sessionAutoSuspended = false
     /// True for a dictation started from the in-app Utility scratchpad (not a global dictation), so
     /// the Utility card shows its inline recording UI ONLY for its own session and never lights up
     /// for a background global dictation. Cleared when the whole session ends.
@@ -177,29 +179,59 @@ final class DictationController {
     // MARK: Mode selection
 
     func refreshActiveMode() {
+        // With Auto routing on, "Auto" IS the active mode as far as the UI is concerned; the
+        // stored activeModeID keeps the user's last real mode for when Auto is turned off.
+        if settings.autoContextMode {
+            activeMode = BuiltInModes.auto
+            return
+        }
         activeMode = modeStore.mode(withID: settings.activeModeID) ?? BuiltInModes.raw
         if activeMode.usesAI { aiTransformer.prewarm(instructions: activeMode.instructions) }
     }
 
+    /// Deliberate selection (menus, panel): picking Auto turns Auto routing on; picking any real
+    /// mode is an explicit manual choice, so Auto routing turns off.
     func selectMode(_ mode: Mode) {
-        settings.activeModeID = mode.id
+        if mode.id == BuiltInModes.auto.id {
+            settings.autoContextMode = true
+        } else {
+            settings.autoContextMode = false
+            settings.activeModeID = mode.id
+        }
         refreshActiveMode()
     }
 
-    /// Modes offered by the panel / switcher (engaged only).
-    var switchableModes: [Mode] { modeStore.allModes.filter(\.isEngaged) }
+    /// Modes offered by the panel / switcher (engaged only). When Auto mode is enabled it takes
+    /// slot 1 everywhere (digit keys, menu bar numbering); everything else shifts down. When it's
+    /// off it disappears from switchers but stays available on the Modes page and in Settings.
+    var switchableModes: [Mode] {
+        (settings.autoContextMode ? [BuiltInModes.auto] : []) + modeStore.allModes.filter(\.isEngaged)
+    }
 
     /// Switch modes from the floating panel, mid-dictation included: the in-flight session
     /// adopts the new mode's AI cleanup, dictionaries, and output. (The transcription model
     /// and language can't change mid-session; they apply from the next dictation.)
     func switchMode(_ mode: Mode) {
+        // Mid-dictation, with Auto on, a digit pick is a ONE-OFF override: this session uses the
+        // chosen mode, Auto stays on for the next dictation. Digit 1 (Auto) restores routing.
+        if isBusy, settings.autoContextMode {
+            if mode.id == BuiltInModes.auto.id {
+                sessionAutoSuspended = false
+                activeMode = BuiltInModes.auto
+            } else {
+                sessionAutoSuspended = true
+                sessionMode = mode
+                activeMode = mode
+            }
+            return
+        }
         selectMode(mode)
         if isBusy { sessionMode = mode }
     }
 
     func cycleMode() {
         // Only cycle through engaged modes; a mode turned off in its editor is skipped.
-        let modes = modeStore.allModes.filter(\.isEngaged)
+        let modes = switchableModes
         guard !modes.isEmpty else { return }
         let idx = modes.firstIndex { $0.id == settings.activeModeID } ?? -1
         selectMode(modes[(idx + 1) % modes.count])
@@ -266,7 +298,10 @@ final class DictationController {
                                           appBundleID: bundleID,
                                           overrides: settings.perAppModeOverrides)
         sessionMode = mode
-        activeMode = mode
+        sessionAutoSuspended = false
+        // With Auto routing on, the UI keeps saying "Auto"; sessionMode stays the resolved real
+        // mode as the routing fallback.
+        activeMode = settings.autoContextMode ? BuiltInModes.auto : mode
         sessionBundleID = bundleID
         // Selected-text is a synchronous Accessibility IPC that can stall on a busy target
         // app; read it off the main actor so it never delays the start of recording.
@@ -279,7 +314,7 @@ final class DictationController {
         // If this session's cleanup runs on a GGUF, start loading it NOW, in parallel with the
         // recording, so the model is warm by the time transcription finishes. Loading at app
         // launch instead kept ~2GB resident for users who never touch an AI mode.
-        if mode.usesAI {
+        if mode.usesAI || settings.autoContextMode {
             let cleanupID = mode.languageModelID ?? settings.selectedLanguageModelID
             if cleanupID != "apple", let cleanupModel = models.model(id: cleanupID),
                cleanupModel.runtime == .llamaCpp,
@@ -318,7 +353,7 @@ final class DictationController {
         // The Utility hub scratchpad shows its own inline waveform, so skip the floating panel.
         if settings.showRecordingPanel, scratchpadSink == nil { onPresentPanel?() }
 
-        if mode.includeSelectedText {
+        if mode.includeSelectedText || settings.autoContextMode {
             let sid = sessionID
             Task.detached(priority: .userInitiated) { [weak self] in
                 let selected = AccessibilityReader.focusedSelectedText()
@@ -408,7 +443,76 @@ final class DictationController {
                 let raw = try await engine.endSession()
                 yapdiag("stop: endSession raw.len=\(raw.count) sid==cur:\(sid == sessionID)")
                 guard sid == sessionID else { return }   // cancelled while finishing
-                var text = vocabulary.apply(to: raw, dictionaryIDs: sessionMode.dictionaryIDs)
+
+                // AUTO MODE: pick the post-processor from what was said, where it's going, and
+                // how the user asked. Signals, cheapest first: trailing spoken directive ->
+                // heuristic text screen -> destination-app bias -> one-word AI tiebreak.
+                var source = raw
+                if settings.autoContextMode, !sessionAutoSuspended,
+                   !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    var extras: [String] = []
+
+                    // Trailing spoken directive ("... make that formal") is a command, not content.
+                    if let (stripped, directive) = AutoContext.extractDirective(source) {
+                        source = stripped
+                        extras.append(directive)
+                        yapdiag("auto: directive=\(directive)")
+                    }
+
+                    let verdict: AutoContext.Verdict
+                    if let quick = AutoContext.screen(source) {
+                        verdict = quick
+                    } else if let bias = AutoContext.destinationBias(bundleID: sessionBundleID) {
+                        verdict = bias
+                        yapdiag("auto: destination bias from \(sessionBundleID ?? "?")")
+                    } else {
+                        setPhase(.transforming)
+                        transformingDetail = "Reading the room…"
+                        verdict = await classifyForAutoMode(source)
+                        transformingDetail = nil
+                    }
+                    guard sid == sessionID else { return }
+
+                    var chosen: Mode
+                    switch verdict {
+                    case .email:   chosen = modeStore.mode(withID: BuiltInModes.email.id) ?? BuiltInModes.email
+                    case .message: chosen = modeStore.mode(withID: BuiltInModes.rawTranscriptionID) ?? BuiltInModes.raw
+                    case .note:    chosen = modeStore.mode(withID: BuiltInModes.note.id) ?? BuiltInModes.note
+                    case .code:    chosen = modeStore.mode(withID: BuiltInModes.code.id) ?? BuiltInModes.code
+                    case .cleanup:
+                        // Auto's default pass repairs the transcript, it does NOT edit the user's
+                        // voice: Clean Up's rewrite instructions are replaced with a conservative
+                        // fix-what-was-misheard prompt.
+                        chosen = modeStore.mode(withID: BuiltInModes.clean.id) ?? BuiltInModes.clean
+                        chosen.instructions = AutoContext.conservativeCleanup
+                    }
+                    // Formatting verdicts may change LAYOUT, never the user's wording or tone -
+                    // unless the user explicitly spoke a directive, which takes precedence.
+                    if verdict != .message, extras.isEmpty {
+                        extras.append(AutoContext.preserveGuard)
+                    }
+
+                    // Letter-shaped text: carry the recipient into the formatting.
+                    if verdict == .email, let name = AutoContext.recipient(in: source) {
+                        extras.append("The recipient's name is \(name). Address them naturally.")
+                    }
+                    // A directive forces an AI pass even when the base verdict keeps words as spoken.
+                    if !extras.isEmpty, !chosen.usesAI {
+                        chosen = modeStore.mode(withID: BuiltInModes.clean.id) ?? BuiltInModes.clean
+                    }
+                    if chosen.usesAI {
+                        chosen.includeSelectedText = true   // reply context captured at record start
+                        extras.append("Write in the same language the user dictated. Do not translate.")
+                        if context.selectedText?.isEmpty == false {
+                            extras.append("The user is replying to the text they had selected (provided as reference). Write their message accordingly; output ONLY their message.")
+                        }
+                        chosen.instructions += "\n" + extras.map { "- " + $0 }.joined(separator: "\n")
+                    }
+                    yapdiag("auto: verdict=\(verdict.rawValue) mode=\(chosen.name) extras=\(extras.count) replyCtx=\(context.selectedText?.count ?? 0)")
+                    sessionMode = chosen
+                }
+
+                var text = vocabulary.apply(to: source, dictionaryIDs: sessionMode.dictionaryIDs)
 
                 if sessionMode.usesAI, cleanupAvailable(for: sessionMode), !text.isEmpty {
                     // Cold GGUF load: tell the user what the wait is, so they don't cancel.
@@ -449,19 +553,28 @@ final class DictationController {
 
     /// Re-activate the app captured at record-start and wait (up to ~500ms) until it is actually
     /// frontmost, so a paste can't miss. No-op if we never had a target or it's already frontmost.
-    private func focusTargetApp() async {
-        guard let app = sessionTargetApp, !app.isTerminated else { return }
-        _ = await activate(app)
+    /// Bring the session's target app forward. Returns false only when there IS a known target
+    /// and it refused to come frontmost - the caller then falls back to the clipboard instead of
+    /// pasting into whatever random window is in front.
+    private func focusTargetApp() async -> Bool {
+        guard let app = sessionTargetApp, !app.isTerminated else { return true }
+        return await activate(app)
     }
 
-    /// Bring `app` to the front and wait (up to ~500ms) until it actually is, so a paste/type can't
-    /// miss. Returns true once it's frontmost (or already was), false if it never came forward.
+    /// Bring `app` to the front and wait (up to ~1.2s, with a second nudge) until it actually is,
+    /// so a paste/type can't miss. Returns true once it's frontmost (or already was).
     private func activate(_ app: NSRunningApplication) async -> Bool {
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return true }
         app.activate()
-        for _ in 0..<20 {
+        for attempt in 0..<48 {
             try? await Task.sleep(nanoseconds: 25_000_000)
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return true }
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
+                // Frontmost is necessary but not sufficient: give the key window a beat to
+                // actually accept events before any keystroke is posted.
+                try? await Task.sleep(nanoseconds: 60_000_000)
+                return true
+            }
+            if attempt == 20 { app.activate() }   // second nudge halfway through
         }
         return false
     }
@@ -488,11 +601,35 @@ final class DictationController {
                 }
                 // Make sure the app the user dictated into is frontmost before we paste, so the
                 // text can't land in a window they clicked mid-transcription (or in YapToText).
-                if target != .clipboardOnly { await focusTargetApp() }
-                yapdiag("finish: delivering \(delivered.count) chars target=\(target) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") method=\(sessionMode.insertionMethod?.rawValue ?? settings.insertionMethod.rawValue)")
-                TextInserter.deliver(delivered, target: target,
+                var deliveryTarget = target
+                if target != .clipboardOnly {
+                    // If the user DELIBERATELY switched to another app mid-dictation, honor it:
+                    // paste where their cursor is now. Only drag focus back to the origin app
+                    // when the thing in front is YapToText itself (panel click) or nothing usable.
+                    let front = NSWorkspace.shared.frontmostApplication
+                    let frontIsSelf = front?.bundleIdentifier == Bundle.main.bundleIdentifier
+                    let userSwitched = front != nil && !frontIsSelf
+                        && front!.processIdentifier != sessionTargetApp?.processIdentifier
+                        && front!.activationPolicy == .regular
+                    if userSwitched {
+                        yapdiag("finish: user switched to \(front!.localizedName ?? "?") mid-dictation; pasting there")
+                    }
+                    let focused = userSwitched ? true : await focusTargetApp()
+                    if !focused {
+                        // The target never came forward. Pasting now would dump the text into
+                        // whatever IS forward - worse than not pasting. Keep it on the clipboard
+                        // and say so.
+                        yapdiag("finish: target app never came frontmost; falling back to clipboard")
+                        deliveryTarget = .clipboardOnly
+                    }
+                }
+                yapdiag("finish: delivering \(delivered.count) chars target=\(deliveryTarget) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") method=\(sessionMode.insertionMethod?.rawValue ?? settings.insertionMethod.rawValue)")
+                TextInserter.deliver(delivered, target: deliveryTarget,
                                      method: sessionMode.insertionMethod ?? settings.insertionMethod,
                                      restoreClipboard: settings.restoreClipboard)
+                if deliveryTarget == .clipboardOnly, target != .clipboardOnly {
+                    announce("Copied to clipboard")
+                }
             }
             if text.isEmpty {
                 announce("Nothing heard")
@@ -808,6 +945,18 @@ final class DictationController {
         return out
     }
 
+    /// One-word AI classification for Auto mode's ambiguous cases. Any failure or absence of an
+    /// engine degrades safely to Clean Up.
+    private func classifyForAutoMode(_ text: String) async -> AutoContext.Verdict {
+        let probe = Mode(name: "Classifier", usesAI: true, instructions: AutoContext.aiPrompt)
+        guard let transformer = cleanupTransformer(for: probe) else { return .cleanup }
+        let sample = String(text.prefix(400))
+        guard let reply = try? await transformer.transform(sample, mode: probe, context: TransformContext()) else {
+            return .cleanup
+        }
+        return AutoContext.verdict(fromAI: reply)
+    }
+
     // MARK: Cleanup engine routing
 
     /// The cleanup transformer to use: a downloaded GGUF (per-mode override, else the global
@@ -854,6 +1003,18 @@ final class DictationController {
     }
 
     /// One cleanup call, whichever engine is selected. Falls back to the input on empty/failed.
+    /// True when the model ECHOED reference material (the selected text or clipboard fed in as
+    /// context) instead of writing the user's words: nearly all of the output's words come from
+    /// the reference. Reference is context, never content - an echo must never be pasted.
+    private static func echoesReference(_ output: String, _ reference: String?) -> Bool {
+        guard let ref = reference, ref.count > 80 else { return false }
+        let outWords = output.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        guard outWords.count > 15 else { return false }
+        let refSet = Set(ref.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }))
+        let overlap = outWords.filter { refSet.contains($0) }.count
+        return Double(overlap) / Double(outWords.count) > 0.85
+    }
+
     private func runCleanup(_ text: String, mode: Mode, context: TransformContext) async -> String {
         guard let transformer = cleanupTransformer(for: mode) else { return text }
         guard let cleaned = try? await transformer.transform(text, mode: mode, context: context),
@@ -871,6 +1032,12 @@ final class DictationController {
         let outWords = cleaned.split(whereSeparator: \.isWhitespace).count
         if inWords > 0, outWords > max(inWords * 3, inWords + 40) {
             yapdiag("cleanup: discarded over-expanded output (\(inWords)->\(outWords) words)")
+            return text
+        }
+        // Reference-echo guard: output that is essentially the SELECTION or CLIPBOARD came from
+        // the context, not the dictation - keep the user's own words instead.
+        if Self.echoesReference(cleaned, context.selectedText) || Self.echoesReference(cleaned, context.clipboard) {
+            yapdiag("cleanup: discarded reference-echo output, using raw transcript")
             return text
         }
         return cleaned
@@ -955,7 +1122,20 @@ final class DictationController {
     func applyAIAction(instructions: String, to text: String) async throws -> String {
         let action = Mode(name: "Action", usesAI: true, instructions: instructions)
         guard let transformer = cleanupTransformer(for: action) else { return text }
-        return try await transformer.transform(text, mode: action, context: TransformContext(userName: settings.userName))
+        let out = try await transformer.transform(text, mode: action, context: TransformContext(userName: settings.userName))
+        // Same guards as the dictation pipeline: never deliver an assistant-style reply or a
+        // runaway expansion as if it were the transformed text.
+        if FoundationModelsTransformer.looksLikeAssistantResponse(out) {
+            yapdiag("aiAction: discarded assistant-style output")
+            return text
+        }
+        let inWords = text.split(whereSeparator: \.isWhitespace).count
+        let outWords = out.split(whereSeparator: \.isWhitespace).count
+        if inWords > 0, outWords > max(inWords * 3, inWords + 60) {
+            yapdiag("aiAction: discarded over-expanded output (\(inWords)->\(outWords))")
+            return text
+        }
+        return out
     }
 
     // MARK: Utility hub
@@ -987,6 +1167,14 @@ final class DictationController {
 
     /// Speak a short status to VoiceOver / used to surface selection-editing feedback.
     func announceStatus(_ message: String) { announce(message) }
+
+    /// A user-VISIBLE transient status: shows in the panel and menu bar as a brief error-style
+    /// flash (auto-clears), and is spoken to VoiceOver. For paths whose failures used to be
+    /// silent to sighted users (selection capture, AI actions).
+    func flashStatus(_ message: String) {
+        yapdiag("status: \(message)")
+        setError(message)
+    }
 
     // MARK: VoiceOver announcements
 

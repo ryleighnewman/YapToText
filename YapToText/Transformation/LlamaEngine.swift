@@ -183,6 +183,6 @@ struct LlamaTransformer: TextTransformer {
         let raw = try await Task.detached(priority: .userInitiated) {
             try LlamaEngine.complete(modelPath: path, system: system, user: user)
         }.value
-        return FoundationModelsTransformer.sanitize(raw)
+        return FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: context.appName)
     }
 }

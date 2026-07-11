@@ -61,7 +61,11 @@ enum TextInserter {
         let borrowedToken = pb.changeCount
         postKey(0x09, flags: .maskCommand)   // Cmd+V
         if let snapshot {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            // 1.5s, not 0.3s: a busy target app (Electron, or the CPU still hot from
+            // transcription) can read the pasteboard AFTER a 0.3s restore, pasting the OLD
+            // clipboard - the classic "sometimes it just doesn't paste". The changeCount guard
+            // below still protects anything the user copies during the window.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 let pb = NSPasteboard.general
                 // Only put the user's clipboard back if nothing else claimed it meanwhile -
                 // otherwise we'd clobber something they copied during the paste window.
@@ -86,10 +90,12 @@ enum TextInserter {
             let chunk = Array(units[index..<min(index + 20, units.count)])
             if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
                 down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
+                down.setIntegerValueField(.eventSourceUserData, value: BareKeyTap.syntheticMarker)
                 down.post(tap: .cghidEventTap)
             }
             if let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
                 up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
+                up.setIntegerValueField(.eventSourceUserData, value: BareKeyTap.syntheticMarker)
                 up.post(tap: .cghidEventTap)
             }
             index += 20
@@ -105,10 +111,15 @@ enum TextInserter {
         let source = CGEventSource(stateID: .combinedSessionState)
         if let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
             down.flags = flags
+            down.setIntegerValueField(.eventSourceUserData, value: BareKeyTap.syntheticMarker)
             down.post(tap: .cghidEventTap)
         }
+        // A real keypress has width. Zero-interval synthetic down/up pairs get coalesced or
+        // dropped by some apps' event loops; 8ms makes the pair unmissable.
+        usleep(8_000)
         if let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) {
             up.flags = flags
+            up.setIntegerValueField(.eventSourceUserData, value: BareKeyTap.syntheticMarker)
             up.post(tap: .cghidEventTap)
         }
     }

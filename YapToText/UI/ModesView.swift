@@ -20,6 +20,9 @@ struct ModesView: View {
                     }
                     .listRowBackground(Color.clear)
                 }
+                Section {
+                    autoModeRow
+                }
                 if !state.modeStore.customModes.isEmpty {
                     Section("Custom") {
                         ForEach(state.modeStore.customModes) { modeRow($0) }
@@ -52,6 +55,28 @@ struct ModesView: View {
                 }
             }
         }
+    }
+
+    /// Auto mode lives at the top of the mode list, whether it's on or off. Turning it on gives
+    /// it slot 1 in every switcher; turning it off removes it from switchers but never from here.
+    private var autoModeRow: some View {
+        @Bindable var settings = state.settings
+        return HStack(spacing: 10) {
+            Image(systemName: "wand.and.sparkles").iconTint(Color.accentColor).frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Auto").font(.body.weight(.medium))
+                Text(settings.autoContextMode
+                     ? "On. It's slot 1 in the mode switcher; press 1 mid-dictation to use it, 2-9 to override once."
+                     : "Off. Turn it on to let the app read each dictation and pick the right mode by itself.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $settings.autoContextMode)
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .onChange(of: settings.autoContextMode) { state.controller.refreshActiveMode() }
+        }
+        .padding(.vertical, 4)
     }
 
     private func modeRow(_ mode: Mode) -> some View {

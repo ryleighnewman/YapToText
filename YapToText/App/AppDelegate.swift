@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let state = AppState()
     private let hotkey = HotkeyManager()
+    /// Carbon can't register a modifier-less letter; bare keys go through this event tap instead.
+    private let bareKeyTap = BareKeyTap()
     private let pauseHotkey = HotkeyManager()
     private let cycleHotkey = HotkeyManager()
     private let switcherHotkey = HotkeyManager()
@@ -69,6 +71,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // pipeline - start/stop/cancel exactly as the hotkeys would - so the Liquid Glass crash
         // can be reproduced and bisected autonomously instead of by hand.
         let dnc = DistributedNotificationCenter.default()
+        // Marketing/diagnostic navigation: jump the main window to any sidebar destination,
+        // and open the menu bar popover, from the shell (debug builds only).
+        dnc.addObserver(forName: .init("yap.debug.goto"), object: nil, queue: .main) { note in
+            if let raw = note.object as? String {
+                NotificationCenter.default.post(name: .yapShowDestination, object: raw)
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.switcher"), object: nil, queue: .main) { [weak self] _ in
+            self?.showModeSwitcher()
+        }
+        dnc.addObserver(forName: .init("yap.debug.menupopover"), object: nil, queue: .main) { [weak self] _ in
+            self?.toggleMenuPopover(nil)
+        }
         dnc.addObserver(forName: .init("yap.debug.toggle"), object: nil, queue: .main) { [weak self] _ in
             self?.state.controller.toggle()
         }
@@ -92,6 +107,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dnc.addObserver(forName: .init("yap.debug.closeWindow"), object: nil, queue: .main) { _ in
             for window in NSApp.windows where window.canBecomeMain { window.close() }
             yapdiag("debug: main windows closed")
+        }
+        dnc.addObserver(forName: .init("yap.debug.insertlast"), object: nil, queue: .main) { [weak self] _ in
+            guard let self, let text = self.state.history.records.first?.finalText else { return }
+            self.insertIntoLastApp(text)
+        }
+        dnc.addObserver(forName: .init("yap.debug.regenselect"), object: nil, queue: .main) { [weak self] _ in
+            guard let self, let mode = self.state.modeStore.allModes.first(where: { $0.usesAI }) else { return }
+            self.regenerateSelection(using: mode)
+        }
+        dnc.addObserver(forName: .init("yap.debug.regenaction"), object: nil, queue: .main) { [weak self] _ in
+            guard let self, let action = self.state.actions.actions.first else { return }
+            self.regenerateSelection(applying: action)
         }
         dnc.addObserver(forName: .init("yap.debug.phitest"), object: nil, queue: .main) { [weak self] _ in
             // Headless quality check: run one messy sentence through the bundled Phi and log it.
@@ -136,6 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                object: nil, queue: .main) { [weak self] _ in
             self?.state.permissions.refresh()
             InputLevelMonitor.shared.resume()
+            // Coming to the foreground often precedes a dictation - re-warm the mic route so the
+            // first words are never swallowed by cold input hardware.
+            if self?.state.permissions.microphoneGranted == true {
+                self?.state.controller.prewarmAudioInput()
+            }
             // Re-arm the Accessibility-dependent input readers. The Right Command monitor and the
             // digit/space tap only come alive once Accessibility is granted; if the user grants it
             // AFTER launch (or it wasn't ready at launch), the global monitor installed with no
@@ -228,18 +260,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reloadHotkey() {
+        let down: () -> Void
+        let up: (() -> Void)?
         switch state.settings.hotkeyBehavior {
         case .toggle:
-            hotkey.onKeyDown = { [weak self] in self?.state.controller.toggle() }
-            hotkey.onKeyUp = nil
+            down = { [weak self] in self?.state.controller.toggle() }
+            up = nil
         case .pushToTalk:
-            hotkey.onKeyDown = { [weak self] in
+            down = { [weak self] in
                 guard let c = self?.state.controller else { return }
                 if c.isBusy && !c.isRecording { c.cancel() } else { c.start() }
             }
-            hotkey.onKeyUp = { [weak self] in self?.state.controller.stop() }
+            up = { [weak self] in self?.state.controller.stop() }
         }
-        state.mainHotkeyActive = hotkey.register(state.settings.hotkey)
+        let combo = state.settings.hotkey
+        bareKeyTap.stop()
+        hotkey.unregister()
+        if combo.modifiers == 0 && !HotkeyRecorderField.isStandaloneKey(combo.keyCode) {
+            // A bare letter/key: Carbon ignores these, so listen via the event tap.
+            // start() returns false without Accessibility - surfaced as an inactive hotkey.
+            bareKeyTap.onKeyDown = down
+            bareKeyTap.onKeyUp = up
+            state.mainHotkeyActive = bareKeyTap.start(keyCode: combo.keyCode)
+        } else {
+            hotkey.onKeyDown = down
+            hotkey.onKeyUp = up
+            state.mainHotkeyActive = hotkey.register(combo)
+        }
     }
 
     func reloadPauseHotkey() {
@@ -292,19 +339,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shared by AI actions and the history palette so a paste can't land in the wrong app.
     private func paste(_ text: String, into target: NSRunningApplication?) async {
         guard let target, target.bundleIdentifier != Bundle.main.bundleIdentifier else {
-            state.controller.announceStatus("Lost the target app")
+            state.controller.flashStatus("Lost the target app - select text and try again")
             return
         }
-        target.activate()
-        var focused = false
-        for _ in 0..<20 {   // up to ~500ms
-            try? await Task.sleep(nanoseconds: 25_000_000)
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier {
-                focused = true; break
-            }
-        }
-        guard focused else {
-            state.controller.announceStatus("Couldn't return to the app")
+        // Robust activation (up to ~1s, with a second nudge and a settle beat) - the old 500ms
+        // loop lost the race returning from another app, which surfaced as "Couldn't return".
+        await waitUntilFrontmost(target)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
+            state.controller.flashStatus("Couldn't return to the app to paste")
             return
         }
         TextInserter.deliver(text, target: .insertAtCursor,
@@ -335,7 +377,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func insertIntoLastApp(_ text: String) {
         guard !text.isEmpty else { return }
-        let target = lastActiveOtherApp
+        // Target the app the last dictation actually belongs to (recorded in History), NOT whatever
+        // app was touched most recently - the user may have opened other apps since dictating, and
+        // "insert last" means "put my last dictation back where it came from".
+        let target: NSRunningApplication? = {
+            if let bid = state.history.records.first?.appBundleID,
+               let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first(where: { !$0.isTerminated }) {
+                return app
+            }
+            return lastActiveOtherApp   // fallback: dictation had no recorded app, or it has quit
+        }()
+        yapdiag("insertLast: target=\(target?.localizedName ?? "nil") (historyApp=\(state.history.records.first?.appName ?? "nil"), lastActive=\(lastActiveOtherApp?.localizedName ?? "nil"))")
         Task { await paste(text, into: target) }
     }
 
@@ -369,7 +421,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Quick panels (mode switcher + AI actions)
 
     func showModeSwitcher() {
-        let modes = state.modeStore.allModes.filter(\.isEngaged)
+        // The controller's canonical switch list: Auto occupies slot 1 whenever it's enabled.
+        let modes = state.controller.switchableModes
         guard !modes.isEmpty else { return }
         let items = modes.map {
             QuickPanelItem(title: $0.name, subtitle: $0.usesAI ? "AI cleanup" : "Verbatim", icon: $0.iconSystemName)
@@ -413,26 +466,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             guard let self else { return }
             // The selection lives in the previous app; bring it forward so AX can read it.
-            target?.activate()
-            try? await Task.sleep(nanoseconds: 180_000_000)
+            yapdiag("regenSelection(mode=\(mode.name)): target=\(target?.localizedName ?? "nil") front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?")")
+            await self.waitUntilFrontmost(target)
             let selection = await SelectionEditor.captureSelection()
+            yapdiag("regenSelection: captured len=\(selection?.count ?? -1)")
             guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                self.state.controller.announceStatus(TextInserter.isSecureInputActive
+                self.state.controller.flashStatus(TextInserter.isSecureInputActive
                     ? "Secure Input is on, so the selection can't be read"
                     : "Select some text first")
                 return
             }
             do {
                 let result = try await self.state.controller.preview(text, mode: mode)
+                yapdiag("regenSelection: result len=\(result.count)")
                 guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    self.state.controller.announceStatus("No changes made")
+                    self.state.controller.flashStatus("No changes made")
                     return
                 }
                 await self.paste(result, into: target)
             } catch {
-                self.state.controller.announceStatus("Couldn't regenerate the selection")
+                yapdiag("regenSelection FAILED: \(error)")
+                self.state.controller.flashStatus("Couldn't regenerate the selection")
             }
         }
+    }
+
+    /// Menu-bar path: run an AI Action (translate, summarize, custom) on whatever text is
+    /// selected in the previous app, then paste the result back over the selection.
+    func regenerateSelection(applying action: AIAction) {
+        let target = lastActiveOtherApp
+        Task { [weak self] in
+            guard let self else { return }
+            await self.waitUntilFrontmost(target)
+            let selection = await SelectionEditor.captureSelection()
+            yapdiag("regenAction(\(action.name)): target=\(target?.localizedName ?? "nil") captured len=\(selection?.count ?? -1)")
+            guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                self.state.controller.flashStatus(TextInserter.isSecureInputActive
+                    ? "Secure Input is on, so the selection can't be read"
+                    : "Select some text first")
+                return
+            }
+            self.runAIAction(action, on: text, target: target)
+        }
+    }
+
+    /// Bring `app` forward and wait until it truly is (up to ~1s), plus a settle beat so its key
+    /// window accepts the synthetic Cmd+C. A fixed 180ms lost the race on slower app switches,
+    /// which made selection capture come back empty.
+    private func waitUntilFrontmost(_ app: NSRunningApplication?) async {
+        guard let app else { return }
+        app.activate(options: [.activateIgnoringOtherApps])   // forceful: bare activate() can defer
+        for i in 0..<48 {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { break }
+            if i == 16 || i == 32 { app.activate(options: [.activateIgnoringOtherApps]) }   // re-nudge
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 80_000_000)
     }
 
     private func runAIAction(_ action: AIAction, on text: String, target: NSRunningApplication?) {
@@ -446,7 +535,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 await self.paste(result, into: target)
             } catch {
-                self.state.controller.announceStatus("AI action failed")
+                yapdiag("runAIAction FAILED: \(error)")
+                self.state.controller.flashStatus("AI action failed")
             }
         }
     }
@@ -604,6 +694,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func closeMenuPopover() { menuPopover?.performClose(nil) }
+
     @objc private func toggleMenuPopover(_ sender: Any?) {
         guard let button = statusItem?.button else { return }
         if let popover = menuPopover, popover.isShown {
@@ -614,7 +706,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: MenuBarView().environment(state))
         menuPopover = popover
+        // Make the POPOVER window key so its controls get first-click - but do NOT activate the
+        // whole app: NSApp.activate raised the main YapToText window over whatever the user was
+        // working in every time they opened the menu bar (visible as a flash of the app before
+        // regenerate switched back). Keying just the popover window is enough for its plain
+        // buttons since the Regenerate flow no longer uses nested menus.
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     private func handleCancelKey() {

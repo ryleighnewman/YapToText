@@ -72,7 +72,7 @@ struct StatsView: View {
             ("text.bubble", s.count.formatted(), "Dictations", .accentColor),
             ("textformat.abc", s.totalWords.formatted(), "Words spoken", .accentColor),
             ("clock", Stats.duration(s.totalSeconds), "Time speaking", .accentColor),
-            ("speedometer", s.wpm > 0 ? "\(s.wpm)" : "-", "Words / minute", .accentColor),
+            ("speedometer", s.wpm > 0 ? "\(s.wpm)" : "-", "Speaking pace", .accentColor),
         ]
         return HStack(spacing: 10) {
             ForEach(items, id: \.2) { item in

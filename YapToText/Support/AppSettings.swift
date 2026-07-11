@@ -178,6 +178,9 @@ final class AppSettings {
     /// 0 = right after each dictation (max energy saving), -1 = keep loaded (max speed).
     var modelCooldownSeconds: Int { didSet { save() } }
     var aiCleanupEnabled: Bool { didSet { save() } }   // master switch for the AI polish stage
+    /// Auto mode: read each dictation and pick the post-processor automatically
+    /// (email -> Email, casual chat -> as spoken, everything else -> Clean Up).
+    var autoContextMode: Bool { didSet { save() } }
     var inputGain: Double { didSet { save() } }            // manual mic boost, 1.0 = off
     var autoAmplifyInput: Bool { didSet { save() } }       // AGC: auto-boost quiet speech
 
@@ -194,6 +197,7 @@ final class AppSettings {
     var showDockIcon: Bool { didSet { save() } }
     /// The Home page's "one key is all it takes" note, dismissible via its close button.
     var hasDismissedHomeNote: Bool { didSet { save() } }
+    var hasDismissedDictionaryTip: Bool { didSet { save() } }
     /// UID of the chosen audio input device; nil follows the system default.
     var inputDeviceUID: String? { didSet { save() } }
     var showRecordingPanel: Bool { didSet { save() } }
@@ -243,6 +247,7 @@ final class AppSettings {
         var appendSpaceAfterInsert: Bool?
         var modelCooldownSeconds: Int?
         var aiCleanupEnabled: Bool?
+        var autoContextMode: Bool?
         var inputGain: Double?
         var autoAmplifyInput: Bool?
         var silenceTimeout: Double
@@ -252,6 +257,7 @@ final class AppSettings {
         var showMenuBarIcon: Bool?
         var showDockIcon: Bool?
         var hasDismissedHomeNote: Bool?
+        var hasDismissedDictionaryTip: Bool?
         var inputDeviceUID: String?
         var showRecordingPanel: Bool
         var livePreviewEnabled: Bool?
@@ -299,6 +305,7 @@ final class AppSettings {
         appendSpaceAfterInsert = loaded?.appendSpaceAfterInsert ?? true
         modelCooldownSeconds = loaded?.modelCooldownSeconds ?? 120
         aiCleanupEnabled = loaded?.aiCleanupEnabled ?? true
+        autoContextMode = loaded?.autoContextMode ?? true   // the headline feature ships ON
         inputGain = loaded?.inputGain ?? 1.0
         autoAmplifyInput = loaded?.autoAmplifyInput ?? true
         silenceTimeout = loaded?.silenceTimeout ?? 0
@@ -308,6 +315,7 @@ final class AppSettings {
         showMenuBarIcon = loaded?.showMenuBarIcon ?? true
         showDockIcon = loaded?.showDockIcon ?? true
         hasDismissedHomeNote = loaded?.hasDismissedHomeNote ?? false
+        hasDismissedDictionaryTip = loaded?.hasDismissedDictionaryTip ?? false
         inputDeviceUID = loaded?.inputDeviceUID
         showRecordingPanel = loaded?.showRecordingPanel ?? true
         livePreviewEnabled = loaded?.livePreviewEnabled ?? true
@@ -337,12 +345,12 @@ final class AppSettings {
             cancelOnDoubleEscape: cancelOnDoubleEscape,
             activeModeID: activeModeID, perAppModeOverrides: perAppModeOverrides, userName: userName,
             autoInsert: autoInsert, restoreClipboard: restoreClipboard, trimTrailingNewlines: trimTrailingNewlines,
-            appendSpaceAfterInsert: appendSpaceAfterInsert, modelCooldownSeconds: modelCooldownSeconds, aiCleanupEnabled: aiCleanupEnabled,
+            appendSpaceAfterInsert: appendSpaceAfterInsert, modelCooldownSeconds: modelCooldownSeconds, aiCleanupEnabled: aiCleanupEnabled, autoContextMode: autoContextMode,
             inputGain: inputGain, autoAmplifyInput: autoAmplifyInput,
             silenceTimeout: silenceTimeout, maxRecordingSeconds: maxRecordingSeconds,
             selectedSpeechModelID: selectedSpeechModelID, selectedLanguageModelID: selectedLanguageModelID,
             showMenuBarIcon: showMenuBarIcon, showDockIcon: showDockIcon,
-            hasDismissedHomeNote: hasDismissedHomeNote, inputDeviceUID: inputDeviceUID,
+            hasDismissedHomeNote: hasDismissedHomeNote, hasDismissedDictionaryTip: hasDismissedDictionaryTip, inputDeviceUID: inputDeviceUID,
             showRecordingPanel: showRecordingPanel, livePreviewEnabled: livePreviewEnabled, panelStyle: panelStyle, panelPosition: panelPosition, panelSize: panelSize, panelAnimation: panelAnimation,
             playSounds: playSounds, saveHistory: saveHistory, historyRetention: historyRetention,
             clearHistoryOnQuit: clearHistoryOnQuit, saveAudio: saveAudio, autoDeleteDays: autoDeleteDays,

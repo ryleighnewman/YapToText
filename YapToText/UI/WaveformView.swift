@@ -35,7 +35,7 @@ struct WaveformView: View {
                                      .init(color: .black, location: 0.78),
                                      .init(color: .clear, location: 1)],
                              startPoint: .top, endPoint: .bottom))
-        .frame(height: 38 * scale)
+        .frame(height: 44 * scale)
         .accessibilityHidden(true)
     }
 
@@ -195,7 +195,7 @@ struct WaveformView: View {
                     level: isActive ? Double(data.level) : 0.05, now: now)
 
         let midY = Double(size.height) / 2
-        let maxAmp = midY - 5 * Double(scale)
+        let maxAmp = midY - 8 * Double(scale)
         let steps = 130
         let surge = isActive ? motion.smoothSurge : 0
         let energyNow = min(1, max(0, motion.fastE * 3))

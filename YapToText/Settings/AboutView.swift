@@ -56,26 +56,40 @@ struct AboutView: View {
     // MARK: Open source & support (one row, two title-less glass boxes)
 
     private var sourceAndSupport: some View {
-        HStack(alignment: .top, spacing: Metrics.gap) {
+        // One fixed height for BOTH boxes, everything centered on the same vertical axis, and the
+        // Donate button pinned to the right edge of its box - so neither box ever looks taller or
+        // misaligned because of the button.
+        let boxHeight: CGFloat = 76
+        return HStack(spacing: Metrics.gap) {
             // Open source (left)
-            VStack(alignment: .leading, spacing: Space.m) {
-                linkRow("chevron.left.forwardslash.chevron.right", "View the source code on GitHub", SupportLinks.repo)
-                Spacer(minLength: 0)
+            Link(destination: SupportLinks.repo) {
+                HStack(spacing: Space.m) {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .iconTint(Color.accentColor)
+                        .frame(width: 22)
+                    Text("View the source code on GitHub")
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.forward").imageScale(.small).foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .padding(Metrics.cardPad)
+            .buttonStyle(.plain)
+            .padding(.horizontal, Metrics.cardPad)
+            .frame(maxWidth: .infinity)
+            .frame(height: boxHeight)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
 
             // Support (right)
-            VStack(alignment: .leading, spacing: Space.m) {
-                HStack(alignment: .top, spacing: Space.m) {
-                    Image(systemName: "heart.fill")
-                        .iconTint(.pink)
-                        .frame(width: 22)
-                    Text("This app is free forever. A tip is never expected, but would truly mean the world.")
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            HStack(spacing: Space.m) {
+                Image(systemName: "heart.fill")
+                    .iconTint(.pink)
+                    .frame(width: 22)
+                Text("Free forever. A tip is never expected, but would truly mean the world.")
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: Space.m)
                 Button("Donate") {
                     NSApp.activate(ignoringOtherApps: true)
                     SupportWindowController.shared.show(state: state)
@@ -83,11 +97,11 @@ struct AboutView: View {
                 .buttonStyle(.solid)
                 .controlSize(.small)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .padding(Metrics.cardPad)
+            .padding(.horizontal, Metrics.cardPad)
+            .frame(maxWidth: .infinity)
+            .frame(height: boxHeight)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: Also by me

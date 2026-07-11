@@ -59,6 +59,24 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            CardSection("Auto mode") {
+                Toggle("Adapt to what you're saying", isOn: $settings.autoContextMode)
+                    .toggleStyle(.switch).controlSize(.small)
+                if settings.autoContextMode, settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
+                    SubOptions {
+                        Text("One thing Auto mode needs: your name, so emails are signed by you and never with a made-up placeholder.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        TextField("Your name, e.g. Ryleigh", text: $settings.userName)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .innerWell(radius: 7)
+                            .frame(maxWidth: 260)
+                    }
+                }
+                Caption("Reads each dictation and picks the right treatment on its own: emails become emails (addressed to the person you named), casual chat stays as spoken, and the app you\u{2019}re dictating into breaks ties. End a dictation with \u{201C}make that formal\u{201D} or \u{201C}as a bullet list\u{201D} to steer it, or select text first to have it write a fitting reply. Your selected mode is ignored while this is on.")
+            }
+
             CardSection("Recording") {
                 slider("Auto-stop after silence", value: $settings.silenceTimeout, range: 0...5, step: 0.5,
                        display: settings.silenceTimeout == 0 ? "Off" : String(format: "%.1fs", settings.silenceTimeout))

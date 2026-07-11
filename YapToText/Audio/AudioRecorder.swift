@@ -69,10 +69,31 @@ final class AudioRecorder: @unchecked Sendable {
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else { return }
         prewarmActive = true
-        input.installTap(onBus: 0, bufferSize: 2048, format: format) { _, _ in }
+        let started = Date()
+        // Spin until the hardware PROVES it's awake (first non-silent buffer), not for a fixed
+        // interval: a cold route can deliver zeroed buffers for over a second, and a timed 0.7s
+        // spin of zeros warmed nothing - the first real dictation then recorded pure silence.
+        var confirmedWarm = false
+        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
+            guard !confirmedWarm, let data = buffer.floatChannelData?[0] else { return }
+            let n = Int(buffer.frameLength)
+            var peak: Float = 0
+            for i in stride(from: 0, to: n, by: 16) { peak = max(peak, abs(data[i])) }
+            if peak > 0.0005 {
+                confirmedWarm = true
+                let ms = Int(Date().timeIntervalSince(started) * 1000)
+                yapdiag("mic prewarm: route confirmed live after \(ms)ms")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.endPrewarm() }
+            }
+        }
         engine.prepare()
         try? engine.start()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.endPrewarm() }
+        // Cap: if no live audio in 4s (muted hardware mic, no ambient signal), stop anyway.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            guard let self, self.prewarmActive else { return }
+            if !confirmedWarm { yapdiag("mic prewarm: no live signal within 4s, stopping") }
+            self.endPrewarm()
+        }
     }
 
     private func endPrewarm() {

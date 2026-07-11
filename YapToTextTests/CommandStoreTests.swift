@@ -16,6 +16,7 @@ final class CommandStoreTests: XCTestCase {
 
     func testPunctuationAttachesWithoutLeadingSpace() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         XCTAssertEqual(store.apply(to: "hello exclamation point"), "hello!")
         XCTAssertEqual(store.apply(to: "wait comma then go"), "wait, then go")
         XCTAssertEqual(store.apply(to: "really question mark"), "really?")
@@ -23,30 +24,35 @@ final class CommandStoreTests: XCTestCase {
 
     func testNewLineAndParagraph() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         XCTAssertEqual(store.apply(to: "line one new line line two"), "line one\nline two")
         XCTAssertEqual(store.apply(to: "para one new paragraph para two"), "para one\n\npara two")
     }
 
     func testEmojiInsertion() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         XCTAssertEqual(store.apply(to: "great work fire emoji"), "great work 🔥")
         XCTAssertEqual(store.apply(to: "nice thumbs up emoji"), "nice 👍")
     }
 
     func testWholeWordBoundaryDoesNotFireInsideWords() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         // "period" must not trigger inside "periodic".
         XCTAssertEqual(store.apply(to: "the periodic table"), "the periodic table")
     }
 
     func testMasterDisableLeavesTextUntouched() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         store.isEnabled = false
         XCTAssertEqual(store.apply(to: "hello exclamation point"), "hello exclamation point")
     }
 
     func testDisablingOneCommandStopsIt() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         guard let period = store.commands.first(where: { $0.triggers.contains("period") }) else {
             return XCTFail("missing default")
         }
@@ -56,6 +62,7 @@ final class CommandStoreTests: XCTestCase {
 
     func testMultipleTriggersForOneCommand() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         // The "!" command ships with several phrases; each maps to the same symbol.
         XCTAssertEqual(store.apply(to: "wow bang"), "wow!")
         XCTAssertEqual(store.apply(to: "wow exclamation"), "wow!")
@@ -64,6 +71,7 @@ final class CommandStoreTests: XCTestCase {
 
     func testCustomTriggerIsHonored() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         guard var bang = store.commands.first(where: { $0.triggers.contains("exclamation point") }) else {
             return XCTFail("missing default")
         }
@@ -74,6 +82,7 @@ final class CommandStoreTests: XCTestCase {
 
     func testRequireInsertPrefix() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         store.requireInsertPrefix = true
         // Bare trigger no longer fires...
         XCTAssertEqual(store.apply(to: "the meeting period"), "the meeting period")
@@ -91,6 +100,7 @@ final class CommandStoreTests: XCTestCase {
 
     func testSnippetDefaultsFire() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         let year = String(Calendar.current.component(.year, from: Date()))
         XCTAssertTrue(store.apply(to: "today's date").contains(year))
         XCTAssertTrue(store.apply(to: "shrug face").contains("ツ"))
@@ -106,18 +116,21 @@ final class CommandStoreTests: XCTestCase {
 
     func testNoCommandFiredLeavesSpacingAlone() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         // Nothing matches here, so the spacing-tidy pass must not run and collapse the spaces.
         XCTAssertEqual(store.apply(to: "a  b"), "a  b")
     }
 
     func testDoesNotTouchDictatedPunctuationElsewhere() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         // A command firing must not collapse an unrelated spelled-out decimal ("3 . 14").
         XCTAssertEqual(store.apply(to: "the value is 3 . 14 exclamation point"), "the value is 3 . 14!")
     }
 
     func testPersistenceRoundTrip() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         store.isEnabled = false
         let added = store.add(category: .emoji)
         var edited = added
@@ -133,6 +146,7 @@ final class CommandStoreTests: XCTestCase {
 
     func testRestoreDefaultsForCategoryOnly() {
         let store = CommandStore()
+        store.requireInsertPrefix = false
         // Mangle a punctuation command and add an emoji one.
         if let period = store.commands.first(where: { $0.triggers.contains("period") }) {
             store.delete(period)

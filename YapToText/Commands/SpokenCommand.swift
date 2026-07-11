@@ -4,9 +4,10 @@ import Foundation
 /// ("exclamation point" -> "!"); Emoji turns spoken names into emoji ("fire emoji" -> 🔥).
 /// They are kept as separate categories because they read and edit differently.
 enum CommandCategory: String, Codable, CaseIterable, Identifiable {
+    // Declaration order drives the tab order: Snippets, Punctuation, Emoji.
+    case snippet
     case punctuation
     case emoji
-    case snippet
     var id: String { rawValue }
     var label: String {
         switch self {

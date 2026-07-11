@@ -11,11 +11,16 @@ struct HotkeyRecorderField: NSViewRepresentable {
     /// Shown when no combo is set - lets a row surface a built-in default (e.g. the dictation
     /// pause key showing "Space") instead of a misleading "Not set".
     var placeholder: String = "Not set"
+    /// Start listening the moment the field appears (used in onboarding, where the row invites
+    /// "press your keys" - without this the field is deaf until clicked, which reads as the app
+    /// not seeing the keyboard at all).
+    var autoStart: Bool = false
 
     func makeNSView(context: Context) -> RecorderNSView {
         let view = RecorderNSView()
         view.allowsEmpty = allowsEmpty
         view.placeholder = placeholder
+        view.autoStart = autoStart
         view.combo = combo
         view.onChange = { context.coordinator.commit($0) }
         return view
@@ -59,6 +64,7 @@ final class RecorderNSView: NSView {
     var combo: KeyCombo?
     var allowsEmpty = true
     var placeholder = "Not set"
+    var autoStart = false
     var onChange: ((KeyCombo?) -> Void)?
     private(set) var isRecording = false
     private var keyMonitor: Any?
@@ -90,6 +96,18 @@ final class RecorderNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         isRecording ? stopRecording() : startRecording()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Arm immediately when asked: the onboarding row promises "press your keys", so the
+        // field must already be listening when it appears, not after a click nobody knows to make.
+        if autoStart, window != nil, combo == nil, !isRecording {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil, !self.isRecording else { return }
+                self.startRecording()
+            }
+        }
     }
 
     private func startRecording() {
@@ -142,11 +160,9 @@ final class RecorderNSView: NSView {
             stopRecording()
             return
         }
+        // Any key is a valid shortcut, including a bare letter or function key. A modifier-less
+        // key does hijack that key globally - the UI warns about that where the combo is set.
         let mods = HotkeyRecorderField.carbonModifiers(from: event.modifierFlags)
-        guard mods != 0 || HotkeyRecorderField.isStandaloneKey(keyCode) else {
-            NSSound.beep()   // needs at least one modifier (or a function key)
-            return
-        }
         let newCombo = KeyCombo(keyCode: keyCode, modifiers: mods)
         combo = newCombo
         onChange?(newCombo)
