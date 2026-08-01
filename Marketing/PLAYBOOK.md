@@ -42,7 +42,16 @@ One Python/PIL script generates all ten posters from raw PNG captures. Core conv
   ±10 degree tilts; a row of gray SF Symbols; state variants of the menu bar glyph
   recolored in code.
 
-Run it: `python3 tools/posters.py` (needs Pillow). Output goes to a folder on the Desktop.
+Run it FROM the `Marketing/` folder: `python3 tools/posters.py` (needs Pillow). It reads
+`../shots` and writes `../posters` — all paths relative, nothing points at a temp directory.
+
+**Layout is hand-tuned by eye, and that is normal.** Every window/panel position is just a
+`place(canvas, sheet, pad, centerX, topY, targetWidth)` call. Two knobs do everything:
+`topY` moves a capture up/down, `targetWidth` makes it bigger/smaller (a paired window grows
+"down and to the left" by lowering its centerX and raising its width). Expect the person you
+are working for to review each poster and say "move it up," "make it bigger," "equal spacing
+under the title" — that is the real workflow, not a failure. Change ONE number, regenerate,
+show them, repeat. Do not try to nail all positions in one shot.
 
 ## 2. Staging the Mac (do this BEFORE any capture)
 
@@ -139,6 +148,10 @@ More hard-won rules:
   fullscreen cover behind them. Use the -l + synthetic backdrop trick.
 - First capture after a staging change is often washed out - give every transition 1-6s.
 - Check EVERY capture at full size before compositing. Glass leaks read as tiny text.
+- VERIFY CORNERS AT ZOOM before calling a poster done. Crop a ~200px box around a window
+  corner and `resize(x3, NEAREST)` — pixelated staircase edges are invisible at page size
+  but obvious once zoomed, and the person WILL see them on their screen. Do this after any
+  masking change. A clean corner is a smooth anti-aliased curve; a bad one has hard steps.
 - NEVER hand-crop a panel's edges to remove fringe (a fixed "crop 13px off the left"). It
   mangles the shape and makes backgrounds look wrong. The correct trim is always the
   window's OWN alpha from a `-l` capture of the same window: region-capture for the glass,

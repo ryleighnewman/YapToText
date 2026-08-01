@@ -26,6 +26,10 @@ enum TranscriptionError: LocalizedError {
 /// a whisper.cpp backend can be dropped in behind the same contract.
 protocol TranscriptionEngine: AnyObject {
     var displayName: String { get }
+    /// A short status shown in the panel if this engine will need to LOAD a model before it can
+    /// transcribe (e.g. a cold Whisper context). nil = nothing heavy to load (Apple Speech), so the
+    /// normal "Transcribing…" label shows. Lets a slow first transcribe read as loading, not stuck.
+    var modelLoadingDetail: String? { get }
     func isAvailable() async -> Bool
     /// Ensure the locale model is installed. May download; reports 0...1 progress.
     func prepare(localeIdentifier: String, progress: (@Sendable (Double) -> Void)?) async throws
@@ -37,4 +41,9 @@ protocol TranscriptionEngine: AnyObject {
     func endSession() async throws -> String
     /// Abort without producing a result.
     func cancel() async
+}
+
+extension TranscriptionEngine {
+    /// Default: no heavy model to load (Apple Speech). Whisper overrides this.
+    var modelLoadingDetail: String? { nil }
 }

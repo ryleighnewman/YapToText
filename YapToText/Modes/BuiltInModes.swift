@@ -37,6 +37,8 @@ enum BuiltInModes {
         - Fix grammar, capitalization, and punctuation.
         - Convert spoken URLs and email addresses into proper form.
         - Keep the user's wording, tone, and language. Do not translate. If unsure whether something is an error, keep it as spoken.
+        - Keep their exact register: do not formalize casual words, and do not soften or tone down blunt, harsh, or profane language. Keep every clause they said, including asides like "note to self" or "keep it short".
+        - Normalize spoken numbers to digits, but never append a unit or time of day they did not say (do not turn "three fifty" into "350 degrees" or "nine" into "9 AM").
         - Output ONLY the cleaned text, with no preamble, quotes, or commentary.
         """,
         isBuiltIn: true,

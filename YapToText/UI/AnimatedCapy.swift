@@ -1,4 +1,20 @@
 import SwiftUI
+import AppKit
+
+/// Hosts an animating subtree in its OWN NSHostingView so its per-frame invalidations
+/// can never dirty the parent window's layout (the parent is a Liquid Glass window -
+/// re-laying it per tick is exactly the cost this exists to avoid).
+struct IsolatedAnimationHost<Content: View>: NSViewRepresentable {
+    @ViewBuilder var content: () -> Content
+    func makeNSView(context: Context) -> NSHostingView<Content> {
+        let v = NSHostingView(rootView: content())
+        v.sizingOptions = []   // parent pins the frame; no intrinsic-size feedback loop
+        return v
+    }
+    func updateNSView(_ v: NSHostingView<Content>, context: Context) {
+        v.rootView = content()
+    }
+}
 
 /// The Home hero capybara, alive. Rendered in a single GPU `Canvas` (cheap per frame, so it stays
 /// smooth) driven by one `TimelineView(.animation)`, and only while the Home view is on screen:
@@ -9,6 +25,8 @@ import SwiftUI
 struct AnimatedCapy: View {
     var size: CGFloat = 76
     var tint: Color = .primary
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var activeState
 
     // Positions measured from the 512x512 art (top-left origin, as fractions).
     private let dotFX: [CGFloat] = [0.750, 0.818, 0.887]
@@ -21,13 +39,21 @@ struct AnimatedCapy: View {
     private let snoutFY: CGFloat = 0.52
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            Canvas { ctx, sz in draw(ctx, sz, t: t) } symbols: {
-                Image("CapyNoDots").resizable().scaledToFit()
-                    .foregroundStyle(tint).tag(0)
+        // ISOLATED in its own nested NSHostingView: a TimelineView tick invalidates its
+        // hosting view's layout, and when that hosting view is the whole glass window,
+        // every tick re-ran the window's Liquid Glass layout (~20% CPU measured while
+        // the Home screen was frontmost). Nested, a tick re-lays only this tiny canvas.
+        // Also: 12fps (plenty for blinks and the dot bounce) and fully paused when the
+        // window isn't key - decoration never costs anything in the background.
+        IsolatedAnimationHost {
+            TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: reduceMotion || activeState == .inactive)) { timeline in
+                let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+                Canvas { ctx, sz in draw(ctx, sz, t: t) } symbols: {
+                    Image("CapyNoDots").resizable().scaledToFit()
+                        .foregroundStyle(tint).tag(0)
+                }
+                .frame(width: size, height: size)
             }
-            .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)

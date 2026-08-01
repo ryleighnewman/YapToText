@@ -65,20 +65,174 @@ enum MenuBarIcon {
     private static let dotFX: [Double] = [0.750, 0.818, 0.887]
     private static let dotFY = 0.252, dotFR = 0.019
 
-    static func image(phase: DictationController.Phase, pulse: Double, spin: Double, lid: Double = 0, clock: Double = 0) -> NSImage {
+    static func image(phase: DictationController.Phase, pulse: Double, spin: Double, lid: Double = 0,
+                      clock: Double = 0, style: MenuBarIconStyle = .capybara, colored: Bool = true,
+                      levels: [Float] = [], waveformTint: NSColor? = nil) -> NSImage {
         if frozenForDiagnostics {
             if let frozenImage { return frozenImage }
             let still = render(phase: .idle, pulse: 0, spin: 0, lid: 0, clock: 0)
             frozenImage = still
             return still
         }
-        return render(phase: phase, pulse: pulse, spin: spin, lid: lid, clock: clock)
+        switch style {
+        case .capybara:
+            return render(phase: phase, pulse: pulse, spin: spin, lid: lid, clock: clock, colored: colored)
+        case .microphone:
+            return renderMicrophone(phase: phase, pulse: pulse, spin: spin, colored: colored)
+        case .waveform:
+            return renderWaveform(phase: phase, levels: levels, tint: colored ? waveformTint : nil)
+        case .bubble:
+            return renderSymbol(filled: "bubble.left.fill", outline: "bubble.left",
+                                phase: phase, pulse: pulse, spin: spin, colored: colored)
+        case .dot:
+            return renderDot(phase: phase, pulse: pulse, spin: spin, colored: colored)
+        }
     }
 
-    private static func render(phase: DictationController.Phase, pulse: Double, spin: Double, lid: Double, clock: Double) -> NSImage {
+    /// Generic SF-Symbol style (speech bubble, and any future symbol icon): outline when idle,
+    /// filled while recording, tinted by state when colored, spinner while processing.
+    private static func renderSymbol(filled: String, outline: String,
+                                     phase: DictationController.Phase, pulse: Double, spin: Double,
+                                     colored: Bool) -> NSImage {
+        let size = NSSize(width: 20, height: 18)
         let processing: Bool
         switch phase { case .transcribing, .transforming: processing = true; default: processing = false }
-        let tint = bubbleTint(phase, pulse: pulse)   // nil = idle (adaptive template)
+        let tint: NSColor? = colored ? bubbleTint(phase, pulse: pulse) : nil
+        let symbolName = phase == .recording ? filled : outline
+        let image = NSImage(size: size, flipped: false) { rect in
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            if let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                let tinted = NSImage(size: symbol.size, flipped: false) { r in
+                    symbol.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
+                    (tint ?? .labelColor).set()
+                    r.fill(using: .sourceAtop)
+                    return true
+                }
+                let mr = NSRect(x: (rect.width - symbol.size.width) / 2,
+                                y: (rect.height - symbol.size.height) / 2,
+                                width: symbol.size.width, height: symbol.size.height)
+                tinted.draw(in: mr, from: .zero, operation: .sourceOver, fraction: 1)
+            }
+            if processing {
+                drawSpinner(in: NSRect(x: rect.width - 13, y: rect.height - 13, width: 16, height: 16), spin: spin)
+            }
+            return true
+        }
+        image.isTemplate = (tint == nil && !processing)
+        image.accessibilityDescription = "YapToText"
+        return image
+    }
+
+    /// The quietest possible presence: one small dot. Breathes with the recording pulse,
+    /// tinted by state when colored, spinner while processing.
+    private static func renderDot(phase: DictationController.Phase, pulse: Double, spin: Double,
+                                  colored: Bool) -> NSImage {
+        let size = NSSize(width: 16, height: 18)
+        let processing: Bool
+        switch phase { case .transcribing, .transforming: processing = true; default: processing = false }
+        let tint: NSColor? = colored ? bubbleTint(phase, pulse: pulse) : nil
+        let image = NSImage(size: size, flipped: false) { rect in
+            let base: CGFloat = phase == .recording ? 7 + 2 * CGFloat(pulse) : 7
+            let dot = NSRect(x: rect.midX - base / 2, y: rect.midY - base / 2, width: base, height: base)
+            (tint ?? .labelColor).setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            if processing {
+                drawSpinner(in: NSRect(x: rect.width - 13, y: rect.height - 13, width: 16, height: 16), spin: spin)
+            }
+            return true
+        }
+        image.isTemplate = (tint == nil && !processing)
+        image.accessibilityDescription = "YapToText"
+        return image
+    }
+
+    /// Microphone style: the standard SF Symbols mic, tinted by dictation state (red while
+    /// recording, green on insert, orange on error) and paired with the processing spinner.
+    /// With colored status off, it stays a monochrome template in every state.
+    private static func renderMicrophone(phase: DictationController.Phase, pulse: Double, spin: Double, colored: Bool) -> NSImage {
+        let size = NSSize(width: 20, height: 18)
+        let processing: Bool
+        switch phase { case .transcribing, .transforming: processing = true; default: processing = false }
+        let tint: NSColor? = colored ? bubbleTint(phase, pulse: pulse) : nil
+        let symbolName = phase == .recording ? "mic.fill" : "mic"
+        let image = NSImage(size: size, flipped: false) { rect in
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+            if let mic = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                let tinted = NSImage(size: mic.size, flipped: false) { r in
+                    mic.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1)
+                    (tint ?? .labelColor).set()
+                    r.fill(using: .sourceAtop)
+                    return true
+                }
+                let mr = NSRect(x: (rect.width - mic.size.width) / 2,
+                                y: (rect.height - mic.size.height) / 2,
+                                width: mic.size.width, height: mic.size.height)
+                tinted.draw(in: mr, from: .zero, operation: .sourceOver, fraction: 1)
+            }
+            if processing {
+                // the same clock-spoke spinner, shrunk to sit over the mic's top-right corner
+                drawSpinner(in: NSRect(x: rect.width - 13, y: rect.height - 13, width: 16, height: 16), spin: spin)
+            }
+            return true
+        }
+        // Template whenever nothing needs color: adapts to menu bar appearance.
+        image.isTemplate = (tint == nil && !processing)
+        image.accessibilityDescription = "YapToText"
+        return image
+    }
+
+    /// Mini waveform style: a small bar visualizer drawn from the live mic levels. Monochrome
+    /// template by default; with a `tint` (the user's visualizer color, gated by the colored
+    /// toggle) the bars render in that color instead. Idle renders a quiet flat baseline.
+    private static func renderWaveform(phase: DictationController.Phase, levels: [Float], tint: NSColor? = nil) -> NSImage {
+        let size = NSSize(width: 26, height: 18)
+        let bars = 9
+        let image = NSImage(size: size, flipped: false) { rect in
+            (tint ?? .labelColor).set()
+            let gap: CGFloat = 1.2
+            let barW = (rect.width - gap * CGFloat(bars - 1)) / CGFloat(bars)
+            let midY = rect.midY
+            // newest levels on the right. IDLE gets a designed resting wave - a soft
+            // symmetric swell (like a paused visualizer) instead of the flat dotted line
+            // that read as "broken". Any real signal replaces it instantly.
+            let idleShape: [Float] = [0.12, 0.30, 0.18, 0.55, 0.34, 0.55, 0.18, 0.30, 0.12]
+            let recent: [Float] = {
+                // The designed resting wave is the icon's HOME: anything but an active
+                // recording shows it. Gating on leftover level data instead kept stale
+                // post-session dribble on screen as a near-flat line ("completely flat",
+                // "should return to its original design").
+                guard case .recording = phase else { return idleShape }
+                let tail = levels.suffix(bars)
+                let padded = Array(repeating: Float(0), count: max(0, bars - tail.count)) + tail
+                let live = padded.contains { $0 > 0.03 }
+                return live ? padded : idleShape
+            }()
+            for i in 0..<bars {
+                // Perceptual lift: mic levels sit mostly in 0.1-0.4, which drew timid
+                // stubs. The power curve expands exactly that range so normal speech
+                // visibly dances while the ceiling still caps at the icon height.
+                let raw = min(max(recent[i], 0), 1)
+                let level = CGFloat(min(1, pow(raw, 0.6) * 1.15))
+                let h = max(1.6, level * (rect.height - 2))
+                let x = CGFloat(i) * (barW + gap)
+                let bar = NSRect(x: x, y: midY - h / 2, width: barW, height: h)
+                NSBezierPath(roundedRect: bar, xRadius: barW / 2, yRadius: barW / 2).fill()
+            }
+            return true
+        }
+        image.isTemplate = (tint == nil)   // monochrome unless the user picked a visualizer color
+        image.accessibilityDescription = "YapToText"
+        return image
+    }
+
+    private static func render(phase: DictationController.Phase, pulse: Double, spin: Double, lid: Double, clock: Double, colored: Bool = true) -> NSImage {
+        let processing: Bool
+        switch phase { case .transcribing, .transforming: processing = true; default: processing = false }
+        // colored=false (the "no color changes" setting): every state renders as the adaptive
+        // monochrome template - the bubble never tints, matching the idle look.
+        let tint = colored ? bubbleTint(phase, pulse: pulse) : nil   // nil = adaptive template
         let image = NSImage(size: box, flipped: false) { rect in
             let dst = fitted(rect)   // where the square art is drawn
             drawLayer("CapyBody", in: dst, color: .labelColor)
@@ -120,7 +274,7 @@ enum MenuBarIcon {
             }
             return true
         }
-        image.isTemplate = (phase == .idle)
+        image.isTemplate = (phase == .idle) || (!colored && !processing)
         image.accessibilityDescription = "YapToText"
         return image
     }

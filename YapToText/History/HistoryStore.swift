@@ -15,6 +15,18 @@ struct DictationRecord: Codable, Identifiable, Equatable, Hashable {
     var localeIdentifier: String
     var usedAI: Bool
     var audioFileName: String? = nil
+    // Pipeline forensics (all optional so old records still decode): exactly what happened
+    // at delivery, so a bad output can be blamed on the right stage.
+    /// What actually landed in the target (finalText plus trailing space, or a review edit).
+    var deliveredText: String? = nil
+    /// pasted / typed / copied / live-typed / reviewed / quick-edit / failed / recovered
+    var outcome: String? = nil
+    /// Seconds from stop to delivery - the transcribe+cleanup latency the user felt.
+    var processSeconds: Double? = nil
+    /// Which cleanup engine actually ran ("Apple Intelligence", the GGUF's display name) - nil if none.
+    var cleanupModel: String? = nil
+    /// Auto mode's detected verdict (email / message / note / code / cleanup) - nil outside Auto.
+    var autoVerdict: String? = nil
 
     var hasAudio: Bool { AudioStore.exists(audioFileName) }
 }
@@ -38,6 +50,10 @@ final class HistoryStore {
         self.retention = retention
         switch retention {
         case .off:
+            // History off = the recordings go too. Leaving the .caf files behind while
+            // the records vanish kept the user's voice on disk forever with nothing
+            // pointing at it - the opposite of what "Off" promises.
+            for r in records { AudioStore.delete(r.audioFileName) }
             records.removeAll()
             Persistence.save(records, to: HistoryStore.fileName)
         case .sessionOnly:

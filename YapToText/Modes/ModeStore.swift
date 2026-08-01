@@ -26,6 +26,43 @@ final class ModeStore {
     }
 
     var allModes: [Mode] { modes }
+
+    /// Drag reorder from the modes list. Digits renumber automatically (they follow order).
+    func moveModes(fromOffsets source: IndexSet, toOffset destination: Int) {
+        rememberForUndo()
+        modes.move(fromOffsets: source, toOffset: destination)
+        save()
+    }
+
+    /// Reorder: move a mode one step up or down in the master list. The switcher digits
+    /// (1-9) follow this order, so moving a mode automatically renumbers everything.
+    func move(_ mode: Mode, up: Bool) {
+        guard let i = modes.firstIndex(where: { $0.id == mode.id }) else { return }
+        let j = up ? i - 1 : i + 1
+        guard modes.indices.contains(j) else { return }
+        rememberForUndo()
+        modes.swapAt(i, j)
+        save()
+    }
+
+    // MARK: Undo (single-step, whole-list snapshots)
+
+    /// The last few states of the mode list; any edit (rename, prompt change, reorder,
+    /// delete) can be stepped back with Undo Mode Change.
+    private var undoStack: [[Mode]] = []
+
+    func rememberForUndo() {
+        undoStack.append(modes)
+        if undoStack.count > 25 { undoStack.removeFirst() }
+    }
+
+    var canUndo: Bool { !undoStack.isEmpty }
+
+    func undoLastChange() {
+        guard let previous = undoStack.popLast() else { return }
+        modes = previous
+        save()
+    }
     var builtInModes: [Mode] { modes.filter { BuiltInModes.isBuiltIn($0.id) } }
     var customModes: [Mode] { modes.filter { !BuiltInModes.isBuiltIn($0.id) } }
 
@@ -42,10 +79,21 @@ final class ModeStore {
     // MARK: Mutations (any mode, built-in or custom)
 
     func update(_ mode: Mode) {
-        guard let idx = modes.firstIndex(where: { $0.id == mode.id }) else { return }
+        guard let idx = modes.firstIndex(where: { $0.id == mode.id }) else {
+            // First edit of a virtual mode (Auto): adopt it into the store so the change persists.
+            rememberForUndo()
+            modes.insert(mode, at: 0)
+            save()
+            return
+        }
+        // Draft edits stream in per keystroke; snapshot only when a NEW edit burst begins
+        // (>2s since the last), so Undo steps back a whole edit, not one character.
+        if Date().timeIntervalSince(lastEditAt) > 2 { rememberForUndo() }
+        lastEditAt = Date()
         modes[idx] = mode
         save()
     }
+    private var lastEditAt = Date.distantPast
 
     func addCustomMode(_ mode: Mode) {
         var m = mode
@@ -57,6 +105,7 @@ final class ModeStore {
     /// Delete a custom mode. Built-in modes are reset to their default instead of removed, so a
     /// core mode can never be lost by accident (use restoreBuiltIns to bring one back).
     func delete(_ mode: Mode) {
+        rememberForUndo()
         if BuiltInModes.isBuiltIn(mode.id) {
             resetToDefault(mode)
         } else {

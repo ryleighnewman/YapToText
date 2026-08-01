@@ -7,3 +7,9 @@ xcuserdata/
 *.moved-aside
 *.xcarchive
 .swiftpm/
+
+# Superseded marketing intermediates (kept locally, not shipped)
+Marketing/posters-v2/
+Marketing/posters-v3/
+Marketing/shots-v2/
+Marketing/README-v2.md

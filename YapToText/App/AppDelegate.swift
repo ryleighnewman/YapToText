@@ -14,7 +14,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let cycleHotkey = HotkeyManager()
     private let switcherHotkey = HotkeyManager()
     private let historyHotkey = HotkeyManager()
-    private let rightCommand = ModifierKeyMonitor()
+    /// The primary dictation trigger monitor. Recreated whenever the user picks a different
+    /// physical key (the historic name stays; it watched Right Command for most of its life).
+    private var rightCommand = ModifierKeyMonitor()
+    /// The Fn/Globe key (keyCode 63) as an alternate trigger. Works when macOS's own
+    /// "Press Globe key to" action is set to Do Nothing; otherwise both fire.
+    private let fnKey = ModifierKeyMonitor(keyCode: 63, flag: .function)
+    // Quick Edit: hold Right Option over a selection, speak an instruction, release to apply.
+    private var quickEditKey = ModifierKeyMonitor(keyCode: 61, flag: .option)
+    private var quickEditKeyHeld = false
+    /// Cancel window: true while a released quick-edit command is being applied by the AI.
+    /// A DOUBLE TAP of the key during this window aborts the edit before it can paste.
+    private var quickEditApplying = false
+    private var quickEditCancelled = false
+    /// Bumped for every quick-edit apply; stale in-flight tasks compare against it so a
+    /// cancelled session's AI result can never paste after a new session reset the flags.
+    private var quickEditGeneration = 0
+    private var lastQuickEditTapAt: Date?
     /// Number keys 1-9 pick the post-processing mode while dictating (armed only then).
     private let digitTap = DigitKeyTap()
     /// Registered only while dictating (opt-in): a bare Esc that cancels on a quick double tap.
@@ -24,11 +40,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The last non-YapToText app the user was in, so "Transcribe File" and dictations started
     /// from our own window can type the result back into it.
     private(set) var lastActiveOtherApp: NSRunningApplication?
+    /// When the mic route was last warmed, so routine foreground transitions (dock click, cmd-tab,
+    /// opening Settings) don't re-power the mic hardware every time. Cleared when a dictation runs,
+    /// since starting one tears the warm engine down and the route can then genuinely cool.
+    private var lastPrewarmAt: Date?
+    /// Global activity watcher: any keystroke/click/scroll anywhere means the user is at
+    /// the machine and might dictate next - keep the mic route hot (throttled). Requires
+    /// Accessibility, which the dictation key already needs.
+    private var activityMonitor: Any?
+    private var lastActivityWarm = Date.distantPast
+    func installActivityPrewarm() {
+        guard activityMonitor == nil else { return }
+        activityMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .scrollWheel]) { [weak self] _ in
+            guard let self else { return }
+            guard Date().timeIntervalSince(self.lastActivityWarm) > 8 else { return }
+            self.lastActivityWarm = Date()
+            guard self.state.permissions.microphoneGranted,
+                  !self.state.controller.isRecording, !self.state.controller.isBusy else { return }
+            // The user is at the keyboard: make sure the SPEECH MODEL is resident too, so a
+            // cooldown eviction never turns into a multi-second stall on the next stop.
+            self.state.controller.warmSpeechModel()
+            guard !self.state.settings.keepMicWarm else { return }
+            self.state.controller.holdMicWarmForActivity()
+        }
+    }
+
+    private func prewarmMicIfStale() {
+        guard state.permissions.microphoneGranted else { return }
+        if let last = lastPrewarmAt, Date().timeIntervalSince(last) < 45 { return }
+        lastPrewarmAt = Date()
+        state.controller.prewarmAudioInput()
+    }
     /// Fires on system memory pressure so the cached speech/cleanup models can be dropped.
     private let memoryPressureSource = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // CRASH BREADCRUMBS for the diagnostics report (the sandbox cannot read macOS's
+        // own crash logs, so the app keeps its own count): if the previous run never
+        // wrote its clean-exit marker, it died uncleanly - crash, force-quit, or power.
+        let ud = UserDefaults.standard
+        if ud.object(forKey: "diag.cleanExit") != nil, ud.bool(forKey: "diag.cleanExit") == false {
+            ud.set(ud.integer(forKey: "diag.uncleanExits") + 1, forKey: "diag.uncleanExits")
+            ud.set(Date().timeIntervalSince1970, forKey: "diag.lastUncleanExit")
+        }
+        ud.set(false, forKey: "diag.cleanExit")
         AppDelegate.shared = self
+        // Build the Quick Edit popup (hidden) now, so the first key press doesn't pay
+        // NSPanel + hosting-view construction on top of the selection grab.
+        QuickEditWindow.shared.prewarm(controller: state.controller)
         // Seed with the app the user was in BEFORE launching us, so a dictation started right
         // away from our window has somewhere sensible to paste.
         if let front = NSWorkspace.shared.frontmostApplication,
@@ -41,9 +100,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.controller.onDismissPanel = { [weak self] in self?.panel?.hide() }
         state.controller.onRecordingDidStart = { [weak self] in
             guard let self else { return }
+            self.lastPrewarmAt = nil   // a dictation tears down the warm engine; allow a re-warm next foreground
             self.armCancelKey()
             self.digitTap.heldModifiers = self.pushToTalkHeldModifiers()
-            self.digitTap.start()
+            // Digit switching is optional: off means number keys type normally mid-dictation
+            // (some people dictate numbers by keyboard). Space-pause rides the same tap, so
+            // the whole tap stays off when the feature is off.
+            if self.state.settings.digitModeSwitching { self.digitTap.start() }
         }
         state.controller.onRecordingDidStop = { [weak self] in
             self?.digitTap.stop()
@@ -52,6 +115,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         state.controller.onDidBecomeIdle = { [weak self] in self?.disarmCancelKey() }
         state.controller.onMenuStateChanged = { [weak self] in self?.refreshStatusIcon() }
+        TextInserter.adaptToSurroundings = { [weak self] in self?.state.settings.adaptToSurroundings ?? true }
+        // Key rebinding: while a recorder field is armed, the LIVE triggers stand down so
+        // the pressed key reaches the field instead of starting a dictation/quick edit.
+        NotificationCenter.default.addObserver(forName: KeyRecorderHub.recordingBegan,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                yapdiag("keyRecorder: triggers standing down for rebind")
+                self.rightCommand.stop()
+                self.fnKey.stop()
+                self.quickEditKey.stop()
+                self.primaryCustomTap.stop()
+                self.quickEditCustomTap.stop()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: KeyRecorderHub.recordingEnded,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                yapdiag("keyRecorder: triggers restored")
+                self.reloadRightCommandTrigger()
+                self.reloadQuickEditKey()
+            }
+        }
         digitTap.onDigit = { [weak self] digit in
             guard let self else { return }
             let modes = self.state.controller.switchableModes
@@ -84,6 +171,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dnc.addObserver(forName: .init("yap.debug.menupopover"), object: nil, queue: .main) { [weak self] _ in
             self?.toggleMenuPopover(nil)
         }
+        dnc.addObserver(forName: .init("yap.debug.dumpBigRaw"), object: nil, queue: .main) { [weak self] _ in
+            // Recovery hook: print the longest dictation's RAW transcript to stderr in chunks,
+            // so a truncated cleanup can be recovered from outside the TCC-protected container.
+            guard let recs = self?.state.history.records,
+                  let big = recs.max(by: { $0.durationSeconds < $1.durationSeconds }) else { return }
+            yapdiag("BIGRAW dur=\(big.durationSeconds) len=\(big.rawText.count)")
+            var rest = Substring(big.rawText)
+            var i = 0
+            while !rest.isEmpty {
+                let chunk = rest.prefix(700)
+                yapdiag("BIGRAW[\(i)] \(chunk)")
+                rest = rest.dropFirst(700)
+                i += 1
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.fixTrigger"), object: nil, queue: .main) { [weak self] _ in
+            self?.state.settings.rightCommandTrigger = .toggle
+            self?.reloadRightCommandTrigger()
+            yapdiag("debug: trigger restored to toggle; AX=\(AXIsProcessTrusted())")
+        }
+        // BATCH TRANSCRIPTION HARNESS: reads /tmp/yap-test-jobs.json ([{"path":...,"ref":...}]),
+        // runs each file through the REAL pipeline (decoder -> enhancer -> whisper) with no
+        // clipboard, insertion, history, or UI side effects, and writes
+        // /tmp/yap-test-results.json ([{"path":...,"ref":...,"text":...,"seconds":...}]).
+        dnc.addObserver(forName: .init("yap.debug.transcribeBatch"), object: nil, queue: .main) { [weak self] _ in
+            guard let controller = self?.state.controller else { return }
+            Task { @MainActor in
+                struct Job: Codable { var path: String; var ref: String? }
+                struct Res: Codable { var path: String; var ref: String?; var text: String; var seconds: Double }
+                let tmpDir = FileManager.default.temporaryDirectory
+                guard let data = try? Data(contentsOf: tmpDir.appendingPathComponent("yap-test-jobs.json")),
+                      let jobs = try? JSONDecoder().decode([Job].self, from: data) else {
+                    yapdiag("testBatch: no readable jobs file at \(tmpDir.path)"); return
+                }
+                var results: [Res] = []
+                for job in jobs {
+                    let start = Date()
+                    let text = (try? await controller.debugTranscribeQuiet(URL(fileURLWithPath: job.path))) ?? "<ERROR>"
+                    results.append(Res(path: job.path, ref: job.ref, text: text,
+                                       seconds: Date().timeIntervalSince(start)))
+                    if let out = try? JSONEncoder().encode(results) {
+                        try? out.write(to: tmpDir.appendingPathComponent("yap-test-results.json"))
+                    }
+                }
+                yapdiag("testBatch: DONE - \(results.count) files")
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.style"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let raw = note.object as? String,
+                  let style = PanelStyle(rawValue: raw) else { return }
+            self.state.settings.panelStyle = style
+            self.refreshPanelSize()
+        }
         dnc.addObserver(forName: .init("yap.debug.toggle"), object: nil, queue: .main) { [weak self] _ in
             self?.state.controller.toggle()
         }
@@ -107,6 +247,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dnc.addObserver(forName: .init("yap.debug.closeWindow"), object: nil, queue: .main) { _ in
             for window in NSApp.windows where window.canBecomeMain { window.close() }
             yapdiag("debug: main windows closed")
+        }
+        dnc.addObserver(forName: .init("yap.debug.ctxprobe"), object: nil, queue: .main) { _ in
+            // Context-insertion diagnosis: read the surroundings of whatever is focused
+            // RIGHT NOW and log what adapt would do with a canned transcript.
+            yapdiag("ctxprobe: adapted=\(InsertionContext.adapted("Very very much better.").debugDescription)")
+        }
+        dnc.addObserver(forName: .init("yap.debug.waveboost"), object: nil, queue: .main) { note in
+            // Marketing shots: crank the drawn wave amplitude (object = multiplier string).
+            WaveformView.demoAmpBoost = Double((note.object as? String) ?? "1") ?? 1
+        }
+        dnc.addObserver(forName: .init("yap.debug.qedemo"), object: nil, queue: .main) { [weak self] _ in
+            // Walk the Quick Edit popup through its stages for visual verification.
+            guard let controller = self?.state.controller else { return }
+            QuickEditWindow.shared.showListening(liveTextSource: controller)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                QuickEditWindow.shared.showWorking("make it sound more formal")
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                QuickEditWindow.shared.showResult("Done")
+                try? await Task.sleep(nanoseconds: 1_600_000_000)
+                QuickEditWindow.shared.showListening(liveTextSource: controller)
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                QuickEditWindow.shared.showWorking("delete the second paragraph")
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                QuickEditWindow.shared.showResult("Couldn't apply that edit", success: false)
+            }
         }
         dnc.addObserver(forName: .init("yap.debug.insertlast"), object: nil, queue: .main) { [weak self] _ in
             guard let self, let text = self.state.history.records.first?.finalText else { return }
@@ -140,6 +306,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        // Corpus torment: run /tmp/yap-corpus.json (array of {input, modeHint}) through the REAL
+        // Auto pipeline - heuristic classify, live model transform, full sanitize - and write
+        // /tmp/yap-corpus-out.json. Drives the shipping model with no rebuild between cases.
+        dnc.addObserver(forName: .init("yap.debug.corpus"), object: nil, queue: .main) { [weak self] _ in
+            guard let self,
+                  let phi = self.state.models.languageModels.first(where: { $0.runtime == .llamaCpp }),
+                  let url = self.state.models.downloads.localURL(for: phi),
+                  let data = FileManager.default.contents(atPath: NSHomeDirectory() + "/corpus-in.json"),
+                  let cases = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] else {
+                yapdiag("corpus: missing model or \(NSHomeDirectory())/corpus-in.json"); return
+            }
+            Task {
+                let transformer = LlamaTransformer(modelURL: url)
+                var results: [[String: String]] = []
+                for c in cases {
+                    let input = c["input"] ?? ""
+                    // Mirror DictationController's Auto routing: strip a trailing directive, run the
+                    // instant heuristic screen; Clean Up is the conservative default when ambiguous.
+                    let directive = AutoContext.extractDirective(input)
+                    let base = directive?.text ?? input
+                    let verdict = AutoContext.screen(base)
+                    let mode: Mode
+                    switch verdict {
+                    case .some(.email): mode = BuiltInModes.email
+                    case .some(.note): mode = BuiltInModes.note
+                    case .some(.message): mode = BuiltInModes.raw
+                    case .some(.code): mode = BuiltInModes.code
+                    default: mode = BuiltInModes.clean
+                    }
+                    var out = ""
+                    do { out = try await transformer.transform(base, mode: mode, context: TransformContext()) }
+                    catch { out = "ERROR: \(error)" }
+                    results.append(["input": input,
+                                    "screen": verdict.map { "\($0)" } ?? "ai-would-decide",
+                                    "mode": mode.name,
+                                    "output": out])
+                    yapdiag("corpus[\(results.count)/\(cases.count)] \(mode.name): \(out.prefix(80))")
+                }
+                if let outData = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted]) {
+                    try? outData.write(to: URL(fileURLWithPath: NSHomeDirectory() + "/corpus-out.json"))
+                    yapdiag("corpus: wrote \(results.count) results")
+                }
+            }
+        }
 #endif
 
         reloadHotkey()
@@ -148,6 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reloadSwitcherHotkey()
         reloadHistoryHotkey()
         reloadRightCommandTrigger()
+        reloadModeHotkeys()
         reloadDockIcon()
         reloadStatusItem()
         state.permissions.refresh()
@@ -155,7 +366,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Warm the mic route so the FIRST dictation after launch doesn't record silence while
         // CoreAudio initializes the input. Only when mic permission is already granted - never
         // trigger the permission prompt before the user does anything.
-        if state.permissions.microphoneGranted { state.controller.prewarmAudioInput() }
+        if state.permissions.microphoneGranted {
+            lastPrewarmAt = Date()
+            state.controller.prewarmAudioInput()
+        }
+        // Preload the speech model a few seconds after launch (off the startup path), so
+        // even the FIRST dictation transcribes instantly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.state.controller.warmSpeechModel()
+        }
 
         // Re-check permissions whenever the app returns to the foreground, so a grant made in
         // System Settings (e.g. Accessibility) is detected immediately without a relaunch.
@@ -164,15 +383,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.state.permissions.refresh()
             InputLevelMonitor.shared.resume()
             // Coming to the foreground often precedes a dictation - re-warm the mic route so the
-            // first words are never swallowed by cold input hardware.
-            if self?.state.permissions.microphoneGranted == true {
-                self?.state.controller.prewarmAudioInput()
-            }
+            // first words are never swallowed by cold input hardware. Debounced so repeated
+            // foreground transitions don't re-power the mic when nothing changed.
+            self?.prewarmMicIfStale()
             // Re-arm the Accessibility-dependent input readers. The Right Command monitor and the
             // digit/space tap only come alive once Accessibility is granted; if the user grants it
             // AFTER launch (or it wasn't ready at launch), the global monitor installed with no
             // permission is dead. Re-installing it here makes the trigger work without a relaunch.
             self?.reloadRightCommandTrigger()
+            self?.installActivityPrewarm()
         }
         // Persist edited commands/actions whenever we leave the foreground, not just on quit.
         NotificationCenter.default.addObserver(forName: NSApplication.willResignActiveNotification,
@@ -198,22 +417,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prepareSpeechModel()
         // If the last session died mid-dictation, rescue whatever audio made it to disk.
         state.controller.recoverCrashedSessionIfNeeded()
+        // Orphaned recordings (no history record points at them) are swept a beat after
+        // launch - after crash recovery has had the chance to claim its file.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self else { return }
+            let referenced = Set(self.state.history.records.compactMap { $0.audioFileName })
+            AudioStore.sweepOrphans(referenced: referenced)
+        }
         // If the user's active mode already uses AI cleanup, warm the GGUF now so their FIRST
         // dictation doesn't sit in a long cold load (which read as "not pasting" and got
         // cancelled). Raw-mode users skip this and keep the tiny idle footprint.
-        if state.controller.activeMode.usesAI,
-           let model = state.models.model(id: state.settings.selectedLanguageModelID),
-           model.runtime == .llamaCpp,
-           let url = state.models.downloads.localURL(for: model) {
-            LlamaEngine.prewarm(modelPath: url.path)
-        }
+        // Launch-time GGUF prewarm removed: the recording-start prewarm already overlaps
+        // the load with the user speaking, so parking ~2.3GB from launch bought nothing
+        // for users who don't dictate right away. (Perf audit, 1.1)
+
 
         // Under system memory pressure, drop the cached multi-GB model handles (whisper context +
         // GGUF). They lazy-reload on next use; eviction is inference-safe (guarded by the same
         // locks the engines run under).
-        memoryPressureSource.setEventHandler {
+        memoryPressureSource.setEventHandler { [weak self] in
             WhisperEngine.evictCachedContext()
             LlamaEngine.evictCachedModel()
+            // Don't let the very next keystroke reload gigabytes while the system is
+            // still starved - the activity re-warm stands down for a few minutes.
+            Task { @MainActor in self?.state.controller.suppressModelWarmUntil = Date().addingTimeInterval(300) }
             yapdiag("memory pressure: evicted cached models")
         }
         memoryPressureSource.resume()
@@ -230,6 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        UserDefaults.standard.set(true, forKey: "diag.cleanExit")
         // Stop any in-flight dictation cleanly (releases the recorder/engine, restores the
         // clipboard, hides the panel) before we clear anything.
         state.controller.cancel()
@@ -252,9 +480,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if carbon & KeyCombo.shift != 0 { flags.insert(.maskShift) }
             if carbon & KeyCombo.option != 0 { flags.insert(.maskAlternate) }
             if carbon & KeyCombo.control != 0 { flags.insert(.maskControl) }
+            if state.settings.hotkey.includesFn { flags.insert(.maskSecondaryFn) }
         }
         if state.settings.rightCommandTrigger == .pushToTalk {
-            flags.insert(.maskCommand)
+            flags.insert(state.settings.primaryTriggerKey.cgFlag)
+        }
+        if state.settings.fnKeyTrigger == .pushToTalk {
+            flags.insert(.maskSecondaryFn)
         }
         return flags
     }
@@ -269,6 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .pushToTalk:
             down = { [weak self] in
                 guard let c = self?.state.controller else { return }
+                if c.isProcessing { return }   // transcription in flight: don't discard it on a stray press
                 if c.isBusy && !c.isRecording { c.cancel() } else { c.start() }
             }
             up = { [weak self] in self?.state.controller.stop() }
@@ -312,9 +545,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func reloadHistoryHotkey() {
         historyHotkey.unregister()
-        guard let combo = state.settings.historyPaletteHotkey else { return }
-        historyHotkey.onKeyDown = { [weak self] in self?.showHistoryPalette() }
-        historyHotkey.register(combo)
+        if let combo = state.settings.historyPaletteHotkey {
+            historyHotkey.onKeyDown = { [weak self] in self?.showHistoryPalette() }
+            historyHotkey.register(combo)
+        }
+        reloadRedoHotkey()
+    }
+
+    private let redoHotkey = HotkeyManager()
+    func reloadRedoHotkey() {
+        redoHotkey.unregister()
+        guard let combo = state.settings.redoLastHotkey else { return }
+        redoHotkey.onKeyDown = { [weak self] in self?.state.controller.redoLastInsertion() }
+        redoHotkey.register(combo)
     }
 
     /// A palette of your most recent dictations; picking one types it at the cursor.
@@ -377,45 +620,364 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func insertIntoLastApp(_ text: String) {
         guard !text.isEmpty else { return }
-        // Target the app the last dictation actually belongs to (recorded in History), NOT whatever
-        // app was touched most recently - the user may have opened other apps since dictating, and
-        // "insert last" means "put my last dictation back where it came from".
+        // "Put it WHERE I AM": the app the user was working in right before opening the
+        // popover. The old behavior (the app the dictation originally belonged to) was
+        // technically correct and practically invisible - the text kept landing in an app
+        // the user wasn't looking at, which read as the button doing nothing.
         let target: NSRunningApplication? = {
+            if let app = lastActiveOtherApp, !app.isTerminated { return app }
+            // Fallback: nothing tracked yet (fresh launch straight into the popover) -
+            // the dictation's own origin app is the best remaining guess.
             if let bid = state.history.records.first?.appBundleID,
                let app = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first(where: { !$0.isTerminated }) {
                 return app
             }
-            return lastActiveOtherApp   // fallback: dictation had no recorded app, or it has quit
+            return nil
         }()
-        yapdiag("insertLast: target=\(target?.localizedName ?? "nil") (historyApp=\(state.history.records.first?.appName ?? "nil"), lastActive=\(lastActiveOtherApp?.localizedName ?? "nil"))")
-        Task { await paste(text, into: target) }
+        yapdiag("insertLast: target=\(target?.localizedName ?? "nil") (lastActive=\(lastActiveOtherApp?.localizedName ?? "nil"), historyApp=\(state.history.records.first?.appName ?? "nil"))")
+        // INSTANT response: spinner on now, popover out of the way now - the activation
+        // handoff and paste then happen without a transient popover fighting focus.
+        state.controller.insertLastBusy = true
+        closeMenuPopover()
+        Task {
+            await paste(text, into: target)
+            state.controller.insertLastBusy = false
+        }
     }
 
+    /// CUSTOM (non-modifier) trigger keys ride dedicated swallowing event taps - the
+    /// pressed key stops typing anywhere and becomes the trigger, full stop.
+    private let primaryCustomTap = BareKeyTap()
+    private let quickEditCustomTap = BareKeyTap()
+
     func reloadRightCommandTrigger() {
+        // Rebuild the monitor around whichever key the user picked as the trigger.
         rightCommand.stop()
-        let mode = state.settings.rightCommandTrigger
+        primaryCustomTap.stop()
+        let key = state.settings.primaryTriggerKey
+        let trigger = state.settings.rightCommandTrigger
+        if key.isCustom {
+            if trigger != .off {
+                let ptt = trigger == .pushToTalk
+                primaryCustomTap.onKeyDown = { [weak self] in
+                    guard let self else { return }
+                    if ptt {
+                        if !self.state.controller.isRecording { self.state.controller.start() }
+                    } else {
+                        self.state.controller.toggle()
+                    }
+                }
+                primaryCustomTap.onKeyUp = { [weak self] in
+                    guard let self, ptt else { return }
+                    if self.state.controller.isRecording { self.state.controller.stop() }
+                }
+                primaryCustomTap.start(keyCode: UInt32(key.keyCode))
+            }
+            reloadFnKeyTrigger()
+            return
+        }
+        rightCommand = ModifierKeyMonitor(keyCode: key.keyCode, flag: key.flag)
+        // Caps Lock is a toggle at the hardware level (no held state exists), so
+        // push-to-talk degrades gracefully to tap-to-start/stop on it.
+        let mode: ModifierTrigger = (key == .capsLock && trigger == .pushToTalk)
+            ? .toggle : trigger
+        configureModifierTrigger(rightCommand, mode: mode)
+        reloadFnKeyTrigger()
+    }
+
+    func reloadFnKeyTrigger() {
+        configureModifierTrigger(fnKey, mode: state.settings.fnKeyTrigger)
+        reloadQuickEditKey()
+    }
+
+    /// One Carbon hotkey per mode that has a dedicated activation shortcut: press it anywhere
+    /// and dictation starts in that mode; press again to stop. Rebuilt whenever modes change.
+    private var modeHotkeys: [UUID: HotkeyManager] = [:]
+
+    func reloadModeHotkeys() {
+        for (_, manager) in modeHotkeys { manager.unregister() }
+        modeHotkeys.removeAll()
+        for mode in state.modeStore.allModes {
+            guard let combo = mode.activationHotkey else { continue }
+            let manager = HotkeyManager()
+            let modeID = mode.id
+            manager.onKeyDown = { [weak self] in
+                guard let self else { return }
+                let c = self.state.controller
+                if c.isRecording { c.stop(); return }
+                if c.isBusy { return }
+                if let m = self.state.modeStore.allModes.first(where: { $0.id == modeID }) {
+                    c.selectMode(m)
+                    c.start()
+                }
+            }
+            if manager.register(combo) { modeHotkeys[modeID] = manager }
+            else { yapdiag("mode hotkey: couldn't register \(combo.displayString) for \(mode.name)") }
+        }
+    }
+
+    func reloadQuickEditKey() {
+        quickEditKey.stop()
+        quickEditCustomTap.stop()
+        let trigger = state.settings.quickEditTrigger
+        state.settings.quickEditKeyEnabled = trigger != .off   // legacy flag stays in sync
+        guard trigger != .off else { return }
+        // Rebuild around whichever key the user bound (Right Option by default).
+        let key = state.settings.quickEditTriggerKey
+        // Caps Lock is a hardware toggle (no held state), so hold-to-talk degrades to
+        // tap-to-start/stop on it - same rule as the dictation key.
+        let ptt = trigger == .pushToTalk && key != .capsLock
+
+        // ONE handler for both key kinds. Semantics, kept dead simple:
+        //  toggle: tap opens the session; the next tap ends it and applies.
+        //  hold:   press opens; release ends and applies.
+        //  While an edit is APPLYING, presses do nothing (Esc cancels, as everywhere).
+        let down: () -> Void = { [weak self] in
+            guard let self else { return }
+            guard !self.quickEditApplying else { return }
+            if ptt {
+                self.quickEditKeyHeld = true
+                if !self.state.controller.isRecording { self.beginQuickEdit() }
+            } else {
+                if self.state.controller.isRecording { self.state.controller.stop() }
+                else if !self.state.controller.isBusy { self.beginQuickEdit() }
+            }
+        }
+        let up: () -> Void = { [weak self] in
+            guard let self, ptt else { return }
+            self.quickEditKeyHeld = false
+            if self.state.controller.isRecording { self.state.controller.stop() }
+        }
+
+        if key.isCustom {
+            quickEditCustomTap.onKeyDown = down
+            quickEditCustomTap.onKeyUp = up
+            quickEditCustomTap.start(keyCode: UInt32(key.keyCode))
+        } else {
+            quickEditKey = ModifierKeyMonitor(keyCode: key.keyCode, flag: key.flag)
+            quickEditKey.onDown = down
+            quickEditKey.onUp = { _ in up() }
+            quickEditKey.start()
+        }
+    }
+
+    /// True when a Quick Edit instruction is a dictionary request rather than a text edit.
+    /// Whole-utterance match only, with the natural phrasings people actually say.
+    static func isAddToDictionary(_ utterance: String) -> Bool {
+        var t = utterance.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = t.last, ".,!?".contains(last) { t.removeLast() }
+        // Forgiving on purpose: recognizers drop articles and add fillers around this exact
+        // phrase constantly. Requires the verbs and "dictionary", tolerates the middle.
+        let pattern = "^(please |okay |ok )?(can you |could you )?(add|put|save) (this|this word|this phrase|that|it)?( word| phrase| name)? ?(to|into|in) ?(the |my |your )?dictionary,?( please)?\\.?$"
+        return t.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// Add the selected text to the first dictionary as heard-lowercase -> exact-casing, so the
+    /// recognizer's flat output is corrected to this spelling from now on.
+    private func addSelectionToDictionary(_ selection: String) {
+        let word = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty, word.count <= 80 else {
+            state.controller.flashStatus("Select a word or short phrase to add it to the dictionary")
+            return
+        }
+        // Already covered? Don't stack duplicates.
+        let heard = word.lowercased()
+        let exists = state.vocabulary.dictionaries.contains { dict in
+            dict.replacements.contains { $0.from.lowercased() == heard }
+        }
+        guard !exists else {
+            state.controller.flashStatus("\u{201C}\(word)\u{201D} is already in your dictionary")
+            return
+        }
+        state.vocabulary.addReplacement(Replacement(from: heard, to: word))
+        state.controller.flashStatus("Added \u{201C}\(word)\u{201D} to your dictionary")
+        yapdiag("quickEdit: added '\(word)' to dictionary")
+        // Sound-alike expansion: the case-fix alone only helps when the recognizer heard the
+        // word LETTER-PERFECT. For a name like "Ryleigh" it usually hears "Riley" - so ask the
+        // AI for the common spellings a recognizer would produce, and map those too.
+        expandSoundAlikes(for: word)
+    }
+
+    /// Ask the on-device AI for the likely mishearings of a freshly-added dictionary word and
+    /// add each as a substitution toward the correct spelling. Strictly filtered and capped, so
+    /// a hallucinated answer can never pollute the dictionary; failure is silent (the exact-match
+    /// entry is already in place).
+    func expandSoundAlikes(for word: String) {
+        // Single words only: phrases don't have phonetic twins in a useful way.
+        guard !word.contains(" "), word.count >= 3 else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            let prompt = "The word or name is: \(word)\nList up to 5 DIFFERENT spellings that a speech recognizer would likely produce when someone says this word aloud (common homophones and phonetic spellings). Rules: output ONLY the spellings, comma-separated, all lowercase, single words, no numbering, no explanations, and do not include \(word) itself."
+            guard let reply = try? await self.state.controller.applyAIAction(
+                instructions: "You list likely speech-recognition spellings of a word. Output only a comma-separated list.",
+                to: prompt) else { return }
+            let existing = Set(self.state.vocabulary.dictionaries.flatMap { $0.replacements.map { $0.from.lowercased() } })
+            let target = word.lowercased()
+            let variants = reply.lowercased()
+                .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: .punctuationCharacters) }
+                .filter { candidate in
+                    candidate.count >= 3 && candidate.count <= 24
+                    && candidate != target
+                    && candidate.allSatisfy { $0.isLetter || $0 == "'" || $0 == "-" }
+                    && !existing.contains(candidate)
+                    // Sanity: a real sound-alike shares the first letter's sound more often
+                    // than not; requiring the same first letter blocks most hallucinations.
+                    && candidate.first == target.first
+                }
+                .prefix(4)
+            guard !variants.isEmpty else { return }
+            for variant in variants {
+                self.state.vocabulary.addReplacement(Replacement(from: variant, to: word))
+            }
+            yapdiag("quickEdit: sound-alikes for '\(word)': \(variants.joined(separator: ", "))")
+            self.state.controller.flashStatus("Also mapped \(variants.count) sound-alike\(variants.count == 1 ? "" : "s") to \u{201C}\(word)\u{201D}")
+        }
+    }
+
+    /// Quick Edit session: grab the selection from the frontmost app, then dictate an
+    /// instruction into a scratchpad sink; the transcript runs as a one-shot AI action on
+    /// the selection and replaces it in place.
+    private func beginQuickEdit() {
+        disarmQuickEditSelectionRetry()   // a live entry supersedes any pending retry
+        let c = state.controller
+        guard !c.isBusy, !c.isProcessing else { return }
+        let target = NSWorkspace.shared.frontmostApplication
+        // Window FIRST, selection second: the popup used to wait behind captureSelection's
+        // Cmd-C + up-to-400ms clipboard poll, which read as "the popup opens slowly". Showing
+        // it the instant the key goes down makes the feature feel wired to the key.
+        QuickEditWindow.shared.showListening(liveTextSource: state.controller)
+        Task { [weak self] in
+            guard let self else { return }
+            let selection = await SelectionEditor.captureSelection()
+            guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                // Nothing selected: teach in the moment, in the feature's own popup - a status
+                // flash elsewhere is invisible when someone is looking at their document.
+                if TextInserter.isSecureInputActive {
+                    QuickEditWindow.shared.showInfo("Can't read the selection",
+                        "Secure Input is on (usually a password field). Click into normal text and try again.")
+                } else if self.state.settings.quickEditTrigger == .toggle {
+                    // TOGGLE mode: the tap already meant "I want to edit". Keep the card up,
+                    // watch for the selection being made, and enter listening BY ITSELF the
+                    // moment text is highlighted - no second tap, and no card vanishing
+                    // right as the user clicks into their document.
+                    QuickEditWindow.shared.showInfo("Select some text first",
+                        "Highlight the words to change - the edit starts by itself.", seconds: 12)
+                    self.armQuickEditSelectionRetry()
+                } else {
+                    QuickEditWindow.shared.showInfo("Select some text first",
+                        "Highlight the words you want to change, then hold \(self.state.settings.quickEditTriggerKey.label) and say the edit - like \u{201C}capitalize this\u{201D}.")
+                }
+                return
+            }
+            // The key may already be up if the press was just a tap; don't start a session
+            // that nothing will ever stop - and take the already-showing popup down with it.
+            // Only push-to-talk requires the key to still be held (release = stop). In
+            // TOGGLE mode nothing holds - this guard silently killed every toggle-mode
+            // session right after "Listening…" appeared.
+            guard self.state.settings.quickEditTrigger != .pushToTalk || self.quickEditKeyHeld else {
+                QuickEditWindow.shared.dismiss(); return
+            }
+            self.state.controller.startScratchpad { [weak self] instruction in
+                guard let self else { return }
+                let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    QuickEditWindow.shared.showResult("Didn't catch an instruction", success: false)
+                    return
+                }
+                // Dictionary command: "add this to my dictionary" makes the SELECTED text a
+                // permanent substitution (lowercase-heard -> exact selected casing), so the
+                // recognizer spells and capitalizes it this way forever. Handled locally -
+                // no AI round trip for a bookkeeping request.
+                yapdiag("quickEdit: instruction='\(trimmed)' dictionaryCommand=\(Self.isAddToDictionary(trimmed))")
+                if Self.isAddToDictionary(trimmed) {
+                    self.addSelectionToDictionary(text)
+                    QuickEditWindow.shared.showResult("Added \u{201C}\(text.prefix(30))\u{201D} to your dictionary")
+                    return
+                }
+                QuickEditWindow.shared.showWorking(trimmed)
+                self.quickEditApplying = true
+                self.quickEditCancelled = false
+                self.armCancelKey(force: true)   // Esc stays live through the whole apply
+                self.quickEditGeneration += 1
+                let gen = self.quickEditGeneration
+                self.runAIAction(AIAction(name: "Quick Edit", iconSystemName: "pencil.line",
+                                          instructions: trimmed), on: text, target: target,
+                                 isCancelled: { [weak self] in
+                                     guard let self else { return true }
+                                     return self.quickEditCancelled || self.quickEditGeneration != gen
+                                 }) { [weak self] ok in
+                    guard let self, self.quickEditGeneration == gen else { return }   // stale session
+                    self.quickEditApplying = false
+                    self.disarmCancelKey()
+                    guard !self.quickEditCancelled else { return }   // window already says "Cancelled"
+                    QuickEditWindow.shared.showResult(ok ? "Done" : "Couldn't apply that edit", success: ok)
+                }
+            }
+        }
+    }
+
+    /// Toggle-mode "select first" helper: after the nudge, one global mouse-up watcher
+    /// waits for the user to finish highlighting; when a selection exists, the quick edit
+    /// re-enters on its own. Auto-disarms after 12s or the moment a session starts.
+    private var quickEditRetryMonitor: Any?
+    private func disarmQuickEditSelectionRetry() {
+        if let m = quickEditRetryMonitor { NSEvent.removeMonitor(m); quickEditRetryMonitor = nil }
+    }
+    private func armQuickEditSelectionRetry() {
+        disarmQuickEditSelectionRetry()
+        let deadline = Date().addingTimeInterval(12)
+        quickEditRetryMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
+            guard let self else { return }
+            if Date() > deadline { self.disarmQuickEditSelectionRetry(); return }
+            guard !self.state.controller.isRecording, !self.state.controller.isBusy else {
+                self.disarmQuickEditSelectionRetry(); return
+            }
+            Task { @MainActor [weak self] in
+                guard let self, self.quickEditRetryMonitor != nil else { return }
+                try? await Task.sleep(nanoseconds: 250_000_000)   // let the drag settle
+                guard self.quickEditRetryMonitor != nil else { return }
+                let selection = await SelectionEditor.captureSelection()
+                guard let text = selection,
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                self.disarmQuickEditSelectionRetry()
+                yapdiag("quickEdit: selection appeared after nudge - re-entering")
+                self.beginQuickEdit()
+            }
+        }
+        // Hard stop with the card's own timeout so the monitor can't outlive the nudge.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12.5) { [weak self] in
+            self?.disarmQuickEditSelectionRetry()
+        }
+    }
+
+    /// Shared wiring for a bare-modifier dictation trigger (Right Command, Fn/Globe).
+    private func configureModifierTrigger(_ monitor: ModifierKeyMonitor, mode: ModifierTrigger) {
+        monitor.stop()
         guard mode != .off else { return }
 
         switch mode {
         case .toggle:
-            rightCommand.onDown = nil
-            rightCommand.onUp = { [weak self] clean in
+            monitor.onDown = nil
+            monitor.onUp = { [weak self] clean in
                 guard clean else { return }   // part of a chord like Cmd-C: ignore
                 self?.state.controller.toggle()
             }
         case .pushToTalk:
-            rightCommand.onDown = { [weak self] in
+            monitor.onDown = { [weak self] in
                 guard let c = self?.state.controller else { return }
-                // Pressing while a previous dictation is still processing means "cancel it".
+                // A press while a previous dictation is still transcribing/cleaning up must NOT
+                // discard it (the reported spam-the-key bug). Ignore it; it finishes and lands.
+                if c.isProcessing { return }
                 if c.isBusy && !c.isRecording { c.cancel() } else { c.start() }
             }
-            rightCommand.onUp = { [weak self] _ in self?.state.controller.stop() }
+            monitor.onUp = { [weak self] _ in self?.state.controller.stop() }
         case .off:
-            rightCommand.onDown = nil
-            rightCommand.onUp = nil
+            monitor.onDown = nil
+            monitor.onUp = nil
         }
 
-        rightCommand.start()
+        monitor.start()
     }
 
     // MARK: Quick panels (mode switcher + AI actions)
@@ -515,28 +1077,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// which made selection capture come back empty.
     private func waitUntilFrontmost(_ app: NSRunningApplication?) async {
         guard let app else { return }
-        app.activate(options: [.activateIgnoringOtherApps])   // forceful: bare activate() can defer
+        // COOPERATIVE ACTIVATION (macOS 14+): when WE are the active app - which is
+        // exactly the state after clicking the menu bar popover - activating another app
+        // is silently refused unless the active app YIELDS first. Skipping the yield is
+        // why "Insert again" only sometimes returned to the target ("not working").
+        func nudge() {
+            if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app) }
+            app.activate(options: [.activateIgnoringOtherApps])
+        }
+        nudge()
         for i in 0..<48 {
             if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { break }
-            if i == 16 || i == 32 { app.activate(options: [.activateIgnoringOtherApps]) }   // re-nudge
+            if i == 16 || i == 32 { nudge() }   // re-nudge
             try? await Task.sleep(nanoseconds: 25_000_000)
         }
-        try? await Task.sleep(nanoseconds: 80_000_000)
+        yapdiag("waitFrontmost: want=\(app.localizedName ?? "?") pid=\(app.processIdentifier) got=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") pid=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1)")
+        try? await Task.sleep(nanoseconds: 40_000_000)
     }
 
-    private func runAIAction(_ action: AIAction, on text: String, target: NSRunningApplication?) {
+    private func runAIAction(_ action: AIAction, on text: String, target: NSRunningApplication?,
+                             isCancelled: (() -> Bool)? = nil,
+                             onFinish: ((Bool) -> Void)? = nil) {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await self.state.controller.applyAIAction(instructions: action.instructions, to: text)
+                let result = try await self.state.controller.applyAIAction(
+                    instructions: action.instructions, to: text,
+                    modelID: action.name == "Quick Edit" ? self.state.settings.quickEditModelID : nil)
+                // The LAST safe moment to bail: a quick-edit double-tap cancel must land
+                // BEFORE anything touches the user's document.
+                if isCancelled?() == true {
+                    yapdiag("runAIAction: cancelled before paste; discarding result")
+                    return
+                }
                 guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     self.state.controller.announceStatus("No changes made")
+                    onFinish?(false)
                     return
                 }
                 await self.paste(result, into: target)
+                onFinish?(true)
             } catch {
                 yapdiag("runAIAction FAILED: \(error)")
-                self.state.controller.flashStatus("AI action failed")
+                if isCancelled?() != true { self.state.controller.flashStatus("AI action failed") }
+                onFinish?(false)
             }
         }
     }
@@ -583,7 +1167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // track ourselves, so video files and unusual containers work too.
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModalInFront() == .OK, let url = panel.url else { return }
         state.controller.transcribeFile(url, insertInto: target)
     }
 
@@ -656,13 +1240,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Smoothed per-bar levels for the waveform icon: raw levelHistory arrives in ~43ms steps,
+    /// which reads as a choppy low-frame-rate wave. Each 30fps refresh eases the displayed bars
+    /// toward their targets, so the motion is continuous even between level samples.
+    private var waveDisplay: [Float] = []
+
     func refreshStatusIcon() {
         guard let button = statusItem?.button else { return }
+        var levels = state.controller.levelHistory
+        if state.settings.menuBarIconStyle == .waveform, !levels.isEmpty {
+            let target = Array(levels.suffix(9))
+            if waveDisplay.count != target.count { waveDisplay = target }
+            for i in 0..<target.count {
+                waveDisplay[i] += (target[i] - waveDisplay[i]) * 0.45   // ease at 30fps
+            }
+            levels = waveDisplay
+        }
         button.image = MenuBarIcon.image(phase: state.controller.phase,
                                          pulse: state.controller.menuPulseLevel,
                                          spin: state.controller.menuSpin,
                                          lid: menuBlinkLid,
-                                         clock: state.controller.menuClock)
+                                         clock: state.controller.menuClock,
+                                         style: state.settings.menuBarIconStyle,
+                                         colored: state.settings.menuBarColoredStatus,
+                                         levels: levels,
+                                         waveformTint: waveformTint())
+    }
+
+    /// The waveform visualizer's color: the dedicated visualizer color if the user picked one,
+    /// otherwise their custom accent. nil = classic monochrome.
+    private func waveformTint() -> NSColor? {
+        guard state.settings.menuBarIconStyle == .waveform else { return nil }
+        // AT STANDBY the icon is a TEMPLATE like every other menu bar item - monochrome,
+        // adapting to the bar. The accent color only lights it while a session is live,
+        // so color means "listening/working", not "always blue".
+        guard state.controller.isRecording || state.controller.isBusy else { return nil }
+        if let hex = state.settings.visualizerColorHex, let c = Color(hexString: hex) { return NSColor(c) }
+        if let accent = state.settings.customAccent { return NSColor(accent) }
+        return nil
     }
 
     // MARK: Menu bar blink
@@ -716,15 +1331,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleCancelKey() {
-        // Escape fully cancels: stop and discard. Nothing is transcribed, inserted, or saved to
-        // History - a cancel means the dictation never happened.
-        state.controller.cancel()
+        // A Quick Edit mid-APPLY is cancelled here too (its session already ended, so
+        // controller.cancel() alone wouldn't reach it) - this replaced the old
+        // double-tap-the-key cancel: Esc is the one cancel gesture everywhere.
+        if quickEditApplying {
+            quickEditCancelled = true
+            quickEditApplying = false
+            QuickEditWindow.shared.showResult("Cancelled - nothing was changed", success: false)
+            yapdiag("quickEdit: cancelled by Esc")
+            return
+        }
+        // Default: ONE Escape cancels immediately. The double-press confirmation is an
+        // opt-in (Settings > Keys) for people who hit Esc reflexively.
+        guard state.settings.doubleEscapeToCancel else {
+            state.controller.cancel()
+            return
+        }
+        let now = Date()
+        if let last = lastEscapeAt, now.timeIntervalSince(last) < 0.6 {
+            lastEscapeAt = nil
+            state.controller.cancel()
+        } else {
+            lastEscapeAt = now
+            state.controller.flashStatus("Press Esc again to cancel")
+        }
     }
 
     // Setup lives inline on the Home screen; there is deliberately no setup popup window.
 
     private func prepareSpeechModel() {
-        guard state.settings.engine == .appleSpeech else { return }
+        guard state.settings.engine == .appleSpeech, #available(macOS 26.0, *) else { return }
         let locale = state.settings.localeIdentifier
         Task.detached(priority: .utility) {
             try? await AppleSpeechEngine().prepare(localeIdentifier: locale, progress: nil)

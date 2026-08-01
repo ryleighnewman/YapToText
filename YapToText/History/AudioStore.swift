@@ -28,6 +28,16 @@ enum AudioStore {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    /// Delete any recording no history record references (crashed sessions, retention
+    /// changes from before the delete-on-Off fix). Cheap: one directory listing.
+    static func sweepOrphans(referenced: Set<String>) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
+        for f in files where f.hasSuffix(".caf") && !referenced.contains(f) {
+            try? fm.removeItem(at: directory.appendingPathComponent(f))
+        }
+    }
+
     static func totalBytes() -> Int64 {
         guard let items = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }

@@ -144,10 +144,8 @@ struct UtilityView: View {
 
     private var intro: some View {
         HStack(spacing: Space.m + 2) {
-            IconBadge(symbol: "square.grid.2x2", tint: .accentColor, size: 34)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Utility").font(.title3.weight(.semibold))
-                Text("Use every feature right here: dictate, transform, transcribe, and run AI actions, all without leaving the app.")
+                Text("This is a showcase of everything YapToText can do, chained into one easy-to-follow pipeline. Dictate into the scratchpad (or transcribe any audio or video file), send the result down to be rewritten by any mode - your dictionaries and voice commands apply just like a real dictation - then finish it with a one-shot AI action like translate or summarize. Every card has Copy and Insert, and \u{201C}Send below\u{201D} passes text to the next step. It's the whole app, laid out on one workbench.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -168,21 +166,23 @@ struct UtilityView: View {
             // Only this card's OWN scratchpad session drives the inline waveform/preview - a global
             // dictation happening in the background must never light this up.
             if controller.isScratchpadSession {
-                if controller.isRecording {
-                    WaveformView(data: controller.visualData, isActive: !controller.isPaused)
+                if controller.isRecording || isProcessing {
+                    // The wave stays mounted through the stop and condenses into the
+                    // spinning ring - same gate choreography as the panel.
+                    WaveformView(data: controller.visualData,
+                                 isActive: controller.isRecording && !controller.isPaused,
+                                 style: state.settings.waveStyle,
+                                 freeze: isProcessing, sucking: isProcessing)
                         .frame(maxWidth: .infinity)
                         .transition(.opacity)
-                    if !controller.liveText.isEmpty {
-                        Text(controller.liveText)
-                            .font(.callout).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).lineLimit(2)
-                    }
+                }
+                if controller.isRecording, !controller.liveText.isEmpty {
+                    Text(controller.liveText)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).lineLimit(2)
                 } else if isProcessing {
-                    HStack(spacing: Space.s) {
-                        ProgressView().controlSize(.small)
-                        Text(controller.statusText).font(.callout).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(controller.statusText).font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
 
@@ -278,10 +278,8 @@ struct UtilityView: View {
             if aiModes.isEmpty {
                 Caption("No AI modes are engaged. Turn one on in Modes to use this.")
             }
-            if !transformOutput.isEmpty {
-                outputBox(transformOutput)
-                resultActions(text: transformOutput, tag: "transform", sendTo: .action, onClear: { transformOutput = "" })
-            }
+            if !transformOutput.isEmpty { outputBox(transformOutput) }
+            resultActions(text: transformOutput, tag: "transform", sendTo: .action, onClear: { transformOutput = "" })
         }
     }
 
@@ -302,10 +300,8 @@ struct UtilityView: View {
                 Label(fileError, systemImage: "exclamationmark.triangle").font(.caption).iconTint(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !fileOutput.isEmpty {
-                outputBox(fileOutput)
-                resultActions(text: fileOutput, tag: "file", sendTo: .transform, onClear: { fileOutput = ""; fileName = nil })
-            }
+            if !fileOutput.isEmpty { outputBox(fileOutput) }
+            resultActions(text: fileOutput, tag: "file", sendTo: .transform, onClear: { fileOutput = ""; fileName = nil })
         }
     }
 
@@ -365,10 +361,8 @@ struct UtilityView: View {
                     .buttonStyle(.solid)
                     .disabled(actionBusy || actionInput.trimmingCharacters(in: .whitespaces).isEmpty || actionID == nil)
                 }
-                if !actionOutput.isEmpty {
-                    outputBox(actionOutput)
-                    resultActions(text: actionOutput, tag: "action", onClear: { actionOutput = "" })
-                }
+                if !actionOutput.isEmpty { outputBox(actionOutput) }
+                resultActions(text: actionOutput, tag: "action", onClear: { actionOutput = "" })
             }
         }
     }
@@ -395,23 +389,30 @@ struct UtilityView: View {
     @ViewBuilder
     private func resultActions(text: String, tag: String, sendTo: SendTarget? = nil,
                               onClear: @escaping () -> Void) -> some View {
-        if !text.isEmpty {
+        // ALWAYS visible: the buttons are part of each card's anatomy, grayed out until
+        // there's text to act on - so the pipeline's affordances never pop in and out.
+        let usable = !text.isEmpty
+        return Group {
             HStack(spacing: Space.s) {
                 Button { copy(text, tag: tag) } label: {
                     Label(copiedTag == tag ? "Copied" : "Copy",
                           systemImage: copiedTag == tag ? "checkmark" : "doc.on.doc")
                 }
                 .buttonStyle(.solidSecondary)
+                .disabled(!usable)
                 Button { AppDelegate.shared?.insertIntoLastApp(text) } label: {
                     Label("Insert", systemImage: "text.cursor")
                 }
                 .buttonStyle(.solidSecondary)
+                .disabled(!usable)
                 .help("Type this into the app you were last using")
                 Spacer(minLength: 0)
                 Button(role: .destructive, action: onClear) { Label("Clear", systemImage: "trash") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
+                    .disabled(!usable)
             }
             .font(.callout)
+            .opacity(usable ? 1 : 0.5)
             // Send below stands ALONE, centered on the pipeline's axis: it is the hand-off.
             if let sendTo {
                 HStack {
@@ -420,10 +421,12 @@ struct UtilityView: View {
                         Label("Send below", systemImage: "arrow.down")
                     }
                     .buttonStyle(.solid)
+                    .disabled(!usable)
                     .help("Send this text down to the next tool")
                     Spacer()
                 }
                 .font(.callout)
+                .opacity(usable ? 1 : 0.5)
                 .padding(.top, 2)
             }
         }
@@ -453,7 +456,7 @@ struct UtilityView: View {
         panel.message = "Choose any audio or video file."
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url { transcribe(url) }
+        if panel.runModalInFront() == .OK, let url = panel.url { transcribe(url) }
     }
 
     private func transcribe(_ url: URL) {

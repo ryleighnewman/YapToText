@@ -19,16 +19,29 @@ final class DictationController {
         case error(String)
 
         /// Single source of truth for the phase label, shared by the menu bar and the panel.
+        /// The busy phases pull from small pools of fun variations - a fresh one per session
+        /// (stable within a session so the label never flickers mid-thought).
         var userFacingLabel: String {
             switch self {
             case .idle: return "Ready"
-            case .recording: return "Listening…"
-            case .transcribing: return "Transcribing…"
-            case .transforming: return "Cleaning up…"
-            case .inserting: return "Inserting…"
+            case .recording: return Phase.pick(Phase.listeningLines)
+            case .transcribing: return Phase.pick(Phase.transcribingLines)
+            case .transforming: return Phase.pick(Phase.transformingLines)
+            case .inserting: return Phase.pick(Phase.insertingLines)
             case .error(let message): return message
             }
         }
+
+        static let listeningLines = ["Listening…", "All ears…", "Go ahead, yap…", "Hearing you out…"]
+        static let transcribingLines = ["Transcribing…", "Deciphering the yap…", "Untangling the words…",
+                                        "Writing it all down…", "Catching every word…"]
+        static let transformingLines = ["Cleaning up…", "Reading the room…", "Polishing the yap…",
+                                        "Making you sound great…", "Dotting the i's…"]
+        static let insertingLines = ["Inserting…", "Delivering the goods…", "Sliding it in place…"]
+
+        /// One variation per dictation: reseeded when a session starts, constant until the next.
+        nonisolated(unsafe) static var sessionSeed = 0
+        static func pick(_ pool: [String]) -> String { pool[sessionSeed % pool.count] }
     }
 
     private(set) var phase: Phase = .idle {
@@ -39,16 +52,33 @@ final class DictationController {
     /// Rolling window of real microphone levels (one entry per audio buffer), oldest first.
     /// This is what the panel's waveform draws, so it moves with actual input, not a timer.
     private(set) var levelHistory: [Float] = []
+    /// True while the recording panel is playing its close choreography: the expanded
+    /// layout fades its transcript/bottom bar and leaves the wave to carry the exit.
+    var panelIsClosing = false
+    /// True from show() until the panel actually orders out (set by RecordingPanel).
+    /// The condense latch reads it: releasing the latch while the panel is still on
+    /// screen snapped the ring back into a full-width wave in front of the user.
+    var panelIsPresented = false
+    /// Insert Last in flight (menu bar): drives the button's spinner so the click has
+    /// INSTANT feedback while the target app comes forward and the paste lands.
+    var insertLastBusy = false
     static let levelHistoryLength = 48
     private(set) var activeMode: Mode
     private(set) var lastError: String?
-    /// Extra status shown while .transforming when the cleanup model is doing its one-time load,
-    /// so a slow first cleanup reads as loading instead of looking stuck (users were cancelling).
-    private(set) var transformingDetail: String?
+    /// Extra status shown during the finishing pipeline (.transcribing / .transforming) when
+    /// something non-obvious is happening - loading the speech model, loading the cleanup model,
+    /// or Auto reading context - so a slow step reads as progress instead of looking stuck (users
+    /// were cancelling). nil = show the plain phase label.
+    private(set) var statusDetail: String?
     /// True while recording is held (phase stays `.recording`, but audio is dropped).
     private(set) var isPaused = false
     /// Auto mode: a mid-dictation digit pick suspends auto routing for THIS session only.
     private var sessionAutoSuspended = false
+    /// Live typing (experimental): when this session qualifies, newly FINALIZED words are typed
+    /// at the cursor while dictation continues. `liveTypedText` is everything already typed, so
+    /// finish() can deliver only the remainder and can never duplicate what's on screen.
+    private var sessionLiveTyping = false
+    private var liveTypedText = ""
     /// True for a dictation started from the in-app Utility scratchpad (not a global dictation), so
     /// the Utility card shows its inline recording UI ONLY for its own session and never lights up
     /// for a background global dictation. Cleared when the whole session ends.
@@ -69,6 +99,14 @@ final class DictationController {
     /// finish() re-activates it before pasting so text lands there, not in whatever happens to
     /// be frontmost when transcription completes (a window the user clicked, or YapToText).
     private var sessionTargetApp: NSRunningApplication?
+    /// Quick edit: what the last dictation left on screen (and where), so a follow-up
+    /// "scratch that" or "replace X with Y" can act on it instead of being typed.
+    private var lastInsert: (text: String, date: Date, pid: pid_t?)?
+    /// Forensics for the history record: what was actually delivered and how it went.
+    private var sessionDelivered: String?
+    private var sessionOutcome: String?
+    private var sessionCleanupModel: String?
+    private var sessionAutoVerdict: String?
     /// True when the dictation began with YapToText itself frontmost - delivery falls back to the
     /// clipboard (see beginRecording for the crash rationale).
     private var sessionStartedFromSelf = false
@@ -123,6 +161,9 @@ final class DictationController {
     /// Wall-clock time spent paused this session, subtracted from the hard length cap and the
     /// saved duration so both count only the audio we actually captured.
     private var pausedAccumulated: TimeInterval = 0
+    /// When the mic actually stopped. History durations (and the words-per-minute stat built
+    /// on them) use this, so transcription/AI time can never inflate speaking time.
+    private var recordingEndedAt: Date?
     private var pauseStartedAt = Date()
 
     /// Monotonic id for the current dictation. Bumped by start() and cancel() so a
@@ -155,6 +196,10 @@ final class DictationController {
         default: return true
         }
     }
+    /// True while a stopped dictation is transcribing or being AI-cleaned (the finishing pipeline).
+    /// A trigger-key press during this window must be IGNORED, never turned into a cancel - cancelling
+    /// here silently discards the recording the user is waiting on. Deliberate cancel = Esc / panel.
+    var isProcessing: Bool { isFinishing }
     private var isErrorPhase: Bool { if case .error = phase { return true }; return false }
 
     /// EVERY phase / live-text mutation goes through these, inside a no-animation transaction.
@@ -166,7 +211,11 @@ final class DictationController {
     private func setPhase(_ new: Phase) {
         var t = Transaction(); t.disablesAnimations = true
         withTransaction(t) { phase = new }
-        if new != .transforming { transformingDetail = nil }
+        // Keep any loading/status detail during the finishing pipeline; clear it everywhere else.
+        switch new {
+        case .transcribing, .transforming: break
+        default: statusDetail = nil
+        }
     }
 
     private func setLiveText(_ new: String) {
@@ -243,9 +292,15 @@ final class DictationController {
     /// up, or inserting it CANCELS the in-flight work (pressing the key mid-process means "never
     /// mind"); otherwise it starts a new dictation.
     func toggle() {
-        yapdiag("toggle: isRecording=\(isRecording) phase=\(phase.userFacingLabel)")
+        yapdiag("toggle: isRecording=\(isRecording) phase=\(phase.userFacingLabel) isFinishing=\(isFinishing)")
         if isRecording {
             stop()
+        } else if isFinishing {
+            // Transcription / AI cleanup is already running. A stray, double, or spammed press here
+            // used to hit the `cancel()` branch and THROW AWAY the in-flight result - the recording
+            // never got saved or inserted. Ignore it instead: the work finishes and lands normally.
+            // Deliberate cancellation is still available via the panel's Stop/X or double-Escape.
+            yapdiag("toggle: ignored press during \(phase.userFacingLabel); letting it finish")
         } else if isBusy || startInFlight {
             cancel()
         } else {
@@ -299,6 +354,15 @@ final class DictationController {
                                           overrides: settings.perAppModeOverrides)
         sessionMode = mode
         sessionAutoSuspended = false
+        // Live typing now arms for EVERY insert-at-cursor session, including AI and Auto modes
+        // (the old raw-only gate made the toggle appear to do nothing for anyone using Auto).
+        // For AI sessions the stream is typed live and finish() reconciles: when cleanup changed
+        // the text, the typed stream is backspaced away and the final version delivered.
+        liveTypedText = ""
+        sessionLiveTyping = settings.liveTyping && settings.autoInsert
+            && mode.outputTarget == .insertAtCursor
+            && !sessionStartedFromSelf && AXIsProcessTrusted()
+        if sessionLiveTyping { yapdiag("live typing: armed for this session (AI=\(mode.usesAI || settings.autoContextMode))") }
         // With Auto routing on, the UI keeps saying "Auto"; sessionMode stays the resolved real
         // mode as the routing fallback.
         activeMode = settings.autoContextMode ? BuiltInModes.auto : mode
@@ -325,8 +389,20 @@ final class DictationController {
         recorder.preferredDeviceUID = settings.inputDeviceUID
         recorder.inputGain = Float(settings.inputGain)
         recorder.autoAmplify = settings.autoAmplifyInput
-        recorder.onSpectrum = { [weak self] bands in
-            self?.visualData.spectrum = bands
+        recorder.reduceNoise = settings.reduceBackgroundNoise
+        recorder.keepWarm = settings.keepMicWarm
+        recorder.warmSeconds = settings.micWarmMinutes * 60
+        // The FFT/spectrum pipeline only feeds the waveform visualizers. When neither the floating
+        // panel nor the Utility scratchpad wave can be on screen this session, skip the per-buffer
+        // analysis entirely. Start-time gate on purpose: the tap captures the callback by value,
+        // so a mid-session change couldn't take effect anyway. (The menu bar mini-waveform uses
+        // levelHistory from onLevel, not the spectrum, so it keeps animating either way.)
+        if scratchpadSink != nil || settings.showRecordingPanel {
+            recorder.onSpectrum = { [weak self] bands in
+                self?.visualData.spectrum = bands
+            }
+        } else {
+            recorder.onSpectrum = nil
         }
         let locale = mode.localeIdentifier ?? settings.localeIdentifier
         let engine = makeEngine(for: mode)
@@ -337,6 +413,13 @@ final class DictationController {
         levelHistory = Array(repeating: 0, count: Self.levelHistoryLength)
         setPhase(.recording)
         sessionStart = Date()
+        recordingEndedAt = nil
+        sessionDelivered = nil
+        sessionOutcome = nil
+        sessionCleanupModel = nil
+        sessionAutoVerdict = nil
+        Phase.sessionSeed &+= 1   // fresh fun-label variation each dictation
+        if settings.pauseMediaDuringDictation { MediaPauser.pauseIfPlaying() }
         lastVoiceAt = Date()
         pausedAccumulated = 0
 
@@ -351,7 +434,11 @@ final class DictationController {
 
         if settings.playSounds { Sound.playStart() }
         // The Utility hub scratchpad shows its own inline waveform, so skip the floating panel.
-        if settings.showRecordingPanel, scratchpadSink == nil { onPresentPanel?() }
+        if settings.showRecordingPanel, scratchpadSink == nil, case .recording = phase {
+            // A cancel racing the arm sequence must not re-present a panel that the
+            // cancel just dismissed - nobody would ever dismiss it again (stuck pill).
+            onPresentPanel?()
+        }
 
         if mode.includeSelectedText || settings.autoContextMode {
             let sid = sessionID
@@ -366,23 +453,15 @@ final class DictationController {
 
         let sid = sessionID
         do {
-            try await engine.beginSession(localeIdentifier: locale) { [weak self] update in
-                Task { @MainActor in self?.setLiveText(update.combined) }
+            // CAPTURE FIRST, WARM UP SECOND: the recorder starts immediately - waveform moving,
+            // audio rolling - while the speech session arms in parallel. Buffers that arrive
+            // before the session is ready are held in `pending` and flushed in afterwards, so
+            // the first words are never lost to engine warm-up.
+            let pending = PendingAudio()
+            let recorderBuffer: (AVAudioPCMBuffer) -> Void = { [weak engine] buffer in
+                if pending.gate(buffer) { engine?.append(buffer) }
             }
-            // cancel() bumped sessionID while beginSession was awaiting: this session is dead.
-            // Without this check the recorder would start for a cancelled session and run
-            // orphaned forever (confirmed via the live diagnostic trail before a segfault).
-            guard sid == sessionID else {
-                yapdiag("beginRecording: session cancelled during prologue, aborting")
-                startInFlight = false
-                await engine.cancel()
-                if self.engine === engine { self.engine = nil }
-                return
-            }
-            yapdiag("beginRecording: beginSession OK, starting recorder")
-            try recorder.start(onBuffer: { [weak engine] buffer in
-                engine?.append(buffer)
-            }, onLevel: { [weak self] rawLevel in
+            let recorderLevel: (Float) -> Void = { [weak self] rawLevel in
                 guard let self, !self.isPaused else { return }   // ignore any late tap that lands after pause()
                 // Publish-time NaN/Inf guard: `level` is @Observable state read by several views;
                 // a non-finite value here becomes a bogus CGFloat in the view graph.
@@ -392,7 +471,129 @@ final class DictationController {
                 self.levelHistory.append(level)
                 if self.levelHistory.count > Self.levelHistoryLength { self.levelHistory.removeFirst() }
                 if level > 0.12 { self.lastVoiceAt = Date() }
-            }, writeTo: audioURL)
+            }
+            // NEVER start the audio engine on the main thread: AVAudioEngine.start() is
+            // synchronous and has been seen HANGING inside CoreAudio (frozen app, End button
+            // dead, sample shows the main thread parked in engine start). Run it detached with
+            // its own timeout; on timeout the session fails visibly and the next one gets a
+            // fresh engine, while the UI stays alive throughout.
+            let recorder = self.recorder
+            do {
+                try await Self.withArmTimeout(seconds: 5) {
+                    try await Task.detached(priority: .userInitiated) {
+                        try recorder.start(onBuffer: recorderBuffer, onLevel: recorderLevel, writeTo: audioURL)
+                    }.value
+                }
+            } catch {
+                recorder.startFreshNextSession = true   // the hung/failed engine is poisoned
+                throw error
+            }
+            yapdiag("beginRecording: recorder LIVE (capture-first), arming speech session…")
+            // DEAD-ROUTE WATCHDOG: a session's input route can come up delivering buffers of pure
+            // zeros for its entire life. If no genuine signal arrives quickly, rebuild the
+            // recorder on a brand-new engine WITHOUT ending the session.
+            Task { [weak self] in
+                guard let self else { return }
+                // Noise reduction outputs PURE ZEROS during silence, so under it this
+                // watchdog needs a LONGER fuse (a quiet first second is normal) - but it
+                // must still exist: with it fully disabled, a genuinely dead route after
+                // long uptime left the app PERMANENTLY deaf (caught live: "Listening..."
+                // with a flat wave, all-zero buffers, no rescue).
+                // (Voice processing is permanently off, so silence never means a VP gate
+                // is eating the signal - a short fuse is safe on every route now.)
+                let fuse = 1.0
+                if await self.recorder.waitUntilLive(timeout: fuse) { return }
+                guard sid == self.sessionID, self.phase == .recording, !self.isPaused else { return }
+                // Rescue INSTANTLY on the plain route: skip voice processing for the
+                // rebuild (enabling it costs 1-2s of deafness), and do NOT poison the
+                // next session - the fresh engine here is the whole fix.
+                self.recorder.reduceNoise = false
+                yapdiag("beginRecording: route DEAD after \(fuse)s (all-zero buffers); rebuilding engine")
+                self.recorder.stop()
+                do {
+                    // Keep writing the SAME session file: crash recovery and saved-audio
+                    // history must cover the rescued remainder, not reference a stub.
+                    try self.recorder.start(onBuffer: recorderBuffer, onLevel: recorderLevel,
+                                            writeTo: audioURL, forceFreshEngine: true)
+                    if await self.recorder.waitUntilLive(timeout: 2.5) {
+                        yapdiag("beginRecording: rebuilt route is LIVE")
+                    } else {
+                        yapdiag("beginRecording: rebuilt route STILL dead")
+                        self.flashStatus("The microphone isn't delivering audio. Try again, or pick another input in Settings.")
+                    }
+                } catch {
+                    yapdiag("beginRecording: dead-route rebuild failed: \(error)")
+                }
+            }
+            // Arm timeout: beginSession can hang FOREVER when audio input is broken (seen live:
+            // no mic attribution -> SpeechAnalyzer never returns, startInFlight stuck true, the
+            // app reads as crashed/frozen while every keypress logs a useless stop()). 12s is
+            // far beyond any legitimate cold start; after that, fail visibly instead.
+            try await Self.withArmTimeout(seconds: 12) {
+            try await engine.beginSession(localeIdentifier: locale) { [weak self] update in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.setLiveText(update.combined)
+                    // Live typing: type only NEWLY FINALIZED text (volatile guesses still change,
+                    // so they never touch the target app). Only clean prefix growth is typed; a
+                    // revision of already-typed text stops further live output for the session -
+                    // what's on screen stays, and finish() reconciles without duplicating.
+                    if self.sessionLiveTyping, self.isRecording, !self.isPaused {
+                        // Whisper only ever streams VOLATILE text (finalized arrives at the very
+                        // end), so live typing follows whichever stream exists - typing new words
+                        // as they come and backspacing the tail when the engine revises a guess.
+                        var stream = update.finalized.isEmpty ? update.volatile : update.finalized
+                        let windowed = stream.hasPrefix("\u{2026}")
+                        if windowed { stream.removeFirst() }   // preview-window ellipsis
+                        let typed = self.liveTypedText
+                        if windowed, !stream.isEmpty {
+                            // The preview WINDOW slid: older sentences fell out of `stream`, so a
+                            // plain diff would "delete" them off screen. Align instead: find the
+                            // longest tail of what's typed that starts this window, and APPEND
+                            // only what's new. Never deletes earlier text.
+                            var overlap = min(typed.count, stream.count)
+                            while overlap > 0, !typed.hasSuffix(String(stream.prefix(overlap))) { overlap -= 1 }
+                            let delta = String(stream.dropFirst(overlap))
+                            if !delta.isEmpty, overlap > 0 || typed.isEmpty {
+                                self.liveTypedText = typed + delta
+                                TextInserter.typeLive(delta)
+                            }
+                        } else if !stream.isEmpty, stream != typed {
+                            let common = zip(typed, stream).prefix(while: { $0 == $1 }).count
+                            let deletes = typed.count - common
+                            if deletes > 24 {
+                                // NEVER eat earlier sentences: whisper's preview window slides
+                                // (older text drops out of it), so a big "revision" is usually
+                                // the window moving, not the words changing. Anything beyond a
+                                // small tail correction freezes live output; finish() reconciles
+                                // once with the real final text.
+                                yapdiag("live typing: large revision (\(deletes) chars); freezing live output")
+                                self.sessionLiveTyping = false
+                            } else {
+                                if deletes > 0 { TextInserter.deleteBackward(count: deletes) }
+                                let delta = String(stream.dropFirst(common))
+                                self.liveTypedText = stream
+                                if !delta.isEmpty { TextInserter.typeLive(delta) }
+                            }
+                        }
+                    }
+                }
+            }
+            }
+            // cancel() bumped sessionID while beginSession was awaiting: this session is dead.
+            // The recorder is ALREADY capturing (capture-first), so it must be stopped here too.
+            guard sid == sessionID else {
+                yapdiag("beginRecording: session cancelled during prologue, aborting")
+                startInFlight = false
+                recorder.stop()
+                await engine.cancel()
+                if self.engine === engine { self.engine = nil }
+                return
+            }
+            // Session armed: flush everything captured while it warmed up, then go direct.
+            let queued = pending.arm()
+            for buffer in queued { engine.append(buffer) }
+            yapdiag("beginRecording: session armed; flushed \(queued.count) buffered chunks")
             startAutoStopMonitor()
             startInFlight = false
             onRecordingDidStart?()
@@ -401,6 +602,7 @@ final class DictationController {
             writeRecoveryMarker(RecoveryMarker(audioFileName: audioName, startedAt: sessionStart,
                                                modeID: sessionMode.id, localeIdentifier: locale))
             yapdiag("beginRecording: ARMED (recorder running=\(recorder.isRunning))")
+            announce("Listening")
             // A push-to-talk key released during the async prologue lands here.
             if stopRequested { stopRequested = false; stop() }
         } catch {
@@ -414,6 +616,46 @@ final class DictationController {
             sessionAudioFileName = nil
             onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
             setError(Self.message(for: error))
+        }
+    }
+
+    /// Capture-first buffering: audio recorded while the speech session is still arming.
+    /// The tap calls gate() on the audio thread; once the session is ready, arm() hands the
+    /// backlog over exactly once and every later buffer flows straight through.
+    private final class PendingAudio: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buffers: [AVAudioPCMBuffer] = []
+        private var armed = false
+
+        /// Returns true when the buffer should go directly to the engine (session armed).
+        func gate(_ buffer: AVAudioPCMBuffer) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if armed { return true }
+            if buffers.count < 700 { buffers.append(buffer) }   // ~30s cap; beyond that, oldest-first is fine to drop
+            return false
+        }
+
+        /// Mark the session live and return everything captured while it warmed up.
+        func arm() -> [AVAudioPCMBuffer] {
+            lock.lock(); defer { lock.unlock() }
+            armed = true
+            let queued = buffers
+            buffers = []
+            return queued
+        }
+    }
+
+    /// Race `operation` against a wall clock. beginSession has no timeout of its own, and a
+    /// hung one bricks the whole controller (startInFlight never clears).
+    private static func withArmTimeout(seconds: Double, _ operation: @escaping () async throws -> Void) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw TranscriptionError.unavailable("The microphone or speech engine didn't start. Check the Microphone permission in System Settings > Privacy, then try again.")
+            }
+            try await group.next()
+            group.cancelAll()
         }
     }
 
@@ -433,14 +675,20 @@ final class DictationController {
         let sid = sessionID
         stopAutoStopMonitor()
         recorder.stop()
+        recordingEndedAt = Date()   // speaking time ends HERE, not after transcription/AI cleanup
         if isPaused { pausedAccumulated += Date().timeIntervalSince(pauseStartedAt) }
         isPaused = false
         onRecordingDidStop?()
         setPhase(.transcribing)
+        announce("Transcribing")
+        // If the speech model still has to load (cold Whisper context), say so - a slow first
+        // transcribe used to look frozen. Apple Speech reports nil, so nothing changes there.
+        statusDetail = engine.modelLoadingDetail
 
         Task {
             do {
                 let raw = try await engine.endSession()
+                statusDetail = nil   // model is warm now; let the cleanup phase set its own detail
                 yapdiag("stop: endSession raw.len=\(raw.count) sid==cur:\(sid == sessionID)")
                 guard sid == sessionID else { return }   // cancelled while finishing
 
@@ -467,9 +715,9 @@ final class DictationController {
                         yapdiag("auto: destination bias from \(sessionBundleID ?? "?")")
                     } else {
                         setPhase(.transforming)
-                        transformingDetail = "Reading the room…"
+                        statusDetail = "Reading the room…"
                         verdict = await classifyForAutoMode(source)
-                        transformingDetail = nil
+                        statusDetail = nil
                     }
                     guard sid == sessionID else { return }
 
@@ -486,6 +734,16 @@ final class DictationController {
                         chosen = modeStore.mode(withID: BuiltInModes.clean.id) ?? BuiltInModes.clean
                         chosen.instructions = AutoContext.conservativeCleanup
                     }
+                    // The thinking pipeline, narrated: the pop-up says WHAT Auto detected and
+                    // what it's doing about it, instead of a generic "cleaning up".
+                    switch verdict {
+                    case .email:   statusDetail = "Email detected - formatting and signing\u{2026}"
+                    case .message: statusDetail = "Casual message detected - keeping it as spoken\u{2026}"
+                    case .note:    statusDetail = "Note detected - structuring it\u{2026}"
+                    case .code:    statusDetail = "Code comment detected - formatting for code\u{2026}"
+                    case .cleanup: statusDetail = "Cleaning up what was misheard - nothing rewritten\u{2026}"
+                    }
+
                     // Formatting verdicts may change LAYOUT, never the user's wording or tone -
                     // unless the user explicitly spoke a directive, which takes precedence.
                     if verdict != .message, extras.isEmpty {
@@ -508,6 +766,7 @@ final class DictationController {
                         }
                         chosen.instructions += "\n" + extras.map { "- " + $0 }.joined(separator: "\n")
                     }
+                    sessionAutoVerdict = verdict.rawValue
                     yapdiag("auto: verdict=\(verdict.rawValue) mode=\(chosen.name) extras=\(extras.count) replyCtx=\(context.selectedText?.count ?? 0)")
                     sessionMode = chosen
                 }
@@ -519,7 +778,7 @@ final class DictationController {
                     let cleanupID = sessionMode.languageModelID ?? settings.selectedLanguageModelID
                     if cleanupID != "apple", let m = models.model(id: cleanupID), m.runtime == .llamaCpp,
                        let url = models.downloads.localURL(for: m), !LlamaEngine.isCached(modelPath: url.path) {
-                        transformingDetail = "Loading the AI model (first time only)…"
+                        statusDetail = "Loading the AI model (first time only)…"
                     }
                     setPhase(.transforming)
                     let cleaned = await runCleanup(text, mode: sessionMode, context: context)
@@ -551,8 +810,8 @@ final class DictationController {
         }
     }
 
-    /// Re-activate the app captured at record-start and wait (up to ~500ms) until it is actually
-    /// frontmost, so a paste can't miss. No-op if we never had a target or it's already frontmost.
+    /// Re-activate the app captured at record-start and wait (up to ~1.2s, via activate()) until it
+    /// is actually frontmost, so a paste can't miss. No-op if we never had a target or it's already frontmost.
     /// Bring the session's target app forward. Returns false only when there IS a known target
     /// and it refused to come frontmost - the caller then falls back to the clipboard instead of
     /// pasting into whatever random window is in front.
@@ -579,10 +838,99 @@ final class DictationController {
         return false
     }
 
+    // MARK: Review before insert
+
+    /// Show the finished text in the floating review buffer. Return (or the Insert button)
+    /// delivers the possibly-edited text into the app the user dictated into; Esc discards.
+    private func presentReview(_ text: String, target: OutputTarget) {
+        let app = sessionTargetApp
+        let method = sessionMode.insertionMethod ?? settings.insertionMethod
+        let restore = settings.restoreClipboard
+        ReviewWindow.shared.present(text: text, appName: app?.localizedName, commit: { edited in
+            Task { @MainActor [weak self] in
+                let trimmed = edited
+                guard !trimmed.isEmpty else { return }
+                if let app, !app.isTerminated {
+                    app.activate(options: [.activateIgnoringOtherApps])
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                TextInserter.deliver(trimmed, target: target, method: method, restoreClipboard: restore)
+                self?.announce("Inserted")
+            }
+        }, discard: { [weak self] in
+            self?.announce("Discarded")
+        })
+    }
+
+    // MARK: Quick edit ("scratch that" / "replace X with Y")
+
+    private enum QuickEdit {
+        case scratch
+        case replace(from: String, to: String)
+    }
+
+    /// Recognize an utterance that is EXACTLY an edit phrase - never a sentence containing one,
+    /// so ordinary dictation is never intercepted.
+    private static func parseQuickEdit(_ utterance: String) -> QuickEdit? {
+        var t = utterance.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = t.last, ".,!?".contains(last) { t.removeLast() }
+        let lower = t.lowercased()
+        let scratchPhrases = ["scratch that", "delete that", "undo that", "erase that",
+                              "never mind", "nevermind", "forget that"]
+        if scratchPhrases.contains(lower) { return .scratch }
+        // "replace A with B" / "change A to B" - matched on the original text so B keeps its casing.
+        if let regex = try? NSRegularExpression(pattern: "^(?:replace|change)\\s+(.+?)\\s+(?:with|to)\\s+(.+)$",
+                                                options: [.caseInsensitive]),
+           let m = regex.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)),
+           let fromRange = Range(m.range(at: 1), in: t), let toRange = Range(m.range(at: 2), in: t) {
+            return .replace(from: String(t[fromRange]), to: String(t[toRange]))
+        }
+        return nil
+    }
+
+    /// If `utterance` is an edit phrase aimed at the text we just inserted (same app, within 30s),
+    /// perform it in place and return true. Any doubt at all -> return false and the utterance is
+    /// delivered normally.
+    private func performQuickEdit(utterance: String) async -> Bool {
+        guard let edit = DictationController.parseQuickEdit(utterance),
+              let last = lastInsert,
+              Date().timeIntervalSince(last.date) < 30,
+              !last.text.isEmpty, last.text.count <= 600,
+              sessionTargetApp?.processIdentifier == last.pid else { return false }
+        if case .replace(let from, _) = edit,
+           !last.text.lowercased().contains(from.lowercased()) {
+            // The phrase parsed like an edit but doesn't refer to the last insert -
+            // it's probably real content ("replace the filter with a new one"). Deliver it.
+            return false
+        }
+        guard await focusTargetApp() else { return false }
+        switch edit {
+        case .scratch:
+            TextInserter.deleteBackward(count: last.text.count)
+            lastInsert = nil
+            announce("Scratched")
+            yapdiag("quickEdit: scratched \(last.text.count) chars")
+        case .replace(let from, let to):
+            guard let range = last.text.range(of: from, options: [.caseInsensitive, .backwards]) else { return false }
+            let corrected = last.text.replacingCharacters(in: range, with: to)
+            TextInserter.deleteBackward(count: last.text.count)
+            TextInserter.typeLive(corrected)
+            lastInsert = (text: corrected, date: Date(), pid: last.pid)
+            announce("Replaced")
+            yapdiag("quickEdit: replaced '\(from)' -> '\(to)'")
+        }
+        return true
+    }
+
     private func finish(sid: Int, raw: String, final text: String) async {
         yapdiag("finish: text.len=\(text.count) autoInsert=\(settings.autoInsert)")
         guard sid == sessionID else { return }   // cancelled: do not insert or record
         setPhase(.inserting)
+        // Scratchpad sessions (Quick Edit instructions, the Utility page) are TOOL INPUT,
+        // not dictations: they must never enter History. Left recorded, an instruction
+        // like "capitalize everything" became the "last dictation" - Insert Last pasted
+        // it and Regenerate rewrote it.
+        let isToolSession = scratchpadSink != nil
         if let sink = scratchpadSink {
             // In-app scratchpad (Utility hub): hand the text to the view; never type into another app.
             scratchpadSink = nil
@@ -591,21 +939,68 @@ final class DictationController {
         } else {
             let target: OutputTarget = (settings.autoInsert && !sessionStartedFromSelf)
                 ? sessionMode.outputTarget : .clipboardOnly
-            if !text.isEmpty {
+            var quickEditHandled = false
+            if !text.isEmpty, settings.quickEditDetection, target == .insertAtCursor,
+               liveTypedText.isEmpty, AXIsProcessTrusted() {
+                quickEditHandled = await performQuickEdit(utterance: text)
+                if quickEditHandled { sessionOutcome = "voice quick edit" }
+            }
+            var reviewHandled = false
+            if !text.isEmpty, !quickEditHandled, settings.reviewBeforeInsert,
+               target != .clipboardOnly, liveTypedText.isEmpty,
+               // Long-only scope: short phrases auto-insert; the long ones - where a silent
+               // wrong guess actually hurts - stop for a look first.
+               !settings.reviewLongTextOnly || text.count >= 200 {
+                presentReview(text, target: target)
+                reviewHandled = true
+                sessionOutcome = "sent to review buffer"
+            }
+            if !text.isEmpty, !quickEditHandled, !reviewHandled {
+                // Live typing reconciliation: some or all of this text is ALREADY on screen.
+                // Deliver only the remainder when the final text cleanly extends what was typed;
+                // if processing (vocabulary, commands) changed it, keep what's typed rather than
+                // duplicating - History always holds the fully processed version.
+                var liveAlreadyDelivered = false
+                var liveRemainder: String? = nil
+                if !liveTypedText.isEmpty, target == .insertAtCursor {
+                    if text == liveTypedText {
+                        liveAlreadyDelivered = true
+                    } else if text.hasPrefix(liveTypedText) {
+                        liveRemainder = String(text.dropFirst(liveTypedText.count))
+                    } else if liveTypedText.count <= 600, await focusTargetApp() {
+                        // Cleanup (AI, dictionaries, commands) rewrote the text: erase the typed
+                        // stream and let the final version deliver normally in its place. This is
+                        // what makes live typing usable WITH AI modes - live words while you
+                        // speak, polished words the moment it's done.
+                        yapdiag("live typing: cleanup rewrote text; replacing \(liveTypedText.count) typed chars")
+                        TextInserter.deleteBackward(count: liveTypedText.count)
+                        liveTypedText = ""
+                    } else {
+                        liveAlreadyDelivered = true
+                        yapdiag("live typing: final text diverged from typed stream; not re-delivering")
+                    }
+                }
                 // Trailing space so back-to-back dictations don't run together. Only when typing
                 // at the cursor, and only if the text doesn't already end in whitespace.
-                var delivered = text
+                var delivered = liveRemainder ?? text
                 if settings.appendSpaceAfterInsert, target == .insertAtCursor,
-                   let last = delivered.last, !last.isWhitespace {
+                   let last = (delivered.isEmpty ? liveTypedText : delivered).last, !last.isWhitespace {
                     delivered += " "
                 }
                 // Make sure the app the user dictated into is frontmost before we paste, so the
                 // text can't land in a window they clicked mid-transcription (or in YapToText).
+                if liveAlreadyDelivered || (liveRemainder != nil && delivered.isEmpty) {
+                    // Everything is already on screen from live typing; nothing left to deliver.
+                    // (The shared announce below still says "Inserted".)
+                } else {
                 var deliveryTarget = target
                 // Synthetic paste/type events are silently DROPPED by macOS without the
                 // Accessibility permission - and the clipboard restore would then erase the text
                 // entirely. Degrade honestly: leave the text on the clipboard and say so.
-                let method = sessionMode.insertionMethod ?? settings.insertionMethod
+                // Per-app override first: some apps hate simulated paste (or typing) and the
+                // user can pin the method that works for them in Advanced settings.
+                let method = settings.appInsertionOverrides[sessionBundleID ?? ""]
+                    ?? sessionMode.insertionMethod ?? settings.insertionMethod
                 var announcedAXFallback = false
                 if target != .clipboardOnly, method != .clipboardOnly, !AXIsProcessTrusted() {
                     yapdiag("finish: no Accessibility permission; delivering to clipboard instead")
@@ -634,34 +1029,58 @@ final class DictationController {
                         deliveryTarget = .clipboardOnly
                     }
                 }
-                yapdiag("finish: delivering \(delivered.count) chars target=\(deliveryTarget) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") method=\(sessionMode.insertionMethod?.rawValue ?? settings.insertionMethod.rawValue)")
+                yapdiag("finish: delivering \(delivered.count) chars target=\(deliveryTarget) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") method=\(method.rawValue)")
                 TextInserter.deliver(delivered, target: deliveryTarget,
-                                     method: sessionMode.insertionMethod ?? settings.insertionMethod,
+                                     method: method,
                                      restoreClipboard: settings.restoreClipboard)
+                sessionDelivered = delivered
+                sessionOutcome = deliveryTarget == .clipboardOnly
+                    ? (announcedAXFallback ? "failed: needs Accessibility, copied instead" : "copied to clipboard")
+                    : (method == .type ? "typed" : "pasted")
                 if deliveryTarget == .clipboardOnly, target != .clipboardOnly, !announcedAXFallback {
                     announce("Copied to clipboard")
+                }
+                if deliveryTarget != .clipboardOnly {
+                    // Remember what just landed on screen so a follow-up "scratch that" /
+                    // "replace X with Y" can act on it.
+                    lastInsert = (text: liveTypedText + delivered, date: Date(),
+                                  pid: sessionTargetApp?.processIdentifier)
+                }
+                }
+                if liveAlreadyDelivered || (liveRemainder != nil && delivered.isEmpty) {
+                    lastInsert = (text: liveTypedText, date: Date(),
+                                  pid: sessionTargetApp?.processIdentifier)
+                    sessionDelivered = liveTypedText
+                    sessionOutcome = "live-typed"
                 }
             }
             if text.isEmpty {
                 announce("Nothing heard")
-            } else {
+            } else if reviewHandled {
+                announce("Ready to review")
+            } else if !quickEditHandled {
                 announce(target == .clipboardOnly ? "Copied to clipboard" : "Inserted")
             }
         }
         clearRecoveryMarker()   // clean end: this session no longer needs crash recovery
-        if settings.saveHistory, !text.isEmpty {
+        if settings.saveHistory, !text.isEmpty, !isToolSession {
             history.add(DictationRecord(
                 date: sessionStart,
                 rawText: raw,
                 finalText: text,
                 modeName: sessionMode.name,
                 modeID: sessionMode.id,
-                durationSeconds: max(0, Date().timeIntervalSince(sessionStart) - pausedAccumulated),
+                durationSeconds: max(0, (recordingEndedAt ?? Date()).timeIntervalSince(sessionStart) - pausedAccumulated),
                 appName: context.appName,
                 appBundleID: sessionBundleID,
                 localeIdentifier: sessionMode.localeIdentifier ?? settings.localeIdentifier,
                 usedAI: sessionMode.usesAI && FoundationModelsTransformer.isAvailable,
-                audioFileName: keepSessionAudio ? sessionAudioFileName : nil))
+                audioFileName: keepSessionAudio ? sessionAudioFileName : nil,
+                deliveredText: sessionDelivered,
+                outcome: sessionOutcome,
+                processSeconds: recordingEndedAt.map { max(0, Date().timeIntervalSince($0)) },
+                cleanupModel: sessionCleanupModel,
+                autoVerdict: sessionAutoVerdict))
             if !keepSessionAudio { AudioStore.delete(sessionAudioFileName) }   // recovery-only file
         } else {
             AudioStore.delete(sessionAudioFileName)   // no record kept: don't orphan the audio
@@ -670,48 +1089,103 @@ final class DictationController {
         if settings.playSounds { Sound.playStop() }
         engine = nil
         isFinishing = false
-        onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
         if text.isEmpty {
             // An empty transcript used to end SILENTLY, which reads as "the app didn't paste".
-            // Say so, visibly (menu bar + panel error state, auto-clears).
+            // Say so, visibly - and HOLD the panel open long enough to actually read it. The
+            // old order dismissed the panel first, so the message flashed for a blink and
+            // vanished before anyone could see what went wrong.
             setError("Didn't catch that. Nothing was transcribed.")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let self else { return }
+                // Never yank a panel a NEW dictation has since re-opened.
+                if !self.isBusy { self.onDismissPanel?() }
+            }
         } else {
+            onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
             setPhase(.idle)
         }
         setLiveText("")
         level = 0
         sessionTargetApp = nil
         isScratchpadSession = false
+        if MediaPauser.isPendingResume { recorder.releaseVoiceProcessingNow() }   // playback resumes at FULL quality
+        MediaPauser.resumeIfPaused()
         scheduleModelCooldown()
     }
 
     func cancel() {
         guard isBusy || startInFlight else { return }
+        // "Record cancelled dictations": instead of throwing the recording away, transcribe it and
+        // quietly file the raw transcript in History (never inserted anywhere, never AI-processed -
+        // the user cancelled, so we do the minimum: preserve what was said). Only a genuine mic
+        // recording qualifies; a scratchpad session or a cancel during transcription does not.
+        let archiveCancelled = settings.recordCancelledDictations
+            && phase == .recording && engine != nil && !isScratchpadSession
+        if archiveCancelled, let engineToDrain = engine {
+            let start = sessionStart
+            let mode = sessionMode
+            let bundleID = sessionBundleID
+            let appName = sessionTargetApp?.localizedName
+            let paused = pausedAccumulated + (isPaused ? Date().timeIntervalSince(pauseStartedAt) : 0)
+            let keepAudio = settings.saveAudio && settings.saveHistory
+            let audioFile = sessionAudioFileName
+            let saveHistory = settings.saveHistory
+            let localeID = mode.localeIdentifier ?? settings.localeIdentifier
+            recorder.stop()
+            // Drain the engine on its own Task; it holds its own reference so nulling self.engine
+            // below is safe. Independent of sessionID (the archive completes regardless of cancel).
+            Task { [weak self] in
+                let raw = (try? await engineToDrain.endSession()) ?? ""
+                guard let self else { return }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if saveHistory, !trimmed.isEmpty {
+                    self.history.add(DictationRecord(
+                        date: start, rawText: raw, finalText: raw,
+                        modeName: mode.name, modeID: mode.id,
+                        durationSeconds: max(0, Date().timeIntervalSince(start) - paused),
+                        appName: appName, appBundleID: bundleID,
+                        localeIdentifier: localeID, usedAI: false,
+                        audioFileName: keepAudio ? audioFile : nil))
+                    if !keepAudio { AudioStore.delete(audioFile) }
+                } else {
+                    AudioStore.delete(audioFile)
+                }
+            }
+        }
         sessionID += 1            // invalidate any in-flight finishing Task
         startInFlight = false
         stopRequested = false
+        sessionLiveTyping = false
+        liveTypedText = ""
         errorResetTask?.cancel()
         stopAutoStopMonitor()
-        recorder.stop()
+        if !archiveCancelled { recorder.stop() }   // archive path already stopped the recorder
         isPaused = false
         scratchpadSink = nil
         isScratchpadSession = false
         onRecordingDidStop?()
         clearRecoveryMarker()   // deliberate cancel: the user chose to discard, nothing to recover
+        if MediaPauser.isPendingResume { recorder.releaseVoiceProcessingNow() }   // playback resumes at FULL quality
+        MediaPauser.resumeIfPaused()
         scheduleModelCooldown()
-        AudioStore.delete(sessionAudioFileName)
+        if !archiveCancelled { AudioStore.delete(sessionAudioFileName) }   // archive path owns the audio
         sessionAudioFileName = nil
         sessionTargetApp = nil
         let engine = self.engine
         self.engine = nil
         isFinishing = false
-        Task { await engine?.cancel() }
-        onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
+        if !archiveCancelled { Task { await engine?.cancel() } }   // archive path drains its own engine
         if settings.playSounds { Sound.playError() }
+        // PHASE FIRST, THEN DISMISS. Every close choreography in RecordingPanel.hide() is
+        // gated on the session being over (!isRecording / !isBusy); dismissing while the
+        // phase still said .recording skipped all of them, so a cancel got no glass pinch,
+        // no card collapse - the panel just blinked out while the wave played its farewell.
         setPhase(.idle)
         setLiveText("")
         level = 0
-        announce("Cancelled")
+        onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
+        announce(archiveCancelled ? "Cancelled, saved to History" : "Cancelled")
     }
 
     // MARK: Pause / resume
@@ -745,19 +1219,47 @@ final class DictationController {
 
     // MARK: Engine + auto-stop
 
+    /// Warm the ACTIVE mode's whisper model into RAM in the background. Called at launch
+    /// and on user activity, so a cooldown-evicted (or never-loaded) model is resident
+    /// again BEFORE the next dictation instead of stalling its "Transcribing…" for seconds.
+    /// Set (with a deadline) when memory pressure evicted the models: activity re-warm
+    /// must NOT reload gigabytes while the system is still under pressure.
+    var suppressModelWarmUntil = Date.distantPast
+
+    func warmSpeechModel() {
+        guard Date() >= suppressModelWarmUntil else { return }
+        let modelID = activeMode.speechModelID ?? settings.selectedSpeechModelID
+        guard modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple,
+              let url = models.downloads.localURL(for: model) else { return }
+        WhisperEngine.warmContext(at: url.path)
+        // The re-warmed model must not become PERMANENTLY resident: the eviction clock
+        // restarts, exactly as it does after a dictation. Without this, one keystroke
+        // after a cooldown eviction parked 1.6GB in RAM until quit.
+        scheduleModelCooldown()
+    }
+
     private func makeEngine(for mode: Mode) -> TranscriptionEngine {
         let modelID = mode.speechModelID ?? settings.selectedSpeechModelID
         if modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple {
             // Only hand off to whisper when the file is actually on disk; otherwise fall back
             // to Apple Speech so dictation always works while a default model downloads.
             if let url = models.downloads.localURL(for: model) {
+                yapdiag("makeEngine: WHISPER \(model.displayName) at \(url.path)")
                 let engine = WhisperEngine(modelURL: url, modelName: model.displayName)
                 engine.livePreview = settings.livePreviewEnabled
                 return engine
             }
-            return AppleSpeechEngine()
+            yapdiag("makeEngine: model \(modelID) selected but NOT on disk; falling back to Apple Speech")
         }
-        return AppleSpeechEngine()
+        if #available(macOS 26.0, *) { yapdiag("makeEngine: APPLE SPEECH (modelID=\(modelID))"); return AppleSpeechEngine() }
+        // Pre-26 macOS has no SpeechAnalyzer: Whisper is the only speech engine. Reach for ANY
+        // downloaded Whisper model rather than dead-ending.
+        if let fallback = models.catalogFallbackWhisperURL() {
+            let engine = WhisperEngine(modelURL: fallback.url, modelName: fallback.name)
+            engine.livePreview = settings.livePreviewEnabled
+            return engine
+        }
+        return UnavailableEngine(message: "Download a Whisper model in Settings > Models to dictate on this version of macOS.")
     }
 
     private func startAutoStopMonitor() {
@@ -785,7 +1287,22 @@ final class DictationController {
     }
 
     /// Warm the microphone route at launch (see AudioRecorder.prewarmRoute).
-    func prewarmAudioInput() { recorder.prewarmRoute() }
+    /// Activity ping from AppDelegate's global input monitor: user is at the keyboard,
+    /// keep the route hot for the next few moments.
+    func holdMicWarmForActivity() {
+        recorder.reduceNoise = settings.reduceBackgroundNoise
+        recorder.holdWarmForActivity()
+    }
+
+    func prewarmAudioInput() {
+        // The prewarm engine MUST match the session's voice-processing state: arm() toggling
+        // it later on the running warm engine fails (-10849) and leaves the route dead - the
+        // "app is deaf for 2 seconds after launch" bug (0 buffers for 1s, then a 1.6s fresh-
+        // engine rebuild). Warm the route in its final configuration instead.
+        recorder.reduceNoise = settings.reduceBackgroundNoise
+        recorder.prewarmRoute()
+        recorder.installKeepAlive()   // revive the route after sleep/lock/device changes
+    }
 
     // MARK: Crash recovery
 
@@ -823,6 +1340,7 @@ final class DictationController {
         let keep = settings.saveHistory && settings.saveAudio
         let mode = marker.modeID.flatMap { modeStore.mode(withID: $0) } ?? activeMode
         yapdiag("recovery: found crashed session \(marker.audioFileName), transcribing")
+        UserDefaults.standard.set(true, forKey: "diag.lastUncleanMidDictation")
         Task {
             // Anything under ~half a second of audio is a stray tap, not lost words.
             let duration: Double = (try? AVAudioFile(forReading: url)).map {
@@ -905,7 +1423,7 @@ final class DictationController {
         Task {
             defer { regeneratingIDs.remove(record.id) }
             do {
-                let cleaned = await runCleanup(record.rawText, mode: mode, context: TransformContext(userName: settings.userName))
+                let cleaned = await runCleanup(record.rawText, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
                 var text = cleaned
                 text = vocabulary.apply(to: text, dictionaryIDs: mode.dictionaryIDs)
                 text = commands.apply(to: text)
@@ -914,8 +1432,15 @@ final class DictationController {
                 updated.finalText = text
                 updated.usedAI = true
                 history.update(updated)
-                TextInserter.setClipboard(text)
-                announce("Regenerated. Copied to clipboard.")
+                // If the ORIGINAL of this record is still sitting on screen from the last
+                // insert, swap it in place - regenerate should visibly produce output, not
+                // silently park it on the clipboard (the old behavior read as "nothing happened").
+                if record.id == history.records.first?.id, await replaceLastInsert(with: text) {
+                    announce("Regenerated and replaced")
+                } else {
+                    TextInserter.setClipboard(text)
+                    announce("Regenerated. Copied to clipboard.")
+                }
                 // Brief green "updated" flash on the row / the menu-bar "Copied" state.
                 lastRegeneratedID = record.id
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -933,6 +1458,33 @@ final class DictationController {
         regenerate(last)
     }
 
+    /// Swap the text the last dictation left on screen for `replacement`: bring the target app
+    /// back, backspace the old insert, type the new one. False when there's nothing recent to
+    /// replace (caller falls back to the clipboard).
+    private func replaceLastInsert(with replacement: String) async -> Bool {
+        guard let last = lastInsert, !last.text.isEmpty, last.text.count <= 600,
+              Date().timeIntervalSince(last.date) < 300, AXIsProcessTrusted() else { return false }
+        if let pid = last.pid, let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated {
+            app.activate(options: [.activateIgnoringOtherApps])
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        let newText = replacement + (last.text.hasSuffix(" ") ? " " : "")
+        TextInserter.deleteBackward(count: last.text.count)
+        TextInserter.typeLive(newText)
+        lastInsert = (text: newText, date: Date(), pid: last.pid)
+        return true
+    }
+
+    /// The redo shortcut: erase what the last dictation inserted, re-run it through its AI
+    /// pipeline, and insert the fresh result in its place. One key, whole loop.
+    func redoLastInsertion() {
+        guard canRegenerateLast else {
+            announce("Nothing recent to redo")
+            return
+        }
+        regenerateLast()
+    }
+
     var canRegenerateLast: Bool {
         guard let last = history.records.first else { return false }
         return regenerationMode(for: last) != nil
@@ -946,7 +1498,7 @@ final class DictationController {
     func preview(_ text: String, mode: Mode) async throws -> String {
         var out = vocabulary.apply(to: text, dictionaryIDs: mode.dictionaryIDs)
         if mode.usesAI, cleanupAvailable(for: mode), !out.isEmpty {
-            let cleaned = await runCleanup(out, mode: mode, context: TransformContext(userName: settings.userName))
+            let cleaned = await runCleanup(out, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
             if cleaned != out {
                 out = vocabulary.apply(to: cleaned, dictionaryIDs: mode.dictionaryIDs)
             }
@@ -973,6 +1525,21 @@ final class DictationController {
     /// The cleanup transformer to use: a downloaded GGUF (per-mode override, else the global
     /// selection) when its file is on disk; otherwise Apple's Foundation model; nil if neither
     /// is usable (caller inserts the raw transcript).
+    /// The user's name is AMMUNITION for signing - small local models sign with any name
+    /// they're given regardless of instructions (the recurring "- R" on plain cleanups).
+    /// So the prompt only ever CONTAINS the name when the mode's job includes a sign-off:
+    /// the Email mode, or custom instructions that mention signing. Everywhere else the
+    /// no-name prompt branch applies, which explicitly forbids invented signatures.
+    private func promptUserName(for mode: Mode) -> String? {
+        // Match explicit signing LANGUAGE only. Loose words backfire: Clean Up's instructions
+        // mention "email addresses", and matching on "email" handed the name to Phi, which
+        // promptly signed a plain cleanup with it.
+        let signingWords = ["sign-off", "signoff", "signature", "sign as", "sign the", "sign it"]
+        let wantsSignature = mode.id == BuiltInModes.email.id
+            || signingWords.contains { mode.instructions.localizedCaseInsensitiveContains($0) }
+        return wantsSignature ? settings.userName : nil
+    }
+
     private func cleanupTransformer(for mode: Mode) -> (any TextTransformer)? {
         // GGUF cleanup is BACK ON: the old segfault was never a llama/ggml version mismatch - the
         // package simply never defined GGML_USE_CPU, so ggml's backend registry had no CPU device
@@ -1026,8 +1593,47 @@ final class DictationController {
         return Double(overlap) / Double(outWords.count) > 0.85
     }
 
+    /// Human-readable name of the engine cleanupTransformer(for:) would pick - recorded into
+    /// history so a bad output can be blamed on the right model. Mirrors that function's order.
+    private func cleanupEngineName(for mode: Mode) -> String? {
+        let modelID = mode.languageModelID ?? settings.selectedLanguageModelID
+        if modelID != "apple", let model = models.model(id: modelID), model.runtime == .llamaCpp,
+           models.downloads.localURL(for: model) != nil {
+            return model.displayName
+        }
+        if FoundationModelsTransformer.isAvailable { return "Apple Intelligence" }
+        if let fallback = models.languageModels.first(where: { $0.runtime == .llamaCpp && models.downloads.localURL(for: $0) != nil }) {
+            return fallback.displayName
+        }
+        return nil
+    }
+
+    /// Backstop for the recurring phantom "- R": when no signature was authorized for this
+    /// pass (context.userName is nil), a trailing line that is JUST the user's name (with an
+    /// optional dash) was invented by the model - drop it. Only fires when the raw dictation
+    /// didn't itself end with the name.
+    private func stripUnauthorizedSignoff(_ cleaned: String, raw: String) -> String {
+        let name = settings.userName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return cleaned }
+        var lines = cleaned.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let last = lines.last?.trimmingCharacters(in: .whitespaces), !last.isEmpty else { return cleaned }
+        let stripped = last.drop(while: { "-\u{2013}\u{2014} ".contains($0) })
+        guard stripped.caseInsensitiveCompare(name) == .orderedSame else { return cleaned }
+        let rawTail = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTail.lowercased().hasSuffix(name.lowercased()) else { return cleaned }
+        lines.removeLast()
+        while let tail = lines.last, tail.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
+        yapdiag("cleanup: stripped unauthorized sign-off \u{201C}\(last)\u{201D}")
+        return lines.joined(separator: "\n")
+    }
+
     private func runCleanup(_ text: String, mode: Mode, context: TransformContext) async -> String {
         guard let transformer = cleanupTransformer(for: mode) else { return text }
+        // THE choke point for the name: whatever context a caller built (the live-session one
+        // includes the name unconditionally), the prompt only carries it if this mode signs.
+        var context = context
+        context.userName = promptUserName(for: mode)
+        sessionCleanupModel = cleanupEngineName(for: mode)
         guard let cleaned = try? await transformer.transform(text, mode: mode, context: context),
               !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
         // If the model answered/refused instead of cleaning, DISCARD it and keep the raw words -
@@ -1051,10 +1657,46 @@ final class DictationController {
             yapdiag("cleanup: discarded reference-echo output, using raw transcript")
             return text
         }
+        // PARAPHRASE-DRIFT guard (Clean Up only - other modes rewrite by design): cleanup
+        // must PRESERVE the user's wording, but a small model on a long input slides into
+        // formalizing paraphrase ("make sure to" -> "ensure that", invented connectives).
+        // If too few of the raw content words survived, the model rewrote rather than
+        // cleaned - keep the user's own words. (Caught live: a 100s dictation came back
+        // restyled with fabricated phrasing.)
+        if mode.id == BuiltInModes.clean.id {
+            let rawWords = text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init).filter { $0.count >= 4 }
+            if rawWords.count >= 25 {
+                let cleanSet = Set(cleaned.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+                let kept = rawWords.filter { cleanSet.contains($0) }.count
+                let retention = Double(kept) / Double(rawWords.count)
+                if retention < 0.72 {
+                    yapdiag("cleanup: discarded paraphrase-drift output (retention \(String(format: "%.2f", retention))), using raw transcript")
+                    return text
+                }
+            }
+        }
+        if context.userName == nil {
+            return stripUnauthorizedSignoff(cleaned, raw: text)
+        }
         return cleaned
     }
 
     // MARK: Transcribe a file
+
+#if DEBUG
+    /// Test-harness transcription: the full real pipeline (media decode -> speech
+    /// enhancer -> whisper, same engine selection as a live session) with ZERO side
+    /// effects - no clipboard, no insertion, no history, no UI phases.
+    func debugTranscribeQuiet(_ url: URL) async throws -> String {
+        let mode = activeMode
+        let engine = makeEngine(for: mode)
+        (engine as? WhisperEngine)?.livePreview = false
+        try await engine.beginSession(localeIdentifier: mode.localeIdentifier ?? settings.localeIdentifier) { _ in }
+        try await MediaAudioDecoder.decode(url: url) { buffer in engine.append(buffer) }
+        return try await engine.endSession()
+    }
+#endif
 
     /// Transcribe an existing audio file with the active mode, exactly like superwhisper's
     /// "Transcribe file". Result goes to the clipboard and History (not typed, since there's no
@@ -1069,6 +1711,7 @@ final class DictationController {
         Task {
             do {
                 let engine = makeEngine(for: mode)
+                (engine as? WhisperEngine)?.livePreview = false   // no UI wants partials here
                 try await engine.beginSession(localeIdentifier: locale) { _ in }
                 // Decode the audio track of ANY media file - audio or video, any extension - so
                 // an .mp4, a .mov, or a renamed clip all work, not just AVAudioFile's formats.
@@ -1079,7 +1722,7 @@ final class DictationController {
                     return
                 }
                 setPhase(.transforming)
-                let text = await polish(raw, mode: mode, context: TransformContext(userName: settings.userName))
+                let text = await polish(raw, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
                 // Always keep it on the clipboard as a reliable fallback, then - if we know which
                 // app was active when the file was picked - type it in at the cursor, just like a
                 // live dictation, instead of making the user paste it themselves.
@@ -1130,10 +1773,11 @@ final class DictationController {
     // MARK: AI actions (on selected text)
 
     /// Run a one-shot AI action's instructions over arbitrary text (e.g. the current selection).
-    func applyAIAction(instructions: String, to text: String) async throws -> String {
-        let action = Mode(name: "Action", usesAI: true, instructions: instructions)
+    func applyAIAction(instructions: String, to text: String, modelID: String? = nil) async throws -> String {
+        var action = Mode(name: "Action", usesAI: true, instructions: instructions)
+        if let modelID { action.languageModelID = modelID }
         guard let transformer = cleanupTransformer(for: action) else { return text }
-        let out = try await transformer.transform(text, mode: action, context: TransformContext(userName: settings.userName))
+        let out = try await transformer.transform(text, mode: action, context: TransformContext(userName: promptUserName(for: action)))
         // Same guards as the dictation pipeline: never deliver an assistant-style reply or a
         // runaway expansion as if it were the transformed text.
         if FoundationModelsTransformer.looksLikeAssistantResponse(out) {
@@ -1173,7 +1817,7 @@ final class DictationController {
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TranscriptionError.unavailable("No speech was found in \(url.lastPathComponent).")
         }
-        return await polish(raw, mode: mode, context: TransformContext(userName: settings.userName))
+        return await polish(raw, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
     }
 
     /// Speak a short status to VoiceOver / used to surface selection-editing feedback.
@@ -1254,8 +1898,12 @@ final class DictationController {
 
     private func setError(_ message: String) {
         lastError = message
+        let ud = UserDefaults.standard
+        ud.set(ud.integer(forKey: "diag.errorCount") + 1, forKey: "diag.errorCount")
+        ud.set(Date().timeIntervalSince1970, forKey: "diag.lastErrorAt")
         isScratchpadSession = false
         setPhase(.error(message))
+        announce(message)
         if settings.playSounds { Sound.playError() }
         errorResetTask?.cancel()
         errorResetTask = Task { @MainActor [weak self] in

@@ -12,7 +12,7 @@ struct ActionsView: View {
 
     var body: some View {
         SettingsPage {
-            Text("AI Actions rewrite whatever text you've selected in any app: improve it, fix grammar, make it shorter, summarize, translate, all entirely on device. Run them from the Utility page on any text you paste in.")
+            Text("AI Actions rewrite whatever text you've selected in any app: improve it, fix grammar, make it shorter, summarize, translate - all entirely on device. Run them from any app: select your text, open the menu bar, and hit Regenerate; you'll see these actions there. They also work on the Utility page.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             CardSection("Where to run them") {

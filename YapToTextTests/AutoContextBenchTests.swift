@@ -247,4 +247,52 @@ final class AutoContextBenchTests: XCTestCase {
         let cleaned = FoundationModelsTransformer.sanitize(raw)
         XCTAssertEqual(cleaned, "Fix the goddamn build before Monday.")
     }
+
+    // MARK: - Live-model audit findings (Jul 15 gauntlet)
+
+    /// CONFIRMED live (case n21): email with no dictated signer closes with a bracketed placeholder.
+    func testStripsStandalonePlaceholderSignatureLine() {
+        let raw = "Dear Sarah,\n\nThanks so much for covering my shift last week.\n\nBest regards,\n[No Name Provided]"
+        XCTAssertEqual(FoundationModelsTransformer.sanitize(raw),
+                       "Dear Sarah,\n\nThanks so much for covering my shift last week.\n\nBest regards,")
+    }
+
+    func testStripsMarkdownEmphasis() {
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("Please review **the numbers** before *Friday*."),
+                       "Please review the numbers before Friday.")
+        // must NOT touch arithmetic or a leading bullet
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("Multiply 5 * 3 for the total."),
+                       "Multiply 5 * 3 for the total.")
+    }
+
+    func testStripsMarkdownHeaders() {
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("## Summary\nThe deal closed."),
+                       "Summary\nThe deal closed.")
+        // C# / F# / #1 untouched (hash not at line start with trailing space)
+        let keep = "I write C# and F# code."
+        XCTAssertEqual(FoundationModelsTransformer.sanitize(keep), keep)
+    }
+
+    func testStripsShortAckPreamble() {
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("Sure!\n\nHi Marcus, the build is ready."),
+                       "Hi Marcus, the build is ready.")
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("Of course.\nThe deadline is Friday."),
+                       "The deadline is Friday.")
+    }
+
+    func testStripsTrailingIHopeThisHelps() {
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("See you at three.\n\nI hope this helps!"),
+                       "See you at three.")
+        // a legitimate dictated closing must survive
+        let keep = "See you at three.\n\nLet me know if you need anything else."
+        XCTAssertEqual(FoundationModelsTransformer.sanitize(keep), keep)
+    }
+
+    func testUnwrapsBacktickAndSingleQuoteWrapping() {
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("`the whole message`"), "the whole message")
+        XCTAssertEqual(FoundationModelsTransformer.sanitize("\u{2018}quoted\u{2019}"), "quoted")
+        // a contraction inside straight-single wrapping must not be mis-unwrapped
+        let contraction = "'it's fine'"
+        XCTAssertEqual(FoundationModelsTransformer.sanitize(contraction), contraction)
+    }
 }

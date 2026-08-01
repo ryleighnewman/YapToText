@@ -97,7 +97,7 @@ struct PerAppModesSection: View {
         panel.allowedContentTypes = [.application]
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        guard panel.runModal() == .OK, let url = panel.url,
+        guard panel.runModalInFront() == .OK, let url = panel.url,
               let id = Bundle(url: url)?.bundleIdentifier,
               id != Bundle.main.bundleIdentifier,                       // not YapToText itself
               state.settings.perAppModeOverrides[id] == nil else { return }   // not already mapped
@@ -141,7 +141,7 @@ enum AppCatalog {
     }
 }
 
-private struct AppIconView: View {
+struct AppIconView: View {
     let bundleID: String
     var body: some View {
         Group {

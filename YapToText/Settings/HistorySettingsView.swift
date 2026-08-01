@@ -9,6 +9,7 @@ struct HistorySettingsView: View {
     @State private var modeFilter: String?
     @State private var aiOnly = false
     @State private var showStats = false
+    @State private var rawExpanded: Set<UUID> = []
 
     enum DateFilter: String, CaseIterable, Identifiable {
         case all = "All", today = "Today", week = "7 days", month = "30 days"
@@ -139,8 +140,64 @@ struct HistorySettingsView: View {
         let isRegenerating = state.controller.regeneratingIDs.contains(record.id)
         let justUpdated = state.controller.lastRegeneratedID == record.id
         let isPlaying = HistoryAudioPlayer.shared.playingID == record.id
+        let showRaw = rawExpanded.contains(record.id)
         return VStack(alignment: .leading, spacing: 7) {
             Text(record.finalText).lineLimit(3).textSelection(.enabled)
+            // Pipeline forensics: one click opens the full three-stage breakdown - what the
+            // speech model heard, what cleanup made of it, and what actually landed - plus the
+            // delivery status. The fastest way to blame the right stage for a bad output.
+            Button {
+                // Smooth, explicit animation: the disclosure grew/snapped in one heavy layout
+                // pass before, which read as lag. One eased transaction opens it cleanly.
+                withAnimation(.easeOut(duration: 0.22)) {
+                    if showRaw { rawExpanded.remove(record.id) } else { rawExpanded.insert(record.id) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showRaw ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .semibold))
+                    Text(showRaw ? "Pipeline details" : "Show pipeline details").font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            if showRaw {
+                VStack(alignment: .leading, spacing: 10) {
+                    // 1. The recording itself, first-class: play/scrub/skip, reveal, share.
+                    if record.hasAudio {
+                        RecordMediaPlayer(record: record)
+                    }
+                    // 2. The three pipeline stages, in order.
+                    pipelineField("Raw transcript (what the speech model heard)", record.rawText)
+                    if record.finalText != record.rawText {
+                        pipelineField(record.usedAI ? "Cleaned transcript (after AI + dictionaries + commands)"
+                                                    : "Processed transcript (after dictionaries + commands)",
+                                      record.finalText)
+                    }
+                    if let delivered = record.deliveredText,
+                       delivered.trimmingCharacters(in: .whitespaces) != record.finalText.trimmingCharacters(in: .whitespaces) {
+                        pipelineField("Final delivered text", delivered)
+                    }
+                    // 3. Everything that happened, as a plain bullet list (no pills - they fought
+                    //    with the row's own chips below). Timestamp leads.
+                    VStack(alignment: .leading, spacing: 3) {
+                        detailBullet("Timestamp", record.date.formatted(.dateTime.year().month().day().hour().minute().second()))
+                        detailBullet("Mode", record.modeName + (record.usedAI ? " (AI cleanup)" : " (verbatim)"))
+                        if let verdict = record.autoVerdict { detailBullet("Auto detected", verdict) }
+                        if let model = record.cleanupModel { detailBullet("Cleanup model", model) }
+                        if let outcome = record.outcome { detailBullet("Delivery", outcome) }
+                        if let app = record.appName { detailBullet("Target app", app) }
+                        detailBullet("Spoken for", String(format: "%.1fs", record.durationSeconds))
+                        if let secs = record.processSeconds { detailBullet("Stop to text", String(format: "%.1fs", secs)) }
+                        detailBullet("Language", record.localeIdentifier)
+                        detailBullet("Audio", record.hasAudio ? "saved with this entry" : "not kept")
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             // Built-in player: a thin progress bar appears under the text while this row plays.
             if isPlaying {
                 HStack(spacing: 6) {
@@ -208,6 +265,14 @@ struct HistorySettingsView: View {
                 .disabled(state.history.records.isEmpty).controlSize(.small)
         }
         .padding(10)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            FolderCaption(prefix: "History lives on your Mac in the app's ",
+                          linkText: "data folder",
+                          url: Persistence.url("history.json"),
+                          suffix: ".")
+                .padding(.horizontal, 10).padding(.bottom, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: Filtering
@@ -233,6 +298,81 @@ struct HistorySettingsView: View {
     }
 
     // MARK: Row pieces
+
+    /// One "label: value" line of the details bullet list.
+    private func detailBullet(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("\u{2022}").foregroundStyle(.tertiary)
+            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+                .frame(width: 82, alignment: .leading)
+            Text(value).font(.caption2).foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+    }
+
+    /// The pipeline-details media player: transport on the LEFT (skip back, play/pause, skip
+    /// forward), a draggable scrubber with elapsed/total time, then Reveal and Share.
+    private struct RecordMediaPlayer: View {
+        let record: DictationRecord
+        private var player: HistoryAudioPlayer { HistoryAudioPlayer.shared }
+        private var isCurrent: Bool { player.playingID == record.id }
+
+        private func fmt(_ t: TimeInterval) -> String {
+            String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+        }
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Button { player.skip(record, by: -5) } label: { Image(systemName: "gobackward.5") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .disabled(!isCurrent)
+                Button { player.playPause(record) } label: {
+                    Image(systemName: isCurrent && !player.isPaused ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                Button { player.skip(record, by: 5) } label: { Image(systemName: "goforward.5") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .disabled(!isCurrent)
+
+                Text(isCurrent ? fmt(player.currentTime) : "0:00")
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                Slider(value: Binding(
+                    get: { isCurrent ? player.progress : 0 },
+                    set: { player.seek(record, toFraction: $0) }
+                ))
+                .controlSize(.mini)
+                Text(fmt(isCurrent ? player.duration : record.durationSeconds))
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+
+                if let name = record.audioFileName {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([AudioStore.url(for: name)])
+                    } label: { Image(systemName: "folder") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("Show the recording in Finder")
+                    ShareLink(item: AudioStore.url(for: name)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help("Share the recording")
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    /// One labeled stage of the pipeline breakdown - selectable so any line can be copied.
+    private func pipelineField(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+            Text(value).font(.caption).foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 
     private func chip(_ text: String, _ icon: String) -> some View {
         HStack(spacing: 3) {
@@ -304,7 +444,7 @@ struct HistorySettingsView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Dictation \(Self.exportNameFormatter.string(from: record.date)).txt"
         panel.allowedContentTypes = [.plainText]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModalInFront() == .OK, let url = panel.url else { return }
         try? record.finalText.data(using: .utf8)?.write(to: url)
     }
 
@@ -314,7 +454,7 @@ struct HistorySettingsView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Dictation \(Self.exportNameFormatter.string(from: record.date)).caf"
         panel.allowedContentTypes = [UTType(filenameExtension: "caf") ?? .audio]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModalInFront() == .OK, let url = panel.url else { return }
         try? FileManager.default.removeItem(at: url)
         try? FileManager.default.copyItem(at: source, to: url)
     }
@@ -323,7 +463,7 @@ struct HistorySettingsView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "yaptotext-history.md"
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModalInFront() == .OK, let url = panel.url else { return }
         let results = computeResults()
         let markdown = results.map { record in
             "### \(record.modeName) (\(record.date.formatted()))\n\n\(record.finalText)\n"

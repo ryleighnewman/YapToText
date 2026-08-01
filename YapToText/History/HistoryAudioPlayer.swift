@@ -47,6 +47,35 @@ final class HistoryAudioPlayer: NSObject, AVAudioPlayerDelegate {
         progress = 0
     }
 
+    // MARK: Scrubbing (the pipeline-details media player)
+
+    var currentTime: TimeInterval { player?.currentTime ?? 0 }
+    var duration: TimeInterval { player?.duration ?? 0 }
+    private(set) var isPaused = false
+
+    /// Jump to a fraction of the recording (drag of the scrubber). Works while playing or paused.
+    func seek(_ record: DictationRecord, toFraction fraction: Double) {
+        if playingID != record.id { toggle(record); player?.pause(); isPaused = true }
+        guard let player else { return }
+        player.currentTime = max(0, min(player.duration, player.duration * fraction))
+        progress = player.duration > 0 ? player.currentTime / player.duration : 0
+    }
+
+    /// Skip forward/back by `seconds` (fast-forward / rewind buttons).
+    func skip(_ record: DictationRecord, by seconds: TimeInterval) {
+        guard playingID == record.id, let player else { return }
+        player.currentTime = max(0, min(player.duration, player.currentTime + seconds))
+        progress = player.duration > 0 ? player.currentTime / player.duration : 0
+    }
+
+    /// Pause/resume without tearing the player down (keeps position for scrubbing).
+    func playPause(_ record: DictationRecord) {
+        if playingID != record.id { toggle(record); isPaused = false; return }
+        guard let player else { return }
+        if player.isPlaying { player.pause(); isPaused = true }
+        else { player.play(); isPaused = false }
+    }
+
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in self.stop() }
     }

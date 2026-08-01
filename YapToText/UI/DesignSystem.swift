@@ -44,7 +44,7 @@ extension LinearGradient {
 struct AppWindowBackground: View {
     var body: some View {
         VisualEffectBackground()
-            .overlay(Color.black.opacity(0.07))
+            .overlay(Color.black.opacity(0.13))
             .ignoresSafeArea()
     }
 }
@@ -107,7 +107,7 @@ struct CardSection<Content: View>: View {
         .padding(Metrics.cardPad)
         // Real Liquid Glass on every card (was the subtle hand-built surface) so the whole app
         // carries the same glass as the pop-up.
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
     }
 }
 
@@ -130,7 +130,12 @@ struct SubOptions<Content: View>: View {
 /// The settings-page scaffold: glass cards on the window's own glass, capped to a readable
 /// width and centered.
 struct SettingsPage<Content: View>: View {
+    /// Opt-in header fade for pages whose content scrolls up under a navigation title (the
+    /// mode editors). Off by default: pages with their own header chrome (Settings tabs)
+    /// need no fade, and an uninvited one reads as a smudge.
+    var headerFade = false
     @ViewBuilder var content: () -> Content
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.gap) { content() }
@@ -139,6 +144,24 @@ struct SettingsPage<Content: View>: View {
                 .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.never)
+        .overlay(alignment: .top) {
+            if headerFade {
+                // Starts at the true window top (under the back button + title) and dissolves
+                // on a smooth ease-out - many stops, no visible band edge.
+                Rectangle().fill(.ultraThinMaterial)
+                    .mask(LinearGradient(stops: [.init(color: .black, location: 0),
+                                                 .init(color: .black.opacity(0.98), location: 0.35),
+                                                 .init(color: .black.opacity(0.85), location: 0.55),
+                                                 .init(color: .black.opacity(0.55), location: 0.72),
+                                                 .init(color: .black.opacity(0.25), location: 0.86),
+                                                 .init(color: .black.opacity(0.08), location: 0.94),
+                                                 .init(color: .clear, location: 1)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(height: 76)
+                    .ignoresSafeArea(edges: .top)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 }
 
@@ -167,6 +190,34 @@ extension View {
     }
 }
 
+/// A compact inline search field used to filter lists (commands, dictionary entries).
+struct SearchField: View {
+    @Binding var text: String
+    var prompt: String = "Search"
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+                .font(.callout)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
 /// The standard explanatory caption placed under a control.
 struct Caption: View {
     let text: String
@@ -183,7 +234,7 @@ struct StatusPill: View {
     var tint: Color = .accentColor
     var body: some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(.caption2)   // regular weight: the tinted capsule already carries the emphasis
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
             .background(tint.opacity(0.18), in: Capsule())
@@ -392,4 +443,186 @@ extension ButtonStyle where Self == SolidButton {
 extension Color {
     /// A calm, muted red for the recording state - not the harsh bright system red.
     static let yapRecord = Color(red: 0.80, green: 0.31, blue: 0.33)
+}
+
+// MARK: Custom accent (user-chosen colors)
+
+extension Color {
+    /// Parse "#RRGGBB" / "RRGGBB" into a Color. Invalid strings return nil so a corrupted
+    /// setting falls back to the system accent instead of rendering black.
+    init?(hexString: String) {
+        var hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
+        self.init(red: Double((value >> 16) & 0xFF) / 255,
+                  green: Double((value >> 8) & 0xFF) / 255,
+                  blue: Double(value & 0xFF) / 255)
+    }
+
+    /// "#RRGGBB" for persisting a picked color. sRGB-converted so system dynamic colors resolve.
+    var hexString: String {
+        let ns = NSColor(self).usingColorSpace(.sRGB) ?? .controlAccentColor
+        return String(format: "#%02X%02X%02X",
+                      Int(round(ns.redComponent * 255)),
+                      Int(round(ns.greenComponent * 255)),
+                      Int(round(ns.blueComponent * 255)))
+    }
+}
+
+extension AppSettings {
+    /// The user's accent, or nil to follow the system. Applied via .tint at every root.
+    var customAccent: Color? {
+        guard let hex = accentColorHex else { return nil }
+        return Color(hexString: hex)
+    }
+    /// The pop-up waveform's accent. nil means "follow the app accent", which is exactly
+    /// what the ribbons' stock colours already do - so nil needs no special handling.
+    var waveTint: Color? {
+        switch waveColorStyle {
+        case .accent: return nil                      // nil = the stock accent palette
+        case .rgb:    return nil                      // the wave cycles; handled in the view
+        case .custom: return waveColorHex.flatMap { Color(hexString: $0) }
+        }
+    }
+    /// True when the WAVE itself should cycle the spectrum.
+    var waveIsRGB: Bool { waveColorStyle == .rgb }
+    /// The wave's full colour treatment, ready to hand to a WaveformView.
+    var waveStyle: WaveStyle {
+        WaveStyle(tint: waveTint, rainbow: waveIsRGB, strength: waveStrength,
+                  rgbSpeed: waveRGBSpeed, rgbSpread: waveRGBSpread)
+    }
+    var panelTint: Color? {
+        guard panelTintStrength > 0.01 else { return nil }
+        switch panelTintStyle {
+        case .off: return nil
+        case .accent: return customAccent ?? .accentColor
+        case .custom: return panelTintHex.flatMap { Color(hexString: $0) }
+        case .rainbow:
+            // The live panel animates its own glass hue (RecordingPanel's discrete-render
+            // RGB timer); this static resolution only feeds previews.
+            let hue = (Date().timeIntervalSinceReferenceDate * panelRGBSpeed / 12).truncatingRemainder(dividingBy: 1)
+            return Color(hue: hue < 0 ? hue + 1 : hue, saturation: 0.85, brightness: 1)
+        }
+    }
+}
+
+/// Debug-only "older macOS" look preview: launching with YAP_LEGACY_LOOK=1 forces every
+/// macOS 26 availability gate down its fallback branch, so the pre-26 appearance (real
+/// materials instead of Liquid Glass, static gradients instead of mesh) can be eyeballed
+/// on this machine. Compiled to a constant false in Release.
+enum CompatPreview {
+    #if DEBUG
+    static let legacy = ProcessInfo.processInfo.environment["YAP_LEGACY_LOOK"] == "1"
+    #else
+    static let legacy = false
+    #endif
+}
+
+extension View {
+    /// Thin-material window background where the placement API exists (macOS 15+); older
+    /// systems keep the default popover chrome, which is already a material.
+    @ViewBuilder
+    func yapWindowBackground() -> some View {
+        if #available(macOS 15.0, *), !CompatPreview.legacy {
+            self.containerBackground(.ultraThinMaterial, for: .window)
+        } else {
+            self
+        }
+    }
+
+    /// Liquid Glass on macOS 26, a thin material in the same shape on older systems - the
+    /// single compat point for every card/panel/button glass in the app.
+    @ViewBuilder
+    func yapGlass<S: Shape>(in shape: S) -> some View {
+        if #available(macOS 26.0, *), !CompatPreview.legacy {
+            self.glassEffect(.regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+                .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.8))
+        }
+    }
+
+    /// The accent-tinted interactive glass used on the Welcome CTA; pre-26 falls back to a
+    /// solid accent capsule.
+    @ViewBuilder
+    func yapGlassAccent<S: Shape>(in shape: S) -> some View {
+        if #available(macOS 26.0, *), !CompatPreview.legacy {
+            self.glassEffect(.regular.tint(.accentColor).interactive(), in: shape)
+        } else {
+            self.background(Color.accentColor.opacity(0.9), in: shape)
+        }
+    }
+}
+
+/// Name capture that can't saw off its own branch: typing into a field bound straight to
+/// settings.userName flipped the "name is empty" condition on the FIRST keystroke, and SwiftUI
+/// removed the very field being typed into. This edits a local draft and commits on Return
+/// (or when the field leaves the screen), so the row stays put while you type.
+struct NameCaptureField: View {
+    @Environment(AppState.self) private var state
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            TextField("Your name, e.g. Ryleigh", text: $draft)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .innerWell(radius: 7)
+                .frame(maxWidth: 260)
+                .onSubmit { commit() }
+            if !draft.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text("Press Return to save.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .onDisappear { commit() }
+    }
+
+    private func commit() {
+        let name = draft.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        state.settings.userName = name
+    }
+}
+
+/// A caption whose folder-name phrase reads as a link and reveals that folder in Finder.
+/// For every settings line that says "…in the app's data folder" - the folder name is the
+/// obvious thing to click, so it is one.
+struct FolderCaption: View {
+    var prefix: String
+    var linkText: String
+    var url: URL
+    var suffix: String = ""
+
+    var body: some View {
+        (Text(prefix)
+         + Text(linkText).foregroundColor(.accentColor).underline()
+         + Text(suffix))
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .onTapGesture { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            .onHover { inside in inside ? NSCursor.pointingHand.push() : NSCursor.pop() }
+            .help("Open in Finder")
+    }
+}
+
+extension View {
+    /// Apply the user's custom accent (if set) to this hierarchy. Both modifiers on purpose:
+    /// .tint drives control styles; .accentColor drives every `Color.accentColor` reference.
+    func yapAccent(_ settings: AppSettings) -> some View {
+        // ONE branch, always: an if/else here gave the subtree two IDENTITIES, so resetting
+        // the accent rebuilt every page from scratch (scroll position jumped to the top).
+        // tint(nil)/accentColor(nil) restore the system default with no identity change.
+        self.tint(settings.customAccent).accentColor(settings.customAccent)
+    }
+
+    @available(*, deprecated, message: "unused - kept only if an old call site slips through")
+    @ViewBuilder
+    fileprivate func yapAccentLegacy(_ settings: AppSettings) -> some View {
+        if let accent = settings.customAccent {
+            self.tint(accent).accentColor(accent)
+        } else {
+            self
+        }
+    }
 }

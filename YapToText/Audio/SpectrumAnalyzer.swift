@@ -21,6 +21,16 @@ final class SpectrumAnalyzer {
     private var window: [Float]
     private var realp: [Float]
     private var imagp: [Float]
+    // Preallocated per-analyze scratch: analyze() runs ~23x/sec per recording and used to heap-alloc
+    // these five buffers every call. Each is fully overwritten before it is read (windowed has an
+    // explicit zero-pad guard for a short input), and the values RETURNED to the UI are always fresh
+    // copies (the warmup array and whitener.process().map both allocate), so reuse is safe. Called
+    // serially from the single audio-tap thread.
+    private var scratchWindowed: [Float]
+    private var scratchBandDB: [Float]
+    private var scratchMags: [Float]
+    private var scratchAmp: [Float]
+    private var scratchOut: [Float]
     let bandCount: Int
     private let bandEdges: [Int]   // FFT bin index at each band boundary (log-spaced)
     private let whitener = SpectralWhitener()   // per-band gain -> full-spectrum parity
@@ -33,6 +43,11 @@ final class SpectrumAnalyzer {
         vDSP_hann_window(&window, vDSP_Length(n), Int32(vDSP_HANN_NORM))
         realp = [Float](repeating: 0, count: halfN)
         imagp = [Float](repeating: 0, count: halfN)
+        scratchWindowed = [Float](repeating: 0, count: n)
+        scratchBandDB = [Float](repeating: -90, count: bandCount)
+        scratchMags = [Float](repeating: 0, count: halfN)
+        scratchAmp = [Float](repeating: 0, count: halfN)
+        scratchOut = [Float](repeating: 0, count: bandCount)
 
         // Log-spaced band edges over bins 1...halfN. At 16 kHz, each bin ≈ 15.6 Hz, so this
         // covers ~16 Hz to 8 kHz - all of speech and its harmonics.
@@ -98,12 +113,15 @@ final class SpectrumAnalyzer {
     /// values in 0...1 representing how far each band rises ABOVE the adaptive background - so
     /// steady noise reads ~0 and speech reads dynamically.
     func analyze(_ samples: UnsafePointer<Float>, count: Int) -> [Float] {
-        var windowed = [Float](repeating: 0, count: n)
         let m = min(count, n)
-        vDSP_vmul(samples, 1, window, 1, &windowed, 1, vDSP_Length(m))   // Hann window the input
+        // Short input: zero the tail past m so stale samples from the last call can't leak in.
+        // (In practice the tap delivers >= n samples, so m == n and this loop is skipped.)
+        if m < n {
+            for i in m..<n { scratchWindowed[i] = 0 }
+        }
+        vDSP_vmul(samples, 1, window, 1, &scratchWindowed, 1, vDSP_Length(m))   // Hann window the input
 
-        var bandDB = [Float](repeating: -90, count: bandCount)
-        windowed.withUnsafeMutableBufferPointer { buf in
+        scratchWindowed.withUnsafeMutableBufferPointer { buf in
             realp.withUnsafeMutableBufferPointer { rp in
                 imagp.withUnsafeMutableBufferPointer { ip in
                     var split = DSPSplitComplex(realp: rp.baseAddress!, imagp: ip.baseAddress!)
@@ -112,32 +130,30 @@ final class SpectrumAnalyzer {
                     }
                     vDSP_fft_zrip(setup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
 
-                    var mags = [Float](repeating: 0, count: halfN)
-                    vDSP_zvmags(&split, 1, &mags, 1, vDSP_Length(halfN))    // |X|^2 per bin
-                    var amp = [Float](repeating: 0, count: halfN)
+                    vDSP_zvmags(&split, 1, &scratchMags, 1, vDSP_Length(halfN))    // |X|^2 per bin
                     var c32 = Int32(halfN)
-                    vvsqrtf(&amp, mags, &c32)                               // -> amplitude
+                    vvsqrtf(&scratchAmp, scratchMags, &c32)                        // -> amplitude
 
                     for b in 0..<bandCount {
                         let lo = max(1, bandEdges[b])
                         let hi = min(halfN, max(lo + 1, bandEdges[b + 1]))
                         var sum: Float = 0
-                        for bin in lo..<hi { sum += amp[bin] }
+                        for bin in lo..<hi { sum += scratchAmp[bin] }
                         let mean = sum / Float(hi - lo)                     // mean, calmer than peak
                         // max() does not sanitize NaN; a non-finite mean would yield NaN dB and
                         // propagate all the way into the waveform geometry. Reject it explicitly.
-                        bandDB[b] = mean.isFinite && mean > 0 ? 20 * log10(mean) : -90
+                        scratchBandDB[b] = mean.isFinite && mean > 0 ? 20 * log10(mean) : -90
                     }
                 }
             }
         }
+        let bandDB = scratchBandDB
 
         // Smooth the measurement, then track the windowed minimum per band.
         if smoothedDB.count != bandCount { smoothedDB = bandDB }
         if noiseFloorDB.count != bandCount { noiseFloorDB = bandDB }        // seed from first frame
         if floorTrackDB.count != bandCount { floorTrackDB = bandDB }
         if curBlockMin.count != bandCount { curBlockMin = bandDB; prevBlockMin = bandDB }
-        var out = [Float](repeating: 0, count: bandCount)
         for b in 0..<bandCount {
             smoothedDB[b] += (bandDB[b] - smoothedDB[b]) * measureSmoothing
             floorTrackDB[b] += (bandDB[b] - floorTrackDB[b]) * floorTrackSmoothing
@@ -148,8 +164,9 @@ final class SpectrumAnalyzer {
             noiseFloorDB[b] += (target - floor) * (target < floor ? floorFallRate : floorRiseRate)
             let snr = db - (noiseFloorDB[b] + snrMarginDB)
             // Soft knee instead of a hard clamp: the wave never slams flat against its ceiling
-            // at session start, and keeps headroom for louder speech.
-            out[b] = snr <= 0 ? 0 : 1 - exp(-2.0 * snr / snrRangeDB)
+            // at session start, and keeps headroom for louder speech. Every band is written, so the
+            // reused buffer carries nothing stale.
+            scratchOut[b] = snr <= 0 ? 0 : 1 - exp(-2.0 * snr / snrRangeDB)
         }
         blockFrame += 1
         if blockFrame >= blockLength {
@@ -162,6 +179,6 @@ final class SpectrumAnalyzer {
         warmupFrames += 1
         if warmupFrames < 8 { return [Float](repeating: 0, count: bandCount) }
         // Final NaN/Inf boundary before the spectrum leaves for the UI: every band finite in [0,1].
-        return whitener.process(out).map { $0.isFinite ? min(max($0, 0), 1) : 0 }
+        return whitener.process(scratchOut).map { $0.isFinite ? min(max($0, 0), 1) : 0 }
     }
 }

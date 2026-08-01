@@ -6,6 +6,7 @@ import AppKit
 /// Dictionaries, History, and Settings live in the sidebar, so they are not duplicated here.
 struct HomeView: View {
     @Environment(AppState.self) private var state
+    @State private var showChangelog = false
     var onStartDictation: () -> Void
     var onNewMode: () -> Void
 
@@ -39,7 +40,18 @@ struct HomeView: View {
     private var header: some View {
         VStack(spacing: 12) {
             AnimatedCapy(size: 76)
-            Text("Welcome to YapToText").font(.title.weight(.semibold))
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Welcome to YapToText").font(.title.weight(.semibold))
+                // Tiny grey version, part of the same line - still the release-notes button.
+                Button { showChangelog = true } label: {
+                    Text(Changelog.currentVersion)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("What's new in this version")
+                .popover(isPresented: $showChangelog, arrowEdge: .bottom) { changelogPopover }
+            }
             Text("A powerful speech-to-text accessibility tool, running entirely on your Mac.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -48,6 +60,29 @@ struct HomeView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
+    }
+
+    private var changelogPopover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("What's new").font(.headline)
+                ForEach(Changelog.entries) { entry in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(entry.version).font(.subheadline.weight(.semibold))
+                        ForEach(entry.points, id: \.self) { point in
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("\u{2022}").foregroundStyle(.secondary)
+                                Text(point).font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: 380, alignment: .leading)
+        }
+        .frame(maxHeight: 420)
     }
 
     // MARK: The one-key reassurance
@@ -96,6 +131,10 @@ struct HomeView: View {
                 Text("If a word keeps coming out wrong, set a fix in Dictionaries. For example, the AI often gets my name wrong, so I have it change \u{201C}Riley\u{201D} to \u{201C}Ryleigh\u{201D}.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Or do it automatically: select the correctly-spelled word anywhere, hold Right Option, and say \u{201C}add this to my dictionary\u{201D} - AI builds the entry and even maps the likely mishearings for you.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
             }
             Spacer(minLength: 0)
         }
@@ -140,15 +179,81 @@ struct HomeView: View {
 
     // MARK: Quick controls (the everyday switches, right on Home)
 
+    /// The little "this is where you change the keys" affordance: every binding row gets one.
+    private func editBindingLink(_ help: String = "Change this binding in Settings") -> some View {
+        Button {
+            NotificationCenter.default.post(name: .yapShowSettings, object: nil)
+            // A beat later (Settings is on screen), light up the Shortcuts card.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                NotificationCenter.default.post(name: .yapHighlightShortcuts, object: nil)
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "keyboard").font(.caption2)
+                Text("Edit binding").font(.caption2)
+            }
+            .foregroundStyle(Color.accentColor)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
     private var quickControls: some View {
         @Bindable var settings = state.settings
         return CardSection("Quick controls") {
-            Picker(selection: $settings.rightCommandTrigger) {
-                ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
-            } label: {
-                Text("Right \u{2318} key")
+            // One line each, with the ACTUAL binding editors inline - no trip to Settings.
+            // Exactly like the "Menu bar icon | Capybara" row: label, then the picker
+            // right beside it (same standard popup style, natural width) - and the key
+            // recorder field alone on the far right.
+            HStack(spacing: 8) {
+                Image(systemName: "mic.fill").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                Text("Dictation key")
+                Picker("", selection: $settings.rightCommandTrigger) {
+                    ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                .onChange(of: settings.rightCommandTrigger) { AppDelegate.shared?.reloadRightCommandTrigger() }
+                Spacer(minLength: 8)
+                ModifierKeyRecorderField(key: $settings.primaryTriggerKey, onTurnOff: {
+                    settings.rightCommandTrigger = .off
+                    AppDelegate.shared?.reloadRightCommandTrigger()
+                })
+                    .frame(width: 110, height: 24)
+                    .onChange(of: settings.primaryTriggerKey) { AppDelegate.shared?.reloadRightCommandTrigger() }
             }
-            .onChange(of: settings.rightCommandTrigger) { AppDelegate.shared?.reloadRightCommandTrigger() }
+            // Intelligent insert rides right under its key: the context-aware step that
+            // fits mid-sentence dictation into the text around the cursor.
+            SubOptions {
+                Toggle("Intelligent insert", isOn: $settings.adaptToSurroundings)
+                    .toggleStyle(.switch).controlSize(.small)
+                Caption("Dictating into the middle of a sentence adapts automatically: the first word lowercases when it should, spacing joins cleanly, and a trailing period is dropped when the sentence continues.")
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                Text("Quick Edit key")
+                    .help("Select text, press the key, say the change.")
+                Picker("", selection: $settings.quickEditTrigger) {
+                    ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                .onChange(of: settings.quickEditTrigger) { AppDelegate.shared?.reloadQuickEditKey() }
+                Spacer(minLength: 8)
+                ModifierKeyRecorderField(key: $settings.quickEditTriggerKey, role: .quickEdit, onTurnOff: {
+                    settings.quickEditTrigger = .off
+                    AppDelegate.shared?.reloadQuickEditKey()
+                })
+                    .frame(width: 110, height: 24)
+                    .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
+            }
+            // A breath of padding separates the key bindings (above) from the system looks (below).
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                Picker("Menu bar icon", selection: $settings.menuBarIconStyle) {
+                    ForEach(MenuBarIconStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .onChange(of: settings.menuBarIconStyle) { AppDelegate.shared?.refreshStatusIcon() }
+            }
+            .padding(.top, 10)
             Toggle("Auto mode: adapt to what you're saying", isOn: $settings.autoContextMode)
                 .toggleStyle(.switch).controlSize(.small)
             if settings.autoContextMode {
@@ -156,21 +261,12 @@ struct HomeView: View {
                     Caption("Each dictation is screened in an instant: emails get formatted as emails, casual chat stays as spoken, everything else is cleaned up.")
                     if settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
                         Caption("Add your name so Auto mode signs emails as you:")
-                        TextField("Your name, e.g. Ryleigh", text: $settings.userName)
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 8).padding(.vertical, 5)
-                            .innerWell(radius: 7)
-                            .frame(maxWidth: 260)
+                        NameCaptureField()
                     }
                 }
             }
             Toggle("Show the menu bar icon", isOn: $settings.showMenuBarIcon).toggleStyle(.switch).controlSize(.small)
                 .onChange(of: settings.showMenuBarIcon) { AppDelegate.shared?.reloadStatusItem() }
-            if !settings.showMenuBarIcon {
-                SubOptions {
-                    Caption("The capybara is hidden from the menu bar. Everything still works. Come back here to turn it on again.")
-                }
-            }
             Toggle("Show the app in the Dock", isOn: $settings.showDockIcon).toggleStyle(.switch).controlSize(.small)
                 .onChange(of: settings.showDockIcon) { AppDelegate.shared?.reloadDockIcon() }
             if !settings.showDockIcon {

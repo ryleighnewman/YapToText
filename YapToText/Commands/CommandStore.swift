@@ -85,6 +85,20 @@ final class CommandStore {
     /// punctuation swallows the space before it, a line break swallows spaces on both sides - so
     /// punctuation the user dictated elsewhere is never touched. With `requirePrefix`, the word
     /// "insert" must appear immediately before the trigger.
+    /// Compiled-regex cache. The pattern string fully determines the regex (options are always
+    /// `.caseInsensitive`), so a cached entry is always valid for its key and never needs
+    /// invalidation - a changed trigger or setting produces a different pattern, hence a different
+    /// key. Removes ~300 ICU compiles from the main-actor insert path on every dictation.
+    nonisolated(unsafe) private static var regexCache: [String: NSRegularExpression] = [:]
+    private static let regexCacheLock = NSLock()
+    private static func cachedRegex(_ pattern: String) -> NSRegularExpression? {
+        regexCacheLock.lock(); defer { regexCacheLock.unlock() }
+        if let hit = regexCache[pattern] { return hit }
+        guard let compiled = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+        regexCache[pattern] = compiled
+        return compiled
+    }
+
     static func replace(trigger: String, with output: String, requirePrefix: Bool, in text: String) -> String {
         let words = trigger.split(whereSeparator: { $0.isWhitespace })
             .map { NSRegularExpression.escapedPattern(for: String($0)) }
@@ -101,7 +115,7 @@ final class CommandStore {
         let eatTrail = (isNewline || attachesNext) ? "[ \\t]*" : ""
         let prefix = requirePrefix ? "\\binsert\\s+" : ""
         let pattern = eatLead + prefix + lead + phrase + trail + eatTrail
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return text }
+        guard let regex = cachedRegex(pattern) else { return text }
         let range = NSRange(text.startIndex..., in: text)
         let template = NSRegularExpression.escapedTemplate(for: output)
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: template)

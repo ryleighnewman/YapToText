@@ -9,6 +9,7 @@ import Speech
 /// tear the session down from the caller's context, so the shared input fields are guarded
 /// by `lock`. The recognized-text fields are only touched by the results Task and read
 /// after it drains, so they need no lock.
+@available(macOS 26.0, *)
 final class AppleSpeechEngine: TranscriptionEngine, @unchecked Sendable {
     let displayName = "Apple Speech (on-device)"
 

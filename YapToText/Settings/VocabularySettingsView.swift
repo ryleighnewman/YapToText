@@ -3,11 +3,26 @@ import AppKit
 
 struct VocabularySettingsView: View {
     @Environment(AppState.self) private var state
+    @State private var suggestions: [SmartDictionary.Suggestion] = []
+    /// Per-dictionary search: which cards have the field open, and each card's query.
+    @State private var searchOpen: Set<UUID> = []
+    @State private var dictSearch: [UUID: String] = [:]
 
     var body: some View {
         SettingsPage {
-            Text("Dictionaries substitute words and phrases in every transcript. Use them to fix names, casing, and homophones, like turning \"swift ui\" into \"SwiftUI\". Turn a dictionary off to pause it without deleting it.")
+            Text("Dictionaries substitute words and phrases detected in transcripts. Use them to fix the spelling of names, casing, and homophones - like turning \"swift ui\" into \"SwiftUI\". Turn a dictionary off to pause it without deleting it.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            @Bindable var settings = state.settings
+            Toggle("Suggest fixes from my dictations", isOn: $settings.smartDictionary)
+                .toggleStyle(.switch).controlSize(.small)
+                .onChange(of: settings.smartDictionary) { refreshSuggestions() }
+            Text("YapToText notices corrections that keep recurring in your history - a name it always has to re-capitalize, a brand it re-spells - and offers them here as one-click substitutions. This runs entirely on your Mac.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            if state.settings.smartDictionary, !suggestions.isEmpty {
+                suggestionsCard
+            }
 
             ForEach(state.vocabulary.dictionaries) { dict in
                 dictionaryCard(dict)
@@ -21,6 +36,50 @@ struct VocabularySettingsView: View {
             .buttonStyle(.solid)
         }
         .navigationTitle("Dictionaries")
+        .onAppear { refreshSuggestions() }
+    }
+
+    /// Fixes the app keeps making for you, offered once each as a permanent substitution.
+    private var suggestionsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles").iconTint(Color.accentColor)
+                Text("Suggested for you").font(.headline)
+                Spacer()
+            }
+            Text("Corrections that keep happening in your dictations. Add one and it's applied instantly from then on.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            ForEach(suggestions) { s in
+                HStack(spacing: 8) {
+                    Text(s.from).frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary).font(.caption)
+                    Text(s.to).frame(maxWidth: .infinity, alignment: .leading)
+                    Text("\u{00D7}\(s.count)").font(.caption2).foregroundStyle(.tertiary)
+                        .help("Seen \(s.count) times in your history")
+                    Button {
+                        state.vocabulary.addReplacement(Replacement(from: s.from, to: s.to))
+                        SmartDictionary.dismiss(s)
+                        suggestions.removeAll { $0.id == s.id }
+                    } label: { Image(systemName: "plus.circle.fill").foregroundStyle(Color.accentColor) }
+                        .buttonStyle(.plain).help("Add to your first dictionary")
+                    Button {
+                        SmartDictionary.dismiss(s)
+                        suggestions.removeAll { $0.id == s.id }
+                    } label: { Image(systemName: "xmark.circle").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain).help("Don't suggest this again")
+                }
+                .font(.callout)
+            }
+        }
+        .padding(Metrics.cardPad)
+        .innerWell(radius: Metrics.sectionRadius)
+    }
+
+    private func refreshSuggestions() {
+        guard state.settings.smartDictionary else { suggestions = []; return }
+        suggestions = SmartDictionary.suggestions(history: state.history.records,
+                                                  vocabulary: state.vocabulary)
     }
 
     private func dictionaryCard(_ dict: VocabDictionary) -> some View {
@@ -30,6 +89,19 @@ struct VocabularySettingsView: View {
                 TextField("Name", text: nameBinding(dict))
                     .textFieldStyle(.plain).font(.headline)
                 Spacer()
+                Button {
+                    if searchOpen.contains(dict.id) {
+                        searchOpen.remove(dict.id)
+                        dictSearch[dict.id] = ""
+                    } else {
+                        searchOpen.insert(dict.id)
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(searchOpen.contains(dict.id) ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Search this dictionary")
                 Toggle("Enabled", isOn: enabledBinding(dict))
                     .toggleStyle(.switch).controlSize(.small).labelsHidden().help("Enable this dictionary")
                 Menu {
@@ -43,10 +115,22 @@ struct VocabularySettingsView: View {
                     .menuStyle(.borderlessButton).fixedSize()
             }
             Divider()
+            if searchOpen.contains(dict.id) {
+                SearchField(text: Binding(get: { dictSearch[dict.id] ?? "" },
+                                          set: { dictSearch[dict.id] = $0 }),
+                            prompt: "Search \(dict.name)")
+            }
+            let query = (dictSearch[dict.id] ?? "").trimmingCharacters(in: .whitespaces)
+            let visible = query.isEmpty ? dict.replacements : dict.replacements.filter {
+                $0.from.localizedCaseInsensitiveContains(query)
+                    || $0.to.localizedCaseInsensitiveContains(query)
+            }
             if dict.replacements.isEmpty {
                 Text("No substitutions yet.").font(.caption).foregroundStyle(.secondary)
+            } else if visible.isEmpty {
+                Text("No substitutions match \u{201C}\(query)\u{201D}.").font(.caption).foregroundStyle(.secondary)
             } else {
-                ForEach(dict.replacements) { r in
+                ForEach(visible) { r in
                     HStack(spacing: 8) {
                         Image(systemName: "line.3.horizontal")
                             .font(.caption2).foregroundStyle(.tertiary)
@@ -59,6 +143,15 @@ struct VocabularySettingsView: View {
                             .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
                         if r.wholeWord { tag("word") }
                         if r.caseSensitive { tag("Aa") }
+                        Button {
+                            // AI sound-alikes: for a name like "Ryleigh", map the common
+                            // mishearings ("riley", "rylee"...) to this spelling in one click.
+                            AppDelegate.shared?.expandSoundAlikes(for: r.to)
+                        } label: {
+                            Image(systemName: "sparkles").foregroundStyle(Color.accentColor.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                        .help("AI: also map likely mishearings of \u{201C}\(r.to)\u{201D} to this spelling")
                         Button { state.vocabulary.duplicateReplacement(r, in: dict.id) } label: {
                             Image(systemName: "plus.square.on.square").foregroundStyle(.secondary)
                         }
@@ -94,7 +187,7 @@ struct VocabularySettingsView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(dict.name).yapdictionary.json"
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url,
+        guard panel.runModalInFront() == .OK, let url = panel.url,
               let data = try? JSONEncoder().encode(dict) else { return }
         try? data.write(to: url)
     }

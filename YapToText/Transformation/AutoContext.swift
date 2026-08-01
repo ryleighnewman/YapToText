@@ -25,15 +25,19 @@ enum AutoContext {
         let chat = ["com.apple.mobilesms", "com.apple.ichat", "com.hnc.discord",
                     "com.tinyspeck.slackmacgap", "net.whatsapp.whatsapp", "org.telegram",
                     "com.facebook.archon", "ru.keepcoder.telegram", "com.microsoft.teams"]
-        let code = ["com.apple.dt.xcode", "com.microsoft.vscode", "com.todesktop",
+        // Cursor is pinned to its specific bundle prefix, not the bare "com.todesktop" the ToDesktop
+        // packager shares with many unrelated Electron apps (which would all get a Code bias).
+        let code = ["com.apple.dt.xcode", "com.microsoft.vscode", "com.todesktop.230313mzl4w4u92",
                     "com.jetbrains", "com.sublimetext", "dev.zed.zed", "com.googlecode.iterm2",
                     "com.apple.terminal", "co.zeit.hyper", "com.github.wez.wezterm"]
         let note = ["com.apple.notes", "md.obsidian", "notion.id", "com.agiletortoise.drafts",
                     "com.bear-writer", "net.shinyfrog.bear", "com.evernote"]
-        if mail.contains(where: { id.hasPrefix($0) || id.contains($0) }) { return .email }
-        if chat.contains(where: { id.hasPrefix($0) || id.contains($0) }) { return .message }
-        if code.contains(where: { id.hasPrefix($0) || id.contains($0) }) { return .code }
-        if note.contains(where: { id.hasPrefix($0) || id.contains($0) }) { return .note }
+        // hasPrefix only: every entry is a reverse-DNS prefix, so `.contains` added no real matches
+        // and risked false positives from an unrelated ID that happens to embed one of these strings.
+        if mail.contains(where: { id.hasPrefix($0) }) { return .email }
+        if chat.contains(where: { id.hasPrefix($0) }) { return .message }
+        if code.contains(where: { id.hasPrefix($0) }) { return .code }
+        if note.contains(where: { id.hasPrefix($0) }) { return .note }
         return nil
     }
 
@@ -93,19 +97,23 @@ enum AutoContext {
         let count = words.count
         guard count > 0 else { return .message }
 
-        // Email evidence: greetings, letter phrases, and sign-offs each add a point.
-        var email = 0
-        if lower.hasPrefix("dear ") { email += 2 }
+        // Email evidence. STRUCTURE (a greeting line or a sign-off) is required - polite
+        // body phrases alone ("please let me know", "thank you") show up constantly in
+        // casual messages and used to flip them to email, which then got SIGNED. Phrases
+        // only add confidence once the text is actually shaped like a letter.
+        var structure = 0
+        if lower.hasPrefix("dear ") { structure += 2 }
         if (lower.hasPrefix("hi ") || lower.hasPrefix("hello ") || lower.hasPrefix("hey ")),
-           lower.prefix(40).contains(",") { email += 1 }
-        for tell in ["i am writing to", "i'm writing to", "please find attached", "attached is",
-                     "per our conversation", "follow up on", "following up on",
-                     "i wanted to reach out", "please let me know", "looking forward to hearing",
-                     "please send me", "when you can"] where lower.contains(tell) { email += 1 }
+           lower.prefix(40).contains(",") { structure += 1 }
         for signoff in ["sincerely", "best regards", "kind regards", "warm regards", "regards,",
-                        "best,", "thanks,", "thank you,", "thank you.", "cheers,"]
-            where lower.contains(signoff) { email += 1 }
-        if email >= 2, count >= 10 { return .email }
+                        "best wishes", "cheers,"]
+            where lower.contains(signoff) { structure += 1 }
+        var email = structure
+        for tell in ["i am writing to", "i'm writing to", "please find attached", "attached is",
+                     "per our conversation", "following up on",
+                     "i wanted to reach out", "looking forward to hearing"]
+            where lower.contains(tell) { email += 1 }
+        if structure >= 1, email >= 2, count >= 12 { return .email }
 
         // Clearly casual or tiny: keep the words exactly as spoken.
         let casual = ["what's up", "whats up", "hey man", "yo ", "lol", "lmao", "gonna",
@@ -130,6 +138,9 @@ enum AutoContext {
     - Fix punctuation and capitalization.
     - KEEP the user's exact wording, tone, slang, and sentence structure. Do not rephrase, \
     formalize, soften, shorten, or expand anything.
+    - Never swap a word for a more formal synonym, never tone down blunt or profane language, and \
+    never drop a clause they said (including asides like "note to self" or "keep it short").
+    - Normalize spoken numbers to digits, but never add a unit or time of day they did not say.
     - Output ONLY the corrected text. Never append notes, explanations, or parenthetical \
     comments about what you did or did not change.
     """
@@ -142,7 +153,8 @@ enum AutoContext {
 
     static let aiPrompt = """
     You are a text classifier. Read the dictated text and answer with EXACTLY one word:
-    EMAIL if it is clearly a letter or email (greeting, requests, sign-off).
+    EMAIL only if it is unmistakably a letter or email with a greeting or sign-off. Polite \
+    phrases alone (thanks, please let me know) do NOT make something an email.
     MESSAGE if it is a short casual chat message that should stay as spoken.
     NOTE if it is a personal note, list, or reminder.
     CLEANUP for everything else.

@@ -7,11 +7,58 @@ struct AboutView: View {
     var body: some View {
         SettingsPage {
             hero
+            changelogRow
             story
             sourceAndSupport
+            communityRow
+            diagnosticsRow
             siblingApp
         }
         .navigationTitle("About")
+    }
+
+    // MARK: Changelog
+
+    @State private var showChangelog = false
+    private var changelogRow: some View {
+        Button { showChangelog = true } label: {
+            HStack(spacing: Space.m) {
+                Image(systemName: "sparkles").iconTint(Color.accentColor).frame(width: 22)
+                Text("View Changelog")
+                    .font(.callout)
+                Spacer(minLength: 0)
+                Text(Changelog.currentVersion)
+                    .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(Metrics.cardPad)
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+        .popover(isPresented: $showChangelog, arrowEdge: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("What's new").font(.headline)
+                    ForEach(Changelog.entries) { entry in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(entry.version).font(.subheadline.weight(.semibold))
+                            ForEach(entry.points, id: \.self) { point in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text("\u{2022}").foregroundStyle(.secondary)
+                                    Text(point).font(.callout)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+                .frame(width: 380, alignment: .leading)
+            }
+            .frame(maxHeight: 460)
+        }
+        .accessibilityLabel("View changelog, current version \(Changelog.currentVersion)")
     }
 
     // MARK: Hero
@@ -53,6 +100,35 @@ struct AboutView: View {
         }
     }
 
+    private var communityRow: some View {
+        HStack(spacing: Space.m) {
+            Image(systemName: "person.2.fill").iconTint(.orange).frame(width: 22)
+            Text("To everyone who suggested features, tested rough builds, and told me exactly where it hurt: this app is shaped by you. Without this community, YapToText wouldn't exist. Thank you.")
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(Metrics.cardPad)
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+    }
+
+    @State private var diagnosticsCopied = false
+    private var diagnosticsRow: some View {
+        HStack(spacing: Space.m) {
+            Image(systemName: "stethoscope").iconTint(Color.accentColor).frame(width: 22)
+            Text("Something misbehaving? Copy a diagnostics report (Mac model, versions, model setup, latency stats - no transcript text) and paste it into a GitHub issue.")
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: Space.m)
+            Button(diagnosticsCopied ? "Copied!" : "Copy Diagnostics") {
+                Diagnostics.copyToClipboard(state: state)
+                diagnosticsCopied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { diagnosticsCopied = false }
+            }
+            .buttonStyle(.solidSecondary).controlSize(.small)
+        }
+        .padding(Metrics.cardPad)
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+    }
+
     // MARK: Open source & support (one row, two title-less glass boxes)
 
     private var sourceAndSupport: some View {
@@ -79,7 +155,7 @@ struct AboutView: View {
             .padding(.horizontal, Metrics.cardPad)
             .frame(maxWidth: .infinity)
             .frame(height: boxHeight)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+            .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
 
             // Support (right)
             HStack(spacing: Space.m) {
@@ -100,7 +176,7 @@ struct AboutView: View {
             .padding(.horizontal, Metrics.cardPad)
             .frame(maxWidth: .infinity)
             .frame(height: boxHeight)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+            .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
         }
     }
 
@@ -128,7 +204,7 @@ struct AboutView: View {
             }
         }
         .padding(Metrics.cardPad)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
     }
 
     // MARK: Version helpers
@@ -162,8 +238,11 @@ struct AboutView: View {
 /// glow - no enclosing disc, just the mark itself.
 private struct AboutHero: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var activeState
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { timeline in
+        // 15fps is plenty for a ~7.85s glow pulse feeding a blur recomposite; the full display rate
+        // was pure waste while the About pane is open.
+        TimelineView(.animation(minimumInterval: 1.0 / 10.0, paused: reduceMotion || activeState == .inactive)) { timeline in
             let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
             let glow = 0.5 + 0.5 * sin(t * 0.8)
             ZStack {

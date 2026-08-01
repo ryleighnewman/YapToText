@@ -4,6 +4,14 @@ import SwiftUI
 /// A borderless, non-activating floating panel that shows live dictation state without
 /// stealing focus from the app you're typing into. Position, size, and entrance animation
 /// are driven by user settings.
+/// NSObject trampoline so a CADisplayLink can call back into the panel's closures.
+private final class DisplayLinkDriver: NSObject {
+    nonisolated(unsafe) var onFrame: (@MainActor () -> Void)?
+    @objc func fire(_ link: CADisplayLink) {
+        MainActor.assumeIsolated { onFrame?() }
+    }
+}
+
 @MainActor
 final class RecordingPanel {
     private let panel: NSPanel
@@ -18,6 +26,75 @@ final class RecordingPanel {
     private let settings: AppSettings
     /// Last card size pushed into the chrome graph; only a real change re-renders the chrome.
     private var chromeSize: CGSize = .zero
+    /// Tint state last baked into the chrome, so show() re-renders it only on a real change.
+    private var lastChromeTintKey = ""
+    /// While a slow condense-shrink runs, per-frame geometry reports must not touch the chrome.
+    private var suppressGeometryUntil = Date.distantPast
+    /// Invalidates in-flight condense-shrink completions: a new dictation must never be
+    /// hit by a stale "snap the chrome to 44pt" callback from the previous session.
+    private var condenseGeneration = 0
+    private var condenseLink: CADisplayLink?
+    /// Last known full height of the expanded card, for the show() snap-back.
+    private var lastExpandedCardHeight: CGFloat = 170
+    private let condenseDriver = DisplayLinkDriver()
+    /// RGB glass: integrated hue phase (rate*dt - the speed slider changes pace without
+    /// jumping the colour) advanced by a 10Hz timer of DISCRETE single chrome renders
+    /// while the panel is visible. Never a per-frame animated glass transaction.
+    private var rgbTimer: Timer?
+    /// Set when hide() started the close choreography: orderOut waits for it.
+    private var closingWithShrink = false
+    /// The condense slide currently applied to the chrome (reset on every show).
+    private var chromeOffset: CGSize = .zero
+    /// Drives the expanded close: discrete chrome renders, height first then width.
+    private var closeLink: CADisplayLink?
+    /// The card size the expanded close started from, so a show() that interrupts the
+    /// close mid-flight can put the glass back instead of stranding a squashed card.
+    private var closeFromSize: CGSize = .zero
+    private let closeDriver = DisplayLinkDriver()
+    private var rgbPhase: Double = 0
+    private var rgbLast: Date?
+    private var effectivePanelTint: Color? {
+        guard settings.panelTintStyle == .rainbow else { return settings.panelTint }
+        let h = rgbPhase.truncatingRemainder(dividingBy: 1)
+        return Color(hue: h < 0 ? h + 1 : h, saturation: 0.85, brightness: 1)
+    }
+    /// Whether the last tick was actually cycling, so leaving Rainbow mid-session gets ONE
+    /// restoring render instead of a frozen rainbow frame.
+    private var rgbWasRainbow = false
+    private func startRGBGlassIfNeeded() {
+        rgbTimer?.invalidate(); rgbTimer = nil
+        // The timer runs for the WHOLE visible session and checks the LIVE style each tick:
+        // gating it on the style at show() meant switching to Rainbow while the panel was up
+        // (exactly what the appearance settings invite) left the glass frozen until the next
+        // dictation, and switching away left a timer re-rendering identical chrome.
+        rgbLast = Date()
+        rgbWasRainbow = settings.panelTintStyle == .rainbow
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                let nowDate = Date()
+                let dt = min(0.5, nowDate.timeIntervalSince(self.rgbLast ?? nowDate))
+                self.rgbLast = nowDate
+                let rainbow = self.settings.panelTintStyle == .rainbow
+                // Base: one full spectrum lap every 12s at speed 1.
+                if rainbow { self.rgbPhase += dt * self.settings.panelRGBSpeed / 12.0 }
+                guard rainbow || self.rgbWasRainbow else { return }
+                self.rgbWasRainbow = rainbow
+                guard self.condenseLink == nil, self.styleMorphLink == nil else { return }   // an active size loop renders already
+                self.chromeHosting.rootView = PanelChrome(size: self.chromeSize,
+                                                          alignment: self.settings.panelPosition.cardAlignment,
+                                                          margin: Self.shadowMargin,
+                                                          // The condense slide MUST ride along: without it
+                                                          // the next rainbow tick teleported the pill back
+                                                          // to the card's center, off the spinning ring.
+                                                          offset: self.chromeOffset,
+                                                          tint: self.effectivePanelTint,
+                                                          tintStrength: self.settings.panelTintStrength)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rgbTimer = timer
+    }
 
     /// One width for both panel forms; every element inside scales off it, so shrinking this makes
     /// the whole pop-up proportionally smaller.
@@ -34,8 +111,10 @@ final class RecordingPanel {
         self.controller = controller
         self.settings = settings
         chromeHosting = NSHostingView(rootView: PanelChrome(size: .zero,
-                                                            alignment: settings.panelPosition == .bottomCenter ? .bottom : .top,
-                                                            margin: Self.shadowMargin))
+                                                            alignment: settings.panelPosition.cardAlignment,
+                                                            margin: Self.shadowMargin,
+                                                            tint: settings.panelTint,   // init-time: static resolve (self not ready)
+                                                            tintStrength: settings.panelTintStrength))
         hosting = NSHostingView(rootView: RecordingPanelView(controller: controller, settings: settings,
                                                              width: Self.panelWidth, margin: Self.shadowMargin))
         panel = NSPanel(contentRect: NSRect(origin: .zero, size: Self.windowSize),
@@ -48,6 +127,7 @@ final class RecordingPanel {
         panel.hasShadow = false   // the chrome graph draws the card's shadow
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
+        panel.acceptsMouseMovedEvents = true   // the mini style reveals its controls on hover
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
 
         let container = NSView(frame: NSRect(origin: .zero, size: Self.windowSize))
@@ -63,7 +143,13 @@ final class RecordingPanel {
         // past the screen edges or under the menu bar and become hard to grab back.
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification,
                                                object: panel, queue: .main) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.clampCardToScreen() }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.clampCardToScreen()
+                // A move we didn't make = the user dragged it. Remember where, so "snap back
+                // off" can keep the panel exactly there for every future dictation.
+                if !self.isProgrammaticMove { self.userDraggedOrigin = self.panel.frame.origin }
+            }
         }
 
         // Content -> chrome size bridge: a plain callback (never SwiftUI state) so the graphs stay
@@ -72,11 +158,199 @@ final class RecordingPanel {
                                               width: Self.panelWidth, margin: Self.shadowMargin,
                                               onCardSize: { [weak self] size in
             guard let self, size != self.chromeSize, size.width > 0, size.height > 0 else { return }
+            // Near-identical sizes (the settled measurement truing up a prediction): store it
+            // and stop - re-rendering AND re-morphing for a 1-2pt correction played a second
+            // visible bounce right after the first morph.
+            if abs(size.width - self.chromeSize.width) < 2, abs(size.height - self.chromeSize.height) < 2 {
+                self.chromeSize = size
+                return
+            }
+            // THE CONDENSED PILL OWNS THE CHROME while processing: a geometry event that
+            // slipped past the debounce could land AFTER the condense's suppression
+            // window and re-inflate the pill to full width mid-processing - the
+            // "sometimes the mini stays wide" variability. Until the session ends (new
+            // recording or panel hidden), no push may grow a condensed pill.
+            if self.controller.isBusy, !self.controller.isRecording,
+               size.width > self.chromeSize.width + 20 {
+                return   // EVERY layout condenses now, expanded included
+            }
+            // During a slow condense-shrink the geometry stream fires every frame of the
+            // width animation - those must not re-render/morph the chrome (it is
+            // already riding its own slow morph). EXCEPTION: a push much LARGER than the
+            // current chrome is a style change (mini/compact -> expanded), never condense
+            // noise - it must cancel the shrink and render, or the new layout strands on
+            // a ring-sized pill.
+            if Date() < self.suppressGeometryUntil {
+                if size.width > self.chromeSize.width + 100 {
+                    self.condenseLink?.invalidate(); self.condenseLink = nil
+                    self.condenseGeneration += 1
+                    self.suppressGeometryUntil = .distantPast
+                } else {
+                    self.chromeSize = size
+                    return
+                }
+            }
+            if self.settings.panelStyle == .expanded, size.height > 60 {
+                self.lastExpandedCardHeight = size.height
+            }
+            let oldSize = self.chromeSize
             self.chromeSize = size
-            self.chromeHosting.rootView = PanelChrome(size: size,
-                                                      alignment: self.settings.panelPosition == .bottomCenter ? .bottom : .top,
-                                                      margin: Self.shadowMargin)
+            // This path carries NO offset, so the stored slide must die with it -
+            // otherwise a later close replays a finished condense's sideways slide and the
+            // card jumps ~64pt at the instant it starts closing.
+            self.chromeOffset = .zero
+            // The morph renders every intermediate size itself (true-size, anchored);
+            // rendering the final size first would flash the destination for a frame.
+            self.animateChromeMorph(from: oldSize, to: size)
+        },
+                                              onCondenseShrink: { [weak self] size, duration, slide in
+            guard let self else { return }
+            // THE REAL PILL SHRINKS: a display link (native refresh rate - 120Hz on
+            // ProMotion) re-renders the chrome at its true intermediate size every frame.
+            // Every frame is genuine glass with genuine capsule ends - no masks, no
+            // transforms. Each render is a discrete, non-animated transaction.
+            self.condenseGeneration += 1
+            let gen = self.condenseGeneration
+            self.suppressGeometryUntil = Date().addingTimeInterval(duration + 0.3)
+            let from = self.chromeSize
+            guard from.width > 1 else { return }
+            // Share the wave's exact clock: zero skew between line ends and glass edge.
+            // Same 5s staleness bound the wave applies (WaveformView): if the stamp is
+            // ancient the wave starts its own fresh clock, and the glass must not instead
+            // snap shut in one frame against a stopwatch from minutes ago.
+            let stamp = CondenseClock.start
+            let started = (stamp != nil && Date().timeIntervalSince(stamp!) < 5) ? stamp! : Date()
+            // VERTICAL CENTERING: the chrome shrinks pinned to the card's anchored edge
+            // (top or bottom), but the RING sits at the card's vertical CENTER - so a pill
+            // shorter than the card it came from (compact: 54 -> 40) landed ~7pt off the
+            // spinner. Nudge the pill toward the old card's center as it shrinks; zero for
+            // center-anchored panels and for the mini (whose card is already pill-height).
+            let anchored = self.settings.panelPosition.cardAlignment
+            let hDrop = (from.height - size.height) / 2
+            let vFix: CGFloat = anchored == .top ? hDrop : (anchored == .bottom ? -hDrop : 0)
+            let slide = CGSize(width: slide.width, height: slide.height + vFix)
+            self.condenseLink?.invalidate()
+            self.styleMorphLink?.invalidate(); self.styleMorphLink = nil
+            self.chromeHosting.layer?.removeAnimation(forKey: "chromeMorph")
+            self.chromeHosting.layer?.removeAnimation(forKey: "chromeCollapse")
+            // FRAME-INTEGRATED clock, same rule as the wave's (capped 50ms/frame, never
+            // past wall): a starved first run (whisper cold load) used to let wall time
+            // race ahead of rendering, so the glass snapped to its final size while the
+            // wave was still winding - the frozen, misaligned first condense.
+            var teInt = Date().timeIntervalSince(started)
+            var lastFrame = Date()
+            self.condenseDriver.onFrame = { [weak self] in
+                guard let self else { return }
+                guard gen == self.condenseGeneration, !self.controller.isRecording else {
+                    self.condenseLink?.invalidate(); self.condenseLink = nil; return
+                }
+                // The pill's width follows the SAME consumption curve as the line feed
+                // (WaveformView), +8px breathing room: the glass hugs the retreating
+                // material every frame instead of running its own timer curve.
+                let nowD = Date()
+                teInt = min(nowD.timeIntervalSince(started), teInt + min(max(0, nowD.timeIntervalSince(lastFrame)), 0.05))
+                lastFrame = nowD
+                let te = teInt
+                let t = te * 2.6
+                let rt = min(1.0, max(0.0, (t - 0.2) / 0.55))
+                let gap = 0.05 * from.width * (rt * rt * (3 - 2 * rt))
+                let suckT = max(0.0, t - 0.2 - 0.55 * 0.15)
+                let f = suckT > 0 ? suckT * suckT / (suckT + 0.22) : 0
+                let consumed = min(1.0, max(0.0, (from.width * 0.5 * f - gap) / (from.width * 0.43)))
+                // The glass INTERPOLATES from its start size to the ring pill on that same
+                // consumption curve, landing a touch ahead of the last material (the pill
+                // must never trail the line ends). The old curve subtracted a fixed
+                // fraction OF THE START WIDTH, which only ever reached 44pt from a narrow
+                // start: on the wide compact card it bottomed out at 55pt, so the pill
+                // never met the ring, the completion test never passed, and this display
+                // link kept re-rendering glass at 120Hz for the rest of the dictation.
+                // The right edge sweeps in with real ACCELERATION and lands early: a
+                // power curve over the first 70% of consumption (gentle grip, then the
+                // rush) - the old linear track to 90% read as the pill dragging its feet.
+                let wc = min(1.0, pow(min(1.0, consumed / 0.7), 1.35))
+                let w = from.width + (size.width - from.width) * CGFloat(wc)
+                let h = from.height + (size.height - from.height) * CGFloat(wc)
+                // The SLIDE: the pill drifts toward the wave's spot as it shrinks, so
+                // the ring never moves - the glass comes to it (compact); zero on mini.
+                let off = CGSize(width: slide.width * CGFloat(wc),
+                                 height: slide.height * CGFloat(wc))
+                self.chromeOffset = off
+                self.chromeSize = CGSize(width: w, height: h)
+                self.chromeHosting.rootView = PanelChrome(size: self.chromeSize,
+                                                          alignment: self.settings.panelPosition.cardAlignment,
+                                                          margin: Self.shadowMargin,
+                                                          offset: off,
+                                                          tint: self.effectivePanelTint,
+                                                          tintStrength: self.settings.panelTintStrength)
+                // Landed (or ran long - a link that outlives its own choreography by 3s is
+                // a leak, never a slow frame).
+                if consumed >= 1.0 || Date().timeIntervalSince(started) > 6 {
+                    self.chromeSize = size
+                    self.chromeOffset = slide
+                    self.chromeHosting.rootView = PanelChrome(size: size,
+                                                              alignment: self.settings.panelPosition.cardAlignment,
+                                                              margin: Self.shadowMargin,
+                                                              offset: slide,
+                                                              tint: self.effectivePanelTint,
+                                                              tintStrength: self.settings.panelTintStrength)
+                    self.condenseLink?.invalidate(); self.condenseLink = nil
+                }
+            }
+            let link = self.chromeHosting.displayLink(target: self.condenseDriver,
+                                                      selector: #selector(DisplayLinkDriver.fire(_:)))
+            link.add(to: .main, forMode: .common)
+            self.condenseLink = link
         })
+    }
+
+    /// Glide the glass between card sizes at TRUE SIZE: a display link renders the chrome
+    /// at its real intermediate dimensions every frame (each render a discrete,
+    /// non-animated transaction - the same crash-safe pattern as the condense and the
+    /// close). The old approach scaled the finished LAYER, but that layer spans the whole
+    /// window, so the scale pivoted around the window's center instead of the card's
+    /// anchored edge - which is exactly why big -> medium read as moving the wrong way.
+    /// True-size renders inherit PanelChrome's own alignment, so the card stays pinned to
+    /// its anchored edge at every step, no transform tricks.
+    private var styleMorphLink: CADisplayLink?
+    private let styleMorphDriver = DisplayLinkDriver()
+    private func animateChromeMorph(from old: CGSize, to new: CGSize) {
+        guard old.width > 1, old.height > 1, new.width > 1, new.height > 1, old != new else { return }
+        styleMorphLink?.invalidate()
+        chromeHosting.layer?.removeAnimation(forKey: "chromeMorph")   // legacy scale, if any
+        let started = Date()
+        let dur = 0.32
+        styleMorphDriver.onFrame = { [weak self] in
+            guard let self else { return }
+            // A condense or close taking over owns the chrome; this morph yields.
+            guard self.condenseLink == nil, self.closeLink == nil else {
+                self.styleMorphLink?.invalidate(); self.styleMorphLink = nil; return
+            }
+            let t = Date().timeIntervalSince(started) / dur
+            if t >= 1 {
+                self.chromeSize = new
+                self.render(size: new)
+                self.styleMorphLink?.invalidate(); self.styleMorphLink = nil
+                return
+            }
+            let p = 1 - pow(1 - t, 3)   // easeOutCubic: brisk launch, soft landing
+            let size = CGSize(width: old.width + (new.width - old.width) * CGFloat(p),
+                              height: old.height + (new.height - old.height) * CGFloat(p))
+            self.chromeSize = size
+            self.render(size: size)
+        }
+        let link = chromeHosting.displayLink(target: styleMorphDriver,
+                                             selector: #selector(DisplayLinkDriver.fire(_:)))
+        link.add(to: .main, forMode: .common)
+        styleMorphLink = link
+    }
+
+    /// One discrete chrome render at `size` with the current tint (no offset).
+    private func render(size: CGSize) {
+        chromeHosting.rootView = PanelChrome(size: size,
+                                             alignment: settings.panelPosition.cardAlignment,
+                                             margin: Self.shadowMargin,
+                                             tint: effectivePanelTint,
+                                             tintStrength: settings.panelTintStrength)
     }
 
     // NOTE: panel show/hide sets alpha/origin DIRECTLY - no NSAnimationContext. On macOS 26.5,
@@ -87,23 +361,126 @@ final class RecordingPanel {
     /// Bumped by every show/hide so a deferred orderOut can tell whether it's stale (a new
     /// dictation re-showed the panel while the old hide was still waiting).
     private var visibilityGeneration = 0
+    /// Generation of the NEWEST hide, so a stale deferred orderOut can tell a newer close
+    /// choreography is running and let ITS timer do the orderOut instead.
+    private var lastHideGeneration = 0
 
     func show() {
         visibilityGeneration += 1
+        yapdiag("panel.show gen=\(visibilityGeneration) style=\(settings.panelStyle.rawValue) rec=\(controller.isRecording)")
         shownAt = Date()
+        chromeHosting.layer?.removeAnimation(forKey: "chromeCollapse")
+        chromeHosting.layer?.removeAnimation(forKey: "closeShrink")
+        hosting.layer?.removeAnimation(forKey: "closeShrink")
+        hosting.layer?.removeAnimation(forKey: "closeLift")
+        for layer in [chromeHosting.layer, hosting.layer].compactMap({ $0 })
+        where layer.anchorPoint != CGPoint(x: 0.5, y: 0.5) {
+            let f = layer.frame
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            layer.position = CGPoint(x: f.midX, y: f.midY)
+        }
         // Re-align the chrome only if the position setting changed since the last show, so a
         // routine show never adds a glass render on top of the presentation transaction.
-        let alignment: Alignment = settings.panelPosition == .bottomCenter ? .bottom : .top
-        if chromeHosting.rootView.alignment != alignment {
-            chromeHosting.rootView = PanelChrome(size: chromeSize, alignment: alignment, margin: Self.shadowMargin)
+        let alignment: Alignment = settings.panelPosition.cardAlignment
+        let tintKey = settings.panelTintStyle.rawValue + "|" + (settings.panelTintHex ?? "") + "|\(settings.panelTintStrength)|\(settings.accentColorHex ?? "")"
+        if chromeHosting.rootView.alignment != alignment || tintKey != lastChromeTintKey {
+            lastChromeTintKey = tintKey
+            chromeHosting.rootView = PanelChrome(size: chromeSize, alignment: alignment, margin: Self.shadowMargin,
+                                                 tint: effectivePanelTint, tintStrength: settings.panelTintStrength)
+        }
+        // A show that interrupts an IN-FLIGHT close (stop -> instant restart) must undo
+        // the close's partial shrink: the close collapses HEIGHT first, so the width-only
+        // rescues below never fire and the new session sat on a squashed, offset card.
+        // One discrete render back at the size the close started from.
+        if closeLink != nil, closeFromSize.width > 1 {
+            chromeSize = closeFromSize
+            chromeHosting.rootView = PanelChrome(size: chromeSize,
+                                                 alignment: settings.panelPosition.cardAlignment,
+                                                 margin: Self.shadowMargin,
+                                                 tint: effectivePanelTint,
+                                                 tintStrength: settings.panelTintStrength)
+        }
+        closeLink?.invalidate(); closeLink = nil
+        styleMorphLink?.invalidate(); styleMorphLink = nil
+        chromeOffset = .zero
+        controller.panelIsClosing = false
+        // CANONICAL CONDENSE CANCEL - runs on EVERY show, in any state. A new dictation
+        // started while the pill was mid-condense (spam-toggling) must always kill the
+        // shrink loop, unfreeze the geometry bridge, and drop any leftover layer mask -
+        // the old placement inside the hidden-panel branch skipped all of it whenever
+        // the panel was still on screen.
+        condenseLink?.invalidate(); condenseLink = nil
+        condenseGeneration += 1
+        suppressGeometryUntil = .distantPast
+        chromeHosting.layer?.mask = nil
+        // A NEW recording ALWAYS gets a full-size pill - rendered UNCONDITIONALLY. The
+        // old rescues only fired when the STORED size looked small, but suppressed
+        // geometry events during a condense could store the full size without rendering
+        // it: bookkeeping said 141 while the glass on screen was still the 44pt ring, so
+        // the rescue skipped and the recording played inside a tiny stuck pill. One
+        // discrete render per show is free; never trust the bookkeeping here.
+        if controller.isRecording {
+            let target: CGSize
+            switch settings.panelStyle {
+            case .mini:     target = CGSize(width: Self.panelWidth * 0.42, height: 40)
+            case .compact:  target = CGSize(width: Self.panelWidth, height: 54)
+            case .expanded: target = CGSize(width: Self.panelWidth, height: max(100, lastExpandedCardHeight))
+            }
+            chromeSize = target
+            chromeHosting.layer?.removeAnimation(forKey: "chromeMorph")
+            chromeHosting.rootView = PanelChrome(size: target, alignment: alignment,
+                                                 margin: Self.shadowMargin,
+                                                 tint: effectivePanelTint,
+                                                 tintStrength: settings.panelTintStrength)
+        }
+        // Opening a NEW mini recording from hidden: the LINES are the opening act, alone.
+        // The glass starts INVISIBLE and fades in around the lines only after they've
+        // fired out from the center. Pure layer alpha + CA fade: no SwiftUI/
+        // NSAnimationContext render path.
+        if !panel.isVisible, controller.isRecording, settings.panelStyle == .mini {
+            chromeHosting.alphaValue = 0
+            let gen = visibilityGeneration   // already bumped at the top of show()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak self] in
+                guard let self, self.visibilityGeneration == gen else { return }
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 0.0
+                fade.toValue = 1.0
+                fade.duration = 0.35
+                fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                self.chromeHosting.layer?.add(fade, forKey: "chromeFadeIn")
+                self.chromeHosting.alphaValue = 1
+            }
+        } else {
+            chromeHosting.alphaValue = 1   // every other path shows the glass normally
         }
         panel.setContentSize(Self.windowSize)
-        panel.setFrameOrigin(positionOrigin())
+        isProgrammaticMove = true
+        if !settings.panelSnapsBack, let stuck = userDraggedOrigin {
+            panel.setFrameOrigin(stuck)   // stays where the user last dragged it
+        } else {
+            panel.setFrameOrigin(positionOrigin())
+        }
+        isProgrammaticMove = false
         panel.alphaValue = 1
         panel.orderFrontRegardless()
+        controller.panelIsPresented = true
+        startRGBGlassIfNeeded()
     }
 
+    /// Where the user last dragged the panel (nil until they do), and a guard so our own
+    /// repositioning never masquerades as a user drag.
+    private var userDraggedOrigin: NSPoint?
+    private var isProgrammaticMove = false
+
     func hide() {
+        rgbTimer?.invalidate(); rgbTimer = nil
+        // A LIVE mid-condense keeps running: killing it here froze the pill PARTWAY
+        // through its collapse whenever a fast transcription closed the panel before the
+        // shrink landed ("the medium player doesn't collapse all the way"). The link
+        // finishes its choreography under the close fade and self-terminates; it dies on
+        // its own the moment a new recording starts, and show() still resets everything.
+        styleMorphLink?.invalidate(); styleMorphLink = nil
+        closeLink?.invalidate(); closeLink = nil
         guard panel.isVisible else { return }
         // Never tear the window down INSIDE a SwiftUI render transaction, and never within the
         // panel's first moments on screen: a quick push-to-talk tap shows and hides the panel in
@@ -113,11 +490,163 @@ final class RecordingPanel {
         // settles first; a generation counter keeps a stale deferred hide from killing a NEW show.
         visibilityGeneration += 1
         let gen = visibilityGeneration
+        lastHideGeneration = gen
+        // A condense trigger sleeping its 50ms beat can land AFTER this hide and raise a
+        // FRESH display link on a closing panel - the shrink then fights the close
+        // choreography. Bumping the generation makes any such late link die on its first
+        // frame - but ONLY when no condense is currently running: a live link must keep
+        // its generation so it can finish the collapse under the close fade.
+        if condenseLink == nil { condenseGeneration += 1 }
+        yapdiag("panel.hide gen=\(gen) style=\(settings.panelStyle.rawValue) rec=\(controller.isRecording) busy=\(controller.isBusy) w=\(Int(chromeSize.width))")
+        // Cancel from the mini wave (chrome still full pill width, nothing processing): the
+        // glass collapses into the center point alongside the lines - matching flatten
+        // beat (0.15s), then a 0.3s pinch to the middle with a fade. Pure Core Animation
+        // on the composited layer; fillMode holds the end state until orderOut.
+        if settings.panelStyle == .mini, chromeSize.width > 100,
+           !controller.isRecording, !controller.isBusy, let layer = chromeHosting.layer {
+            if layer.anchorPoint != CGPoint(x: 0.5, y: 0.5) {
+                let f = layer.frame
+                layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+                layer.position = CGPoint(x: f.midX, y: f.midY)
+            }
+            // Same spring as the line's pull-in (response 0.28, damping 0.9), so pill and
+            // line condense as ONE motion; the fades share the same 0.28s ease too.
+            let pinch = CASpringAnimation(keyPath: "transform.scale.x")
+            pinch.fromValue = 1.0
+            pinch.toValue = 0.04
+            pinch.stiffness = 503
+            pinch.damping = 40
+            pinch.mass = 1
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1.0
+            fade.toValue = 0.0
+            fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            let group = CAAnimationGroup()
+            group.animations = [pinch, fade]
+            group.beginTime = CACurrentMediaTime() + 0.15
+            group.duration = 0.32
+            group.fillMode = .forwards
+            group.isRemovedOnCompletion = false
+            layer.add(group, forKey: "chromeCollapse")
+        } else if settings.panelStyle == .expanded, !controller.isRecording,
+                  chromeSize.width > 100,   // already condensed to the pill: plain fade below
+                  let chromeLayer = chromeHosting.layer, let contentLayer = hosting.layer {
+            // THE BIG CARD'S CLOSE, three beats with REAL sizes (no layer scaling - a
+            // scale squashes the ring into an ellipse):
+            //  1) 0.00-0.32s  height collapses UPWARD onto the wave band (top pinned)
+            //  2) 0.22-0.50s  width collapses into the ring
+            //  3) 0.42-0.60s  clean fade of what remains
+            controller.panelIsClosing = true   // content fades its transcript/bar, keeps the wave
+            let from = chromeSize
+            closeFromSize = from
+            // Ring center measured from the card's top: layout padding + half the wave band.
+            let vScale = Self.panelWidth / 380
+            let ringY = (11 * vScale) + (44 * 0.82 * vScale) / 2
+            let target = CGSize(width: 44, height: ringY * 2)
+            let alignment = settings.panelPosition.cardAlignment
+            let baseOffset = chromeOffset
+            let started = Date()
+            closeLink?.invalidate()
+            closeDriver.onFrame = { [weak self] in
+                guard let self else { return }
+                let t = Date().timeIntervalSince(started) / 0.5
+                if t >= 1 { self.closeLink?.invalidate(); self.closeLink = nil; return }
+                func ease(_ x: Double) -> Double { x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x) }
+                // Sequenced: the bottom row's fade (0.12s, panelIsClosing) LEADS, then the
+                // card collapses upward, then - as the width pulls in - the remaining band
+                // CONTINUES upward, so the whole close reads as one rising motion instead
+                // of a collapse that stops dead and shrinks in place.
+                let hp = ease((t - 0.14) / 0.5)            // height: starts after the button fade
+                let wp = ease((t - 0.44) / 0.56)           // width: starts a beat later
+                let lift = CGFloat(ease((t - 0.5) / 0.5)) * 14   // the continuing rise
+                let h = from.height + (target.height - from.height) * CGFloat(hp)
+                let w = from.width + (target.width - from.width) * CGFloat(wp)
+                // Keep the card's TOP edge (the wave) pinned while the bottom rises.
+                let risen = from.height - h
+                let pin: CGFloat = alignment == .top ? 0 : (alignment == .bottom ? -risen : -risen / 2)
+                self.chromeSize = CGSize(width: w, height: h)
+                self.chromeHosting.rootView = PanelChrome(size: self.chromeSize,
+                                                          alignment: alignment,
+                                                          margin: Self.shadowMargin,
+                                                          offset: CGSize(width: baseOffset.width,
+                                                                         height: baseOffset.height + pin - lift),
+                                                          tint: self.effectivePanelTint,
+                                                          tintStrength: self.settings.panelTintStrength)
+            }
+            let link = chromeHosting.displayLink(target: closeDriver,
+                                                 selector: #selector(DisplayLinkDriver.fire(_:)))
+            link.add(to: .main, forMode: .common)
+            closeLink = link
+            // The content (the ring) rides the SAME continuing rise as the glass -
+            // composited CA translation, so the pill and its ring lift as one piece.
+            let liftAnim = CABasicAnimation(keyPath: "transform.translation.y")
+            liftAnim.fromValue = 0
+            // The translation runs in the CONTAINER's (non-flipped AppKit) layer space,
+            // where +y is UP - keying it off the hosting view's own flippedness sent the
+            // content DOWN while the glass rose (the downward waveform on cancel).
+            liftAnim.toValue = 14
+            liftAnim.beginTime = CACurrentMediaTime() + 0.25
+            liftAnim.duration = 0.25
+            liftAnim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            liftAnim.fillMode = .forwards
+            liftAnim.isRemovedOnCompletion = false
+            contentLayer.add(liftAnim, forKey: "closeLift")
+            // Beat 3: the fade rides Core Animation on both layers, starting as the
+            // width collapse lands.
+            for layer in [chromeLayer, contentLayer] {
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 1.0
+                fade.toValue = 0.0
+                fade.beginTime = CACurrentMediaTime() + 0.42
+                fade.duration = 0.2
+                fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                fade.fillMode = .forwards
+                fade.isRemovedOnCompletion = false
+                layer.add(fade, forKey: "closeShrink")
+            }
+            closingWithShrink = true
+        } else if let chromeLayer = chromeHosting.layer, let contentLayer = hosting.layer {
+            controller.panelIsClosing = true   // the wave pulls in + content fades on every exit
+            // EVERY OTHER EXIT fades cleanly - no scaling, no distortion, and above all no
+            // blink. That covers compact (already condensed to the ring pill), the
+            // CONDENSED mini (whose pill is the ring pill too, so the pinch above - which
+            // is the full-width mini's cancel - would distort it), and any close that
+            // arrives while a session is somehow still live.
+            for layer in [chromeLayer, contentLayer] {
+                let fade = CABasicAnimation(keyPath: "opacity")
+                fade.fromValue = 1.0
+                fade.toValue = 0.0
+                fade.duration = 0.22
+                fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                fade.fillMode = .forwards
+                fade.isRemovedOnCompletion = false
+                layer.add(fade, forKey: "closeShrink")
+            }
+        }
         let sinceShow = Date().timeIntervalSince(shownAt)
-        let delay = max(0.05, 0.40 - sinceShow)
+        let shrinkFloor: TimeInterval = closingWithShrink ? 0.66 : 0
+        closingWithShrink = false
+        // Floor of 0.38s: enough for the quickened cancel (flatten 0.10s + pull ~0.22s)
+        // to finish on screen instead of being cut off by orderOut.
+        let delay = max(max(0.38, shrinkFloor), 0.40 - sinceShow)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.visibilityGeneration == gen else { return }
+            guard let self else { return }
+            // A newer show() owns the panel ONLY if a live session is actually running.
+            // Otherwise this close must land no matter how the generations raced - a
+            // cancelled/idle panel that skips its orderOut is stuck on screen forever.
+            if self.visibilityGeneration != gen {
+                if self.controller.isRecording || self.controller.isBusy {
+                    yapdiag("panel.orderOut deferred to live session (gen \(gen) != \(self.visibilityGeneration))")
+                    return
+                }
+                // A NEWER hide owns the close and scheduled its own orderOut - a stale
+                // timer must not cut that choreography short (it also dodged the newer
+                // hide's on-screen floor). The newest hide always lands its own orderOut,
+                // so skipping here can never strand the panel.
+                if self.lastHideGeneration != gen { return }
+            }
             self.panel.orderOut(nil)
+            self.controller.panelIsPresented = false
         }
     }
 
@@ -149,7 +678,11 @@ final class RecordingPanel {
         if cardMinY < vf.minY { origin.y += vf.minY - cardMinY }
         if cardMinY + cardH > vf.maxY { origin.y -= (cardMinY + cardH) - vf.maxY }
 
-        if origin != panel.frame.origin { panel.setFrameOrigin(origin) }
+        if origin != panel.frame.origin {
+            isProgrammaticMove = true
+            panel.setFrameOrigin(origin)
+            isProgrammaticMove = false
+        }
     }
 
     /// Place the WINDOW so the CARD inside it (horizontally centered, top/bottom-aligned, inset by
@@ -163,6 +696,9 @@ final class RecordingPanel {
         case .bottomCenter:
             // card centered horizontally, bottom-aligned; its bottom sits `m` above the window bottom.
             return NSPoint(x: vf.midX - w / 2, y: (vf.minY + 140) - m)
+        case .center:
+            // dead center of the screen.
+            return NSPoint(x: vf.midX - w / 2, y: vf.midY - h / 2)
         case .topCenter:
             // card centered, top-aligned; its top sits `m` below the window top.
             return NSPoint(x: vf.midX - w / 2, y: (vf.maxY - 40) - h + m)

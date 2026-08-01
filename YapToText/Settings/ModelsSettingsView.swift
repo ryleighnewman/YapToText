@@ -4,6 +4,23 @@ import AppKit
 struct ModelsSettingsView: View {
     @Environment(AppState.self) private var state
     @State private var locales: [Locale] = []
+    @State private var addModelError: String?
+
+    /// Pick a .gguf / .bin from disk; format is validated by magic bytes and the kind inferred.
+    private func addUserModel() {
+        addModelError = nil
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.data]
+        panel.message = "Choose a whisper.cpp speech model (.bin) or a llama.cpp cleanup model (.gguf)"
+        guard panel.runModalInFront() == .OK, let url = panel.url else { return }
+        do {
+            try state.models.addUserModel(from: url)
+        } catch {
+            addModelError = error.localizedDescription
+        }
+    }
 
     var body: some View {
         @Bindable var settings = state.settings
@@ -22,8 +39,9 @@ struct ModelsSettingsView: View {
 
             // The models actually doing the work today, pinned first.
             CardSection("Your defaults",
-                        subtitle: "What the app uses out of the box: this speech model turns your voice into words; Apple Intelligence handles AI cleanup, with the bundled Phi-3.5 stepping in automatically wherever Apple Intelligence is off or unsupported.") {
+                        subtitle: "What the app uses out of the box, fully on device: this speech model turns your voice into words, and this processing model handles the AI cleanup.") {
                 ForEach(state.models.speechModels.filter { state.models.downloads.isBundled($0) }) { modelRow($0) }
+                ForEach(state.models.languageModels.filter { state.models.downloads.isBundled($0) }) { modelRow($0) }
             }
 
             CardSection("Apple engines") {
@@ -46,10 +64,40 @@ struct ModelsSettingsView: View {
                 ForEach(state.models.speechModels.filter { !state.models.downloads.isBundled($0) }) { modelRow($0) }
             }
 
-            CardSection("Cleanup models (AI transform)",
-                        subtitle: "The AI that rewrites your transcript. Pick one here to use it instead of Apple Intelligence.") {
-                Caption("Phi-3.5 ships inside the app and runs fully on device. It also takes over automatically on Macs where Apple Intelligence is off or unavailable, so AI cleanup works everywhere.")
-                ForEach(state.models.languageModels) { modelRow($0) }
+            CardSection("More cleanup models (AI transform)",
+                        subtitle: "Alternatives to the bundled processing model above.") {
+                ForEach(state.models.languageModels.filter { !state.models.downloads.isBundled($0) }) { modelRow($0) }
+            }
+
+            CardSection("Your own models",
+                        subtitle: "Bring any whisper.cpp speech model (.bin) or llama.cpp cleanup model (.gguf). The file type is detected automatically.") {
+                ForEach(state.models.userModels) { model in
+                    HStack(spacing: 8) {
+                        modelRow(model)
+                        Button {
+                            if state.settings.selectedSpeechModelID == model.id { state.settings.selectedSpeechModelID = "apple" }
+                            if state.settings.selectedLanguageModelID == model.id { state.settings.selectedLanguageModelID = "apple-foundation" }
+                            state.models.removeUserModel(model)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("Remove this model and its file")
+                    }
+                }
+                HStack {
+                    Button {
+                        addUserModel()
+                    } label: {
+                        Label("Add Model\u{2026}", systemImage: "plus")
+                    }
+                    .buttonStyle(.solidSecondary).controlSize(.small)
+                    Spacer()
+                }
+                if let message = addModelError {
+                    Caption(message).foregroundStyle(.orange)
+                }
+                Caption("A model that isn't a supported architecture will be rejected when added, or fall back to raw transcription if it can't load. Nothing breaks.")
             }
 
             CardSection("Storage") {
@@ -63,7 +111,14 @@ struct ModelsSettingsView: View {
             }
         }
         .navigationTitle("Models")
-        .task { locales = await AppleSpeechEngine.supportedLocales() }
+        .task {
+            if #available(macOS 26.0, *) {
+                locales = await AppleSpeechEngine.supportedLocales()
+            } else {
+                // No SpeechAnalyzer locale list pre-26; Whisper models are multilingual anyway.
+                locales = []
+            }
+        }
     }
 
     private func modelRow(_ model: ModelInfo) -> some View {

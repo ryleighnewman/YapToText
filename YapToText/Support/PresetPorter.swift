@@ -33,7 +33,7 @@ enum PresetPorter {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "YapToText Preset.yappreset.json"
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url,
+        guard panel.runModalInFront() == .OK, let url = panel.url,
               let data = try? JSONEncoder().encode(bundle) else { return }
         try? data.write(to: url)
     }
@@ -44,7 +44,7 @@ enum PresetPorter {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url,
+        guard panel.runModalInFront() == .OK, let url = panel.url,
               let data = try? Data(contentsOf: url),
               let bundle = try? JSONDecoder().decode(Bundle_.self, from: data),
               bundle.format == "yaptotext-preset" else {

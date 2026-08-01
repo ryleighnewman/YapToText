@@ -31,9 +31,10 @@ struct ModeDetailView: View {
     }
 
     var body: some View {
-        SettingsPage {
+        SettingsPage(headerFade: true) {
             header
             basics
+            assignedApps
             transcription
             recording
             cleanup
@@ -153,7 +154,80 @@ struct ModeDetailView: View {
                 Text("Show in the quick switcher")
             }
             .toggleStyle(.switch).controlSize(.small)
+            LabeledContent("Activation shortcut") {
+                HotkeyRecorderField(combo: $draft.activationHotkey, allowsEmpty: true,
+                                    placeholder: "Not set")
+                    .frame(width: 110, height: 24)
+            }
+            Caption("Press this shortcut anywhere and dictation starts in this mode; press it again to stop. Delete clears it.")
+                .onChange(of: draft.activationHotkey) {
+                    // Next runloop turn: the root onChange saves the draft into the store first,
+                    // so the re-registration sees the new combo.
+                    DispatchQueue.main.async { AppDelegate.shared?.reloadModeHotkeys() }
+                }
         }
+    }
+
+    // MARK: Apps that use this mode
+
+    /// The same per-app assignments as Settings > Advanced, seen from the mode's side: which apps
+    /// automatically switch to THIS mode. Both views edit the one `perAppModeOverrides` map, so
+    /// they can never disagree.
+    private var assignedApps: some View {
+        CardSection("Apps that use this mode",
+                    subtitle: "Dictation switches to this mode automatically whenever one of these apps is in front.") {
+            let assigned = state.settings.perAppModeOverrides
+                .filter { $0.value == mode.id }
+                .keys.sorted { AppCatalog.name(for: $0).localizedCaseInsensitiveCompare(AppCatalog.name(for: $1)) == .orderedAscending }
+            if assigned.isEmpty {
+                Caption("No apps yet. Everywhere uses whatever mode is currently selected.")
+            } else {
+                ForEach(assigned, id: \.self) { bundleID in
+                    HStack(spacing: 10) {
+                        AppIconView(bundleID: bundleID)
+                        Text(AppCatalog.name(for: bundleID)).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Button {
+                            state.settings.perAppModeOverrides.removeValue(forKey: bundleID)
+                        } label: {
+                            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stop using this mode in \(AppCatalog.name(for: bundleID))")
+                    }
+                }
+            }
+            HStack {
+                Menu {
+                    let running = AppCatalog.runningApps().filter { state.settings.perAppModeOverrides[$0.bundleID] != mode.id }
+                    if running.isEmpty {
+                        Text("No other apps running")
+                    } else {
+                        ForEach(running, id: \.bundleID) { app in
+                            Button(app.name) { state.settings.perAppModeOverrides[app.bundleID] = mode.id }
+                        }
+                    }
+                    Divider()
+                    Button("Choose App\u{2026}") { assignAppFromPanel() }
+                } label: {
+                    Label("Add app", systemImage: "plus")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                Spacer()
+            }
+        }
+    }
+
+    private func assignAppFromPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard panel.runModalInFront() == .OK, let url = panel.url,
+              let id = Bundle(url: url)?.bundleIdentifier,
+              id != Bundle.main.bundleIdentifier else { return }
+        state.settings.perAppModeOverrides[id] = mode.id   // reassigning from another mode is fine
     }
 
     // MARK: 2. Transcription model
@@ -249,6 +323,18 @@ struct ModeDetailView: View {
         ("Code", BuiltInModes.code.instructions),
     ]
 
+    /// What "App default" resolves to right now, mirroring the controller's pick order:
+    /// the user's chosen default model when it's a downloaded local one, else Apple
+    /// Intelligence, else the bundled local fallback.
+    private var defaultCleanupName: String {
+        let id = state.settings.selectedLanguageModelID
+        if let model = state.models.model(id: id), model.runtime == .llamaCpp,
+           state.models.downloads.localURL(for: model) != nil {
+            return model.displayName
+        }
+        return "Apple Intelligence"
+    }
+
     private var cleanup: some View {
         CardSection("AI cleanup",
                     subtitle: draft.usesAI ? "Your words are rewritten before they're typed."
@@ -257,7 +343,10 @@ struct ModeDetailView: View {
             if draft.usesAI {
                 SubOptions {
                     Picker("Cleanup model", selection: $draft.languageModelID) {
-                        Text("Apple Intelligence").tag(String?.none)
+                        // nil means "the app's default cleanup model" - NOT Apple
+                        // Intelligence. Labeling it that way told users their words went
+                        // through Apple's model when the bundled Phi was actually running.
+                        Text("App default (\(defaultCleanupName))").tag(String?.none)
                         ForEach(state.models.languageModels.filter { state.models.isSelectable($0) && !$0.isBuiltIn }) { model in
                             Text(model.displayName).tag(Optional(model.id))
                         }

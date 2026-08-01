@@ -32,7 +32,14 @@ enum TextInserter {
 
     // MARK: - Private
 
+    /// Set by the app at launch; read at insert time so the adapt step is user-controlled.
+    static var adaptToSurroundings: () -> Bool = { true }
+
     private static func insert(_ text: String, method: InsertionMethod, restoreClipboard: Bool, submit: Bool) {
+        // CONTEXT-AWARE INSERTION: fit the transcript into the sentence it lands in
+        // (lowercase mid-sentence starts, spacing, trailing period) - deterministic AX
+        // read of the focused field, no-op when the app exposes no text.
+        let text = adaptToSurroundings() ? InsertionContext.adapted(text) : text
         switch method {
         case .clipboardOnly:
             setClipboard(text)
@@ -65,12 +72,28 @@ enum TextInserter {
             // transcription) can read the pasteboard AFTER a 0.3s restore, pasting the OLD
             // clipboard - the classic "sometimes it just doesn't paste". The changeCount guard
             // below still protects anything the user copies during the window.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            // Restore with a SMART guard: a changed changeCount doesn't necessarily mean
+            // the user copied something - many apps (Electron especially) rewrite the
+            // pasteboard while handling the paste, which used to permanently cancel the
+            // restore and leave the transcript squatting over a copied picture. If the
+            // clipboard still holds OUR transcript text, restoring is always safe.
+            func attemptRestore(retry: Bool) {
                 let pb = NSPasteboard.general
-                // Only put the user's clipboard back if nothing else claimed it meanwhile -
-                // otherwise we'd clobber something they copied during the paste window.
-                guard pb.changeCount == borrowedToken else { return }
-                snapshot.write(to: pb)
+                let stillOurs = pb.changeCount == borrowedToken
+                    || pb.string(forType: .string) == text
+                if stillOurs {
+                    snapshot.write(to: pb)
+                } else if retry {
+                    // One second chance: the target may still be mid-paste-normalization.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        attemptRestore(retry: false)
+                    }
+                }
+                // Neither ours nor retryable: the user genuinely copied something new -
+                // leave it alone.
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                attemptRestore(retry: true)
             }
         }
     }
@@ -81,6 +104,14 @@ enum TextInserter {
     /// and reorders characters under load, which is why fast typing came out garbled. Chunking
     /// keeps capitals, symbols, emoji, and non-Latin text intact because the characters bypass
     /// keycode translation entirely.
+    /// Live typing: type a small newly-finalized delta at the cursor WHILE dictation continues.
+    /// Uses the character-typing path (no clipboard involvement, so the user's clipboard is
+    /// never churned mid-sentence). Deltas are short, so per-event cost stays negligible.
+    static func typeLive(_ delta: String) {
+        guard !delta.isEmpty else { return }
+        typeString(delta)
+    }
+
     private static func typeString(_ text: String) {
         guard !text.isEmpty else { return }
         let source = CGEventSource(stateID: .combinedSessionState)
@@ -102,12 +133,33 @@ enum TextInserter {
         }
     }
 
+    /// Delete `count` characters behind the cursor (quick edit: "scratch that"). Posted as
+    /// individual Delete presses with a short gap so target apps register every one; capped
+    /// by callers to keep the worst case brief.
+    static func deleteBackward(count: Int) {
+        guard count > 0 else { return }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for _ in 0..<count {
+            if let down = CGEvent(keyboardEventSource: source, virtualKey: 0x33, keyDown: true) {
+                down.setIntegerValueField(.eventSourceUserData, value: BareKeyTap.syntheticMarker)
+                down.post(tap: .cghidEventTap)
+            }
+            if let up = CGEvent(keyboardEventSource: source, virtualKey: 0x33, keyDown: false) {
+                up.setIntegerValueField(.eventSourceUserData, value: BareKeyTap.syntheticMarker)
+                up.post(tap: .cghidEventTap)
+            }
+            usleep(3_000)
+        }
+    }
+
     /// Post Cmd-C to copy the current selection (used by the selection editor).
     static func postCopy() { postKey(0x08, flags: .maskCommand) }   // Cmd+C
 
     private static func pressReturn() { postKey(0x24, flags: []) }   // Return
 
-    private static func postKey(_ keyCode: CGKeyCode, flags: CGEventFlags) {
+    /// Internal (not private): InsertionContext's sandbox-safe context read drives the
+    /// caret with these to select-and-copy the words around the cursor.
+    static func postKey(_ keyCode: CGKeyCode, flags: CGEventFlags) {
         let source = CGEventSource(stateID: .combinedSessionState)
         if let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) {
             down.flags = flags

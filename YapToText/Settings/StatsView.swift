@@ -20,6 +20,7 @@ struct StatsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Metrics.gap) {
                     tiles(stats)
+                    EnergyCard(state: state)
                     if stats.count > 0 {
                         activityCard(stats)
                         insightsCard(stats)
@@ -87,7 +88,7 @@ struct StatsView: View {
             }
         }
         .padding(Metrics.cardPad)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.sectionRadius, style: .continuous))
     }
 
     // MARK: Activity (last 30 days)
@@ -188,6 +189,45 @@ struct StatsView: View {
         }
     }
 
+}
+
+/// Live energy & resource readout: memory footprint, CPU right now, and the model-memory
+/// story (the 1.5-3.7GB models are the footprint; the cooldown releases them when idle).
+private struct EnergyCard: View {
+    let state: AppState
+    @State private var memMB = 0
+    @State private var cpuPercent = 0.0
+    @State private var sampler: Task<Void, Never>?
+
+    var body: some View {
+        CardSection("Energy & resources") {
+            HStack(spacing: 0) {
+                StatPill(memMB > 0 ? "\(memMB) MB" : "-", "memory")
+                StatPill(String(format: "%.0f%%", cpuPercent), "CPU now")
+                StatPill(state.settings.modelCooldownSeconds < 0 ? "kept" :
+                         state.settings.modelCooldownSeconds == 0 ? "instant" :
+                         "\(Int(state.settings.modelCooldownSeconds))s", "model unload")
+            }
+            Caption("Memory is mostly the loaded speech/AI models; after the unload delay they're released and the footprint drops. CPU spikes briefly during transcription and cleanup, then returns to ~0% at idle.")
+        }
+        .onAppear {
+            sampler?.cancel()
+            sampler = Task { @MainActor in
+                var lastCPU = Diagnostics.cpuSecondsUsed()
+                var lastAt = Date()
+                while !Task.isCancelled {
+                    memMB = Diagnostics.memoryFootprintMB()
+                    let nowCPU = Diagnostics.cpuSecondsUsed()
+                    let dt = Date().timeIntervalSince(lastAt)
+                    if dt > 0 { cpuPercent = max(0, (nowCPU - lastCPU) / dt * 100) }
+                    lastCPU = nowCPU
+                    lastAt = Date()
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+            }
+        }
+        .onDisappear { sampler?.cancel(); sampler = nil }
+    }
 }
 
 // MARK: - Number crunching

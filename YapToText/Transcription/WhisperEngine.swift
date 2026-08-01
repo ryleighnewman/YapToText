@@ -36,6 +36,14 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         self.displayName = modelName
     }
 
+    /// Shown while the whisper context for this model isn't resident yet - loading the .bin into RAM
+    /// takes a few seconds on the first transcribe (or the first after a cooldown eviction), during
+    /// which the app looked stuck on "Transcribing…". nil once the model is warm.
+    var modelLoadingDetail: String? {
+        guard let path = modelURL?.path, Self.cachedPath != path else { return nil }
+        return "Loading the speech model…"
+    }
+
     private var modelIsOnDisk: Bool {
         guard let modelURL else { return false }
         return FileManager.default.fileExists(atPath: modelURL.path)
@@ -63,6 +71,15 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         language = code.count == 2 ? code : "auto"
         lock.unlock()
 
+        // Load the model context NOW, in the background, while the user is still speaking -
+        // the ~1.5GB cold load then overlaps the dictation instead of stalling the stop button
+        // ("running very slow when I hit transcribe"). No-op when already cached.
+        if let warmPath = modelURL?.path {
+            Task.detached(priority: .userInitiated) {
+                _ = try? WhisperEngine.sharedContext(for: warmPath)
+            }
+        }
+
         guard livePreview, let path = modelURL?.path else { return }
         // Preview loop: every ~1.5s transcribe the last <=12s of audio and publish the partial.
         previewTask = Task.detached(priority: .utility) { [weak self] in
@@ -83,17 +100,28 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
                 lastCount = count
                 // Skip silent windows entirely: no hallucinated pleasantries in the preview,
                 // and no wasted inference while the user is just holding the key.
-                guard WhisperEngine.peakWindowRMS(window) >= WhisperEngine.silenceRMS else { continue }
-                guard let partial = try? WhisperEngine.transcribe(modelPath: path, audio: window,
-                                                                  language: lang, isCancelled: { Task.isCancelled }),
-                      !partial.isEmpty, !Task.isCancelled, !WhisperEngine.isSilenceHallucination(partial) else { continue }
+                let previewAnalysis = SpeechEnhancer.analyze(window, sampleRate: WhisperEngine.sampleRate)
+                let previewQuietReal = previewAnalysis.speechLevel >= max(0.003, previewAnalysis.noiseFloor * 3)
+                    && previewAnalysis.activeSeconds >= 0.4
+                guard WhisperEngine.peakWindowRMS(window) >= WhisperEngine.silenceRMS || previewQuietReal else { continue }
+                let conditionedWindow = SpeechEnhancer.enhance(window, analysis: previewAnalysis).audio
+                guard let partial = try? WhisperEngine.transcribe(modelPath: path, audio: conditionedWindow,
+                                                                  language: lang, allowBeam: false,
+                                                                  isCancelled: { Task.isCancelled }),
+                      !partial.isEmpty, !Task.isCancelled, !WhisperEngine.isSilenceHallucination(partial),
+                      !WhisperEngine.isNonSpeechAnnotation(partial) else { continue }
                 let prefix = windowStart > 0 ? "\u{2026}" : ""
                 onUpdate(TranscriptionUpdate(volatile: prefix + partial, finalized: ""))
             }
         }
     }
 
-    func append(_ buffer: AVAudioPCMBuffer) {
+    func append(_ rawBuffer: AVAudioPCMBuffer) {
+        // Multi-channel mics (the M4 mic array presents as 3ch non-interleaved) BREAK
+        // AVAudioConverter's channel mapping: it "succeeds" while writing pure zeros, which
+        // silently starved the transcriber (caught live: real audio in, convertedPeak=0.00000).
+        // Never hand it multi-channel input: take channel 0 into a mono buffer ourselves first.
+        let buffer = WhisperEngine.monoChannel0(rawBuffer) ?? rawBuffer
         lock.lock()
         if converter == nil || converterInputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: WhisperEngine.targetFormat)
@@ -115,12 +143,38 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
             return buffer
         }
         guard status != .error, conversionError == nil,
-              let channel = converted.floatChannelData else { return }
+              let channel = converted.floatChannelData else {
+            // A silently-failing converter starves endSession (0 samples -> instant empty
+            // transcript), so the failure must be visible in the trace.
+            yapdiag("whisper append: conversion FAILED status=\(status.rawValue) err=\(conversionError?.localizedDescription ?? "nil") from=\(buffer.format)")
+            return
+        }
 
         let frames = Int(converted.frameLength)
         lock.lock()
+        let logThis = samples.count < 8000   // first ~0.5s of the session only
         samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: frames))
         lock.unlock()
+        if logThis {
+            var peak: Float = 0
+            for i in 0..<frames { peak = max(peak, abs(channel[0][i])) }
+            yapdiag(String(format: "whisper append: in=%d out=%d convertedPeak=%.5f", Int(buffer.frameLength), frames, peak))
+        }
+    }
+
+    /// Reduce a multi-channel float buffer to mono by copying channel 0 (the array's primary
+    /// mic). Returns nil when the buffer is already mono (or not float PCM) - caller keeps it.
+    static func monoChannel0(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard buffer.format.channelCount > 1,
+              let src = buffer.floatChannelData,
+              let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                             sampleRate: buffer.format.sampleRate,
+                                             channels: 1, interleaved: false),
+              let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+              let dst = mono.floatChannelData else { return nil }
+        mono.frameLength = buffer.frameLength
+        memcpy(dst[0], src[0], Int(buffer.frameLength) * MemoryLayout<Float>.size)
+        return mono
     }
 
     func endSession() async throws -> String {
@@ -136,12 +190,40 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         lock.unlock()
 
         guard let modelURL, modelIsOnDisk else { throw unavailableError() }
+        let peakDiag = Self.peakWindowRMS(audio)
+        yapdiag(String(format: "whisper endSession: samples=%d (%.2fs) peak=%.4f gates: min=%.4f",
+                       audio.count, Double(audio.count) / Double(WhisperEngine.sampleRate), peakDiag, Self.silenceRMS))
         guard audio.count > Int(WhisperEngine.sampleRate / 2) else { return "" }   // < 0.5s: nothing said
         let originalCount = audio.count
+        // Speech conditioning: measure where the SPEECH sits vs the room's own floor.
+        let analysis = SpeechEnhancer.analyze(audio, sampleRate: WhisperEngine.sampleRate)
         // Energy gate: if the whole clip never reached speech-level energy, nothing was said -
         // don't even run the model (whisper WILL invent "Thank you." from silence of any length).
-        let peak = Self.peakWindowRMS(audio)
-        guard peak >= Self.silenceRMS else { return "" }
+        // WHISPER-AWARE: genuinely quiet speech (whispering) can sit below the absolute gate
+        // while still rising clearly above the mic's measured floor - that passes too.
+        let peak = peakDiag
+        let quietButReal = analysis.speechLevel >= max(0.003, analysis.noiseFloor * 3)
+            && analysis.activeSeconds >= 0.4
+        guard peak >= Self.silenceRMS || quietButReal else { return "" }
+        // Lift quiet speech to the level the model expects (no-op on healthy audio).
+        var (conditioned, gain) = SpeechEnhancer.enhance(audio, analysis: analysis)
+        // ENDPOINTING: collapse dead-air stretches longer than 3s down to a natural pause.
+        // Long silences are where whisper drifts (hallucinated pleasantries, lost sentence
+        // boundaries); short pauses are kept intact - they carry the punctuation cues.
+        let beforeSilenceTrim = conditioned.count
+        conditioned = SpeechEnhancer.compressSilences(conditioned, analysis: analysis,
+                                                      sampleRate: WhisperEngine.sampleRate)
+        if conditioned.count != beforeSilenceTrim {
+            yapdiag(String(format: "endpointing: compressed %.1fs of dead air (%.1fs -> %.1fs)",
+                           Double(beforeSilenceTrim - conditioned.count) / WhisperEngine.sampleRate,
+                           Double(beforeSilenceTrim) / WhisperEngine.sampleRate,
+                           Double(conditioned.count) / WhisperEngine.sampleRate))
+        }
+        audio = conditioned
+        if gain > 1 {
+            yapdiag(String(format: "speech enhance: gain=%.2fx speech=%.4f floor=%.4f active=%.1fs",
+                           gain, analysis.speechLevel, analysis.noiseFloor, analysis.activeSeconds))
+        }
         // whisper.cpp is least stable on very short clips; pad quiet tails so inference always
         // sees a comfortable minimum of audio.
         let minSamples = Int(WhisperEngine.sampleRate * 1.2)
@@ -157,13 +239,82 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         }
 
         // Inference is CPU/GPU-heavy; keep it off the cooperative pool's main lanes.
-        let text = try await Task.detached(priority: .userInitiated) {
+        var text = try await Task.detached(priority: .userInitiated) { [audio] in
             try WhisperEngine.transcribe(modelPath: path, audio: audio, language: lang, isCancelled: isCancelled)
         }.value
+        // NOT-FULLY-HEARD detection: the mic recorded clearly active speech for N seconds but
+        // the transcript's word count doesn't plausibly cover it (or came back empty). One
+        // rescue pass with a stronger lift - whichever result covers more speech wins.
+        let words = text.split { $0.isWhitespace || $0.isNewline }.count
+        if !isCancelled(), SpeechEnhancer.coverageLooksShort(words: words, activeSeconds: analysis.activeSeconds)
+            || (text.isEmpty && analysis.activeSeconds >= 0.6) {
+            let (rescued, rescueGain) = SpeechEnhancer.enhance(conditioned, analysis:
+                SpeechEnhancer.analyze(conditioned, sampleRate: WhisperEngine.sampleRate), boost: 1.6)
+            if rescueGain > 1.05 {
+                yapdiag(String(format: "speech rescue: words=%d active=%.1fs extraGain=%.2fx",
+                               words, analysis.activeSeconds, rescueGain))
+                let second = (try? await Task.detached(priority: .userInitiated) { [rescued] in
+                    try WhisperEngine.transcribe(modelPath: path, audio: rescued, language: lang, isCancelled: isCancelled)
+                }.value) ?? ""
+                let secondWords = second.split { $0.isWhitespace || $0.isNewline }.count
+                if secondWords > words, !Self.isSilenceHallucination(second) {
+                    yapdiag("speech rescue: adopted second pass (\(secondWords) vs \(words) words)")
+                    text = second
+                }
+            }
+        }
         // Second layer: on short presses OR low-confidence audio (breath, rustle - above the
         // silence gate but below solid speech), discard whisper's stock silence pleasantries.
-        if originalCount < Int(WhisperEngine.sampleRate * 1.2) || peak < Self.confidentSpeechRMS,
+        // Quiet-but-real speech is judged by its measured level, not the absolute gate.
+        // RATE RESCUE: machine-gun dictation makes whisper fuse or drop words. When the
+        // envelope reads fast (approximate 40ms-peak metric), try the SAME audio gently
+        // time-stretched toward natural pacing - and adopt that pass only when it
+        // actually recovers more words, so a wrong fast-guess costs nothing but time.
+        let envRate = SpeechEnhancer.fastRate(conditioned, sampleRate: WhisperEngine.sampleRate)
+        let wordsNow = text.split { $0.isWhitespace || $0.isNewline }.count
+        // Threshold 6.3: measured TTS baselines sit at 6.5-6.7 regardless of speed (the
+        // 40ms envelope saturates), while relaxed human speech reads well below. The
+        // adoption gate makes an over-eager nomination cost one extra inference, never
+        // a worse transcript - so this leans INCLUSIVE by design.
+        if !isCancelled(), envRate > 6.3, analysis.activeSeconds >= 1.5 {
+            let slowed = SpeechEnhancer.stretch(conditioned, factor: 1.22)
+            yapdiag(String(format: "rate: fast envelope (%.1f peaks/s) - trying a 1.22x-stretched pass", envRate))
+            let second = (try? await Task.detached(priority: .userInitiated) { [slowed] in
+                try WhisperEngine.transcribe(modelPath: path, audio: slowed, language: lang, isCancelled: isCancelled)
+            }.value) ?? ""
+            let secondWords = second.split { $0.isWhitespace || $0.isNewline }.count
+            if secondWords > wordsNow, !Self.isSilenceHallucination(second), !Self.isNonSpeechAnnotation(second) {
+                yapdiag("rate: adopted stretched pass (\(secondWords) vs \(wordsNow) words)")
+                text = second
+            }
+        }
+        // Whisper narrating non-speech ("(background noise)", "[BLANK_AUDIO]", a lone
+        // period) is never dictation - discarded unconditionally, however loud or long
+        // the clip. A session with no words in it must insert NOTHING.
+        if Self.isNonSpeechAnnotation(text) { return "" }
+        // A LOUD room with no clear speech activity is as hallucination-prone as
+        // silence: the pleasantry filter applies there too, not just to quiet clips.
+        let lowConfidence = (peak < Self.confidentSpeechRMS || analysis.activeSeconds < 0.4)
+            && !(quietButReal && analysis.activeSeconds >= 1.0)
+        if originalCount < Int(WhisperEngine.sampleRate * 1.2) || lowConfidence,
            Self.isSilenceHallucination(text) {
+            return ""
+        }
+        // The decoder chanting at noise: the SAME short sentence three or more times and
+        // nothing else. Real emphasis is dictated inside one sentence ("no no no"), not
+        // as punctuated clones - so the identical-loop case discards unconditionally.
+        let segments = text
+            .split(whereSeparator: { ".!?\n".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty }
+        if segments.count >= 3, Set(segments).count == 1,
+           segments[0].split(separator: " ").count <= 5 {
+            yapdiag("silence guard: identical repetition loop discarded (\(text.prefix(40)))")
+            return ""
+        }
+        // Two alternating short phrases still counts when the mic measured no real speech.
+        if analysis.activeSeconds < 0.4, Self.isRepetitionLoop(text) {
+            yapdiag("silence guard: repetition loop from inactive audio discarded (\(text.prefix(40)))")
             return ""
         }
         return text
@@ -200,6 +351,49 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
                 "thank you for watching", "you", "bye", ""].contains(normalized)
     }
 
+    /// Whisper's other noise signature: a short phrase LOOPED ("The Christ. The Christ.
+    /// The Christ.") - the decoder latching onto nothing and repeating itself. Only ever
+    /// applied to clips with no measured speech activity, so a real "no, no, no" can't
+    /// be caught by it.
+    static func isRepetitionLoop(_ text: String) -> Bool {
+        let segments = text
+            .split(whereSeparator: { ".!?\n".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty }
+        guard segments.count >= 3 else { return false }
+        let unique = Set(segments)
+        // Nearly everything is the same short phrase over and over.
+        return unique.count <= 2
+            && segments.allSatisfy { $0.split(separator: " ").count <= 5 }
+            && Double(unique.count) / Double(segments.count) <= 0.5
+    }
+
+    /// Output that can NEVER be dictation, regardless of how loud or long the clip was:
+    /// whisper narrating non-speech instead of transcribing it. "(background noise)",
+    /// "[BLANK_AUDIO]", "♪ ♪", a lone period - nothing a user said produces these, so
+    /// they are always discarded rather than pasted into someone's document.
+    static func isNonSpeechAnnotation(_ text: String) -> Bool {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return true }
+        // Strip every (...) [...] *...* ♪...♪ group; if nothing but punctuation/space
+        // remains, the whole output was annotations.
+        for (open, close) in [("(", ")"), ("[", "]"), ("*", "*")] {
+            while let a = t.range(of: open), let b = t.range(of: close, range: a.upperBound..<t.endIndex) {
+                t.removeSubrange(a.lowerBound..<b.upperBound)
+            }
+        }
+        t = t.replacingOccurrences(of: "\u{266A}", with: "")   // ♪
+        let residue = t.unicodeScalars.filter { !CharacterSet.punctuationCharacters.contains($0)
+            && !CharacterSet.whitespacesAndNewlines.contains($0)
+            && !CharacterSet.symbols.contains($0) }
+        if residue.isEmpty { return true }
+        // Bare annotation phrases some models emit without brackets.
+        let bare = String(String.UnicodeScalarView(residue)).lowercased()
+        return ["blankaudio", "backgroundnoise", "silence", "inaudible", "music",
+                "applause", "laughter", "noise", "static", "keyboardclacking", "typing",
+                "wind", "breathing", "coughing"].contains(bare)
+    }
+
     func cancel() async {
         previewTask?.cancel()
         _ = await previewTask?.value
@@ -220,6 +414,14 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     private static let contextLock = NSLock()
     nonisolated(unsafe) private static var cachedContext: OpaquePointer?
     nonisolated(unsafe) private static var cachedPath: String?
+
+    /// Load the model into RAM ahead of need (launch, user activity after a cooldown
+    /// eviction) so no dictation ever pays the multi-second cold-load at stop time.
+    static func warmContext(at path: String) {
+        Task.detached(priority: .utility) {
+            _ = try? WhisperEngine.sharedContext(for: path)
+        }
+    }
 
     /// Drop the cached model context (memory pressure). Takes the inference lock first, so it
     /// can never free the context out from under a running whisper_full.
@@ -248,13 +450,56 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         return context
     }
 
+    /// Cheap clip-level SNR estimate: speech level (92nd percentile of 100ms RMS windows)
+    /// over noise floor (15th percentile), in dB. Same percentile scheme SpeechEnhancer
+    /// uses, kept self-contained so the decode choice needs no plumbing.
+    private static func quickSNR(_ audio: [Float]) -> Double {
+        let window = 1600   // 100ms at 16kHz
+        guard audio.count >= window * 4 else { return 100 }
+        var rms: [Float] = []
+        rms.reserveCapacity(audio.count / window + 1)
+        var start = 0
+        while start < audio.count {
+            let end = min(start + window, audio.count)
+            var sum: Float = 0
+            for i in start..<end { sum += audio[i] * audio[i] }
+            rms.append(sqrt(sum / Float(end - start)))
+            start = end
+        }
+        let sorted = rms.sorted()
+        func pct(_ p: Double) -> Float { sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * p))] }
+        let floorLevel = max(pct(0.15), 1e-6)
+        let speech = max(pct(0.92), 1e-6)
+        return 20 * log10(Double(speech / floorLevel))
+    }
+
     private static func transcribe(modelPath: String, audio: [Float], language: String,
+                                   allowBeam: Bool = true,
                                    isCancelled: @escaping () -> Bool) throws -> String {
         inferenceLock.lock()
         defer { inferenceLock.unlock() }
         let context = try sharedContext(for: modelPath)
 
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        // ADAPTIVE DECODING: greedy is fine on clean speech, but in heavy background
+        // noise it commits to one token path and silently drops words - a real dictation
+        // lost the "isn't" in "the app isn't able to understand me" (6dB SNR room noise;
+        // beam search recovered it). Beam-5 costs a few times more compute, so it only
+        // engages when the clip actually measures noisy - turbo transcribes 17s in ~0.4s,
+        // leaving plenty of headroom. Live PREVIEW passes never beam (allowBeam false):
+        // provisional text repainted every 1.5s doesn't justify 5x compute while the CPU
+        // is already recording, and in a noisy room every preview pass was beaming.
+        let snrDB = allowBeam ? Self.quickSNR(audio) : 100
+        // Clipping counts as degradation too - and it RAISES the measured SNR, so a
+        // clipped shout in a loud room sails past the SNR gate looking pristine while
+        // whisper reads square waves ("Detailed." from a full sentence).
+        var clipped = 0
+        if allowBeam { for s in audio where abs(s) > 0.985 { clipped += 1 } }
+        let clippedFrac = Double(clipped) / Double(max(1, audio.count))
+        let noisy = allowBeam && (snrDB < 12 || clippedFrac > 0.001)
+        var params = whisper_full_default_params(noisy ? WHISPER_SAMPLING_BEAM_SEARCH
+                                                       : WHISPER_SAMPLING_GREEDY)
+        if noisy { params.beam_search.beam_size = 5 }
+        yapdiag("whisper: snr=\(String(format: "%.1f", snrDB))dB clip=\(String(format: "%.2f", clippedFrac * 100))% decode=\(noisy ? "beam5" : "greedy")")
         params.print_progress = false
         params.print_realtime = false
         params.print_special = false

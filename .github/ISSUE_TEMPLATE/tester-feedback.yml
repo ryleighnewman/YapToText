@@ -1,0 +1,84 @@
+name: Tester feedback
+description: Structured feedback that pinpoints which stage of the pipeline needs work.
+title: "[Feedback] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing YapToText. The pipeline has distinct stages (capture, speech
+        model, cleanup, insertion), and knowing which one misbehaved is most of the fix.
+        Fill in what you can; skip what you can't.
+  - type: input
+    id: mac
+    attributes:
+      label: Mac model and chip
+      placeholder: MacBook Air M2, 16 GB
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 26.5
+    validations:
+      required: true
+  - type: dropdown
+    id: speech-model
+    attributes:
+      label: Speech model in use
+      options:
+        - Apple Speech (default)
+        - Whisper Large v3 Turbo
+        - Another Whisper size
+        - A model I added myself
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage seems wrong?
+      description: Use History's "Show what was heard" to compare raw vs cleaned text.
+      options:
+        - Hearing (raw transcript is already wrong)
+        - Cleanup (raw is right, cleaned text is wrong)
+        - Insertion (text is right but lands wrong / not at all)
+        - Latency or battery
+        - UI / settings
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you said or expected, and what came out. Paste raw and cleaned text if you can.
+    validations:
+      required: true
+  - type: input
+    id: target-app
+    attributes:
+      label: App you were dictating into
+      placeholder: Mail, VS Code, Safari text field...
+  - type: input
+    id: latency
+    attributes:
+      label: Rough latency
+      description: Cold (first dictation after launch) vs warm, if you noticed a difference.
+      placeholder: "cold ~4s, warm ~1s"
+  - type: dropdown
+    id: insertion-style
+    attributes:
+      label: How you insert text
+      options:
+        - Auto-insert (paste)
+        - Auto-insert (type)
+        - Review before inserting
+        - Clipboard only
+        - Not sure
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: CPU/battery observations, dictionaries or per-app modes in play, weird timing.

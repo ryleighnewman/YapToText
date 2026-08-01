@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 enum TranscriptionEngineKind: String, Codable, CaseIterable, Identifiable {
     case appleSpeech
@@ -41,14 +42,24 @@ enum HotkeyBehavior: String, Codable, CaseIterable, Identifiable {
 
 enum PanelPosition: String, Codable, CaseIterable, Identifiable {
     case bottomCenter
+    case center
     case topCenter
     case nearMenuBar
     var id: String { rawValue }
     var label: String {
         switch self {
         case .bottomCenter: return "Bottom center"
+        case .center: return "Center of screen"
         case .topCenter: return "Top center"
         case .nearMenuBar: return "Near menu bar"
+        }
+    }
+    /// How the card pins inside its fixed window at each position.
+    var cardAlignment: SwiftUI.Alignment {
+        switch self {
+        case .bottomCenter: return .bottom
+        case .center: return .center
+        case .topCenter, .nearMenuBar: return .top
         }
     }
 }
@@ -64,6 +75,188 @@ enum PanelAnimation: String, Codable, CaseIterable, Identifiable {
         case .fade: return "Fade"
         case .scale: return "Scale + fade"
         }
+    }
+}
+
+enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
+    case capybara
+    case microphone
+    case waveform
+    case bubble
+    case dot
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .capybara: return "Capybara"
+        case .microphone: return "Microphone"
+        case .waveform: return "Mini waveform"
+        case .bubble: return "Speech bubble"
+        case .dot: return "Minimal dot"
+        }
+    }
+}
+
+/// How the floating panel's glass is tinted. Always-on by default, mapped to the accent.
+enum PanelTintStyle: String, Codable, CaseIterable, Identifiable {
+    case off
+    case accent
+    case custom
+    case rainbow
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .off: return "None"
+        case .accent: return "Match accent"
+        case .custom: return "Custom color"
+        case .rainbow: return "RGB"
+        }
+    }
+}
+
+/// How the pop-up WAVE is coloured - independent of the glass behind it.
+enum WaveColorStyle: String, Codable, CaseIterable, Identifiable {
+    case accent
+    case custom
+    case rgb
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .accent: return "Match accent"
+        case .custom: return "Custom color"
+        case .rgb: return "RGB"
+        }
+    }
+}
+
+/// WHICH physical key is the primary dictation trigger. Right Command is the classic; any
+/// of these bare modifier keys works through the same monitor.
+enum PrimaryTriggerKey: Codable, Identifiable, Equatable, Hashable {
+    case rightCommand
+    case rightControl
+    case leftControl
+    case fnGlobe
+    case rightOption
+    case leftOption
+    case rightShift
+    case capsLock
+    /// ANY other physical key - a letter, F-key, number pad key, whatever. Watched by a
+    /// swallowing CGEvent tap, so the key stops typing and becomes the trigger.
+    case custom(UInt16)
+
+    /// The bare-modifier keys the flagsChanged monitor can watch (custom keys ride the
+    /// event tap instead, so they don't belong in this list).
+    static var allCases: [PrimaryTriggerKey] {
+        [.rightCommand, .rightControl, .leftControl, .fnGlobe,
+         .rightOption, .leftOption, .rightShift, .capsLock]
+    }
+
+    var id: String { rawValue }
+    var rawValue: String {
+        switch self {
+        case .rightCommand: return "rightCommand"
+        case .rightControl: return "rightControl"
+        case .leftControl: return "leftControl"
+        case .fnGlobe: return "fnGlobe"
+        case .rightOption: return "rightOption"
+        case .leftOption: return "leftOption"
+        case .rightShift: return "rightShift"
+        case .capsLock: return "capsLock"
+        case .custom(let code): return "custom:\(code)"
+        }
+    }
+    init?(rawValue: String) {
+        switch rawValue {
+        case "rightCommand": self = .rightCommand
+        case "rightControl": self = .rightControl
+        case "leftControl": self = .leftControl
+        case "fnGlobe": self = .fnGlobe
+        case "rightOption": self = .rightOption
+        case "leftOption": self = .leftOption
+        case "rightShift": self = .rightShift
+        case "capsLock": self = .capsLock
+        default:
+            guard rawValue.hasPrefix("custom:"), let code = UInt16(rawValue.dropFirst(7)) else { return nil }
+            self = .custom(code)
+        }
+    }
+    /// Codable as the raw string, so existing saved settings decode unchanged.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = PrimaryTriggerKey(rawValue: raw) ?? .rightCommand
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(rawValue)
+    }
+
+    var isCustom: Bool { if case .custom = self { return true }; return false }
+
+    var label: String {
+        switch self {
+        case .rightCommand: return "Right \u{2318}"
+        case .rightControl: return "Right \u{2303}"
+        case .leftControl: return "Left \u{2303}"
+        case .fnGlobe: return "Fn \u{1F310}"
+        case .rightOption: return "Right \u{2325}"
+        case .leftOption: return "Left \u{2325}"
+        case .rightShift: return "Right \u{21E7}"
+        case .capsLock: return "\u{21EA} Caps Lock"
+        case .custom(let code): return Self.keyName(code)
+        }
+    }
+    var keyCode: UInt16 {
+        switch self {
+        case .rightCommand: return 54
+        case .rightControl: return 62
+        case .leftControl: return 59
+        case .fnGlobe: return 63
+        case .rightOption: return 61
+        case .leftOption: return 58
+        case .rightShift: return 60
+        case .capsLock: return 57
+        case .custom(let code): return code
+        }
+    }
+    var flag: NSEvent.ModifierFlags {
+        switch self {
+        case .rightCommand: return .command
+        case .rightControl, .leftControl: return .control
+        case .fnGlobe: return .function
+        case .rightOption, .leftOption: return .option
+        case .rightShift: return .shift
+        case .capsLock: return .capsLock
+        case .custom: return []
+        }
+    }
+    var cgFlag: CGEventFlags {
+        switch self {
+        case .rightCommand: return .maskCommand
+        case .rightControl, .leftControl: return .maskControl
+        case .fnGlobe: return .maskSecondaryFn
+        case .rightOption, .leftOption: return .maskAlternate
+        case .rightShift: return .maskShift
+        case .capsLock: return .maskAlphaShift
+        case .custom: return []
+        }
+    }
+
+    /// Human name for a custom keycode (common keys mapped, everything else numbered).
+    static func keyName(_ code: UInt16) -> String {
+        let names: [UInt16: String] = [
+            122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7",
+            100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12", 105: "F13",
+            107: "F14", 113: "F15", 106: "F16", 64: "F17", 79: "F18", 80: "F19",
+            49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 53: "Esc",
+            116: "Page Up", 121: "Page Down", 115: "Home", 119: "End", 114: "Help",
+            123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
+            50: "`", 27: "-", 24: "=", 33: "[", 30: "]", 42: "\\", 41: ";", 39: "'",
+            43: ",", 47: ".", 44: "/",
+            0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H", 34: "I",
+            38: "J", 40: "K", 37: "L", 46: "M", 45: "N", 31: "O", 35: "P", 12: "Q",
+            15: "R", 1: "S", 17: "T", 32: "U", 9: "V", 13: "W", 7: "X", 16: "Y", 6: "Z",
+            29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
+        ]
+        return names[code] ?? "Key \(code)"
     }
 }
 
@@ -84,11 +277,13 @@ enum ModifierTrigger: String, Codable, CaseIterable, Identifiable {
 enum PanelStyle: String, Codable, CaseIterable, Identifiable {
     case expanded
     case compact
+    case mini
     var id: String { rawValue }
     var label: String {
         switch self {
         case .expanded: return "Expanded (live transcript)"
         case .compact: return "Compact (one row)"
+        case .mini: return "Mini (just the waveform)"
         }
     }
 }
@@ -160,7 +355,11 @@ final class AppSettings {
     var switcherHotkey: KeyCombo? { didSet { save() } }
     var aiActionsHotkey: KeyCombo? { didSet { save() } }
     var historyPaletteHotkey: KeyCombo? { didSet { save() } }
+    /// Redo shortcut (unbound by default): erase the last inserted dictation, re-run it
+    /// through its AI pipeline, and insert the fresh result in its place.
+    var redoLastHotkey: KeyCombo? { didSet { save() } }
     var rightCommandTrigger: ModifierTrigger { didSet { save() } }
+    var fnKeyTrigger: ModifierTrigger { didSet { save() } }   // the Fn/Globe key as a dictation trigger
     var rightCommandSpaceSwitcher: Bool { didSet { save() } }   // Right Command + Space opens the mode switcher
     var cancelOnDoubleEscape: Bool { didSet { save() } }
     var activeModeID: UUID { didSet { save() } }
@@ -171,7 +370,56 @@ final class AppSettings {
 
     // Output
     var autoInsert: Bool { didSet { save() } }
+    /// Experimental: type finalized words at the cursor WHILE you speak (Raw-style sessions only;
+    /// AI modes still deliver after cleanup). Needs Accessibility, works best with Apple Speech.
+    var liveTyping: Bool { didSet { save() } }
+    /// Say "scratch that" (or "replace X with Y") right after an insert to edit the text you
+    /// just dictated instead of typing the phrase. Whole-utterance match only, 30s window.
+    var quickEditDetection: Bool { didSet { save() } }
+    /// Learn recurring fixes: suggest vocabulary replacements from patterns in your history.
+    var smartDictionary: Bool { didSet { save() } }
+    /// Quick Edit key: select text anywhere, hold Right Option, speak what to change
+    /// ("capitalize this", "make it a question"), release to apply it with AI.
+    var quickEditKeyEnabled: Bool { didSet { save() } }
+    /// How the Quick Edit key fires - same choices as the dictation key (tap to
+    /// start/stop, hold to talk, or off). Replaces the old on/off toggle.
+    var quickEditTrigger: ModifierTrigger { didSet { save() } }
+    /// Which physical key runs Quick Edit (hold over a selection, speak, release).
+    var quickEditTriggerKey: PrimaryTriggerKey { didSet { save() } }
+    /// Which physical key is the primary dictation trigger (behavior comes from
+    /// `rightCommandTrigger`, kept under its historic name for settings compatibility).
+    var primaryTriggerKey: PrimaryTriggerKey { didSet { save() } }
+    /// Review before insert: finished text appears in an editable buffer first; Return inserts,
+    /// Esc discards. For people who want to see what landed before it touches their document.
+    var reviewBeforeInsert: Bool { didSet { save() } }
+    /// Scope the review buffer to LONG dictations only (200+ characters) - short phrases
+    /// auto-insert as usual; the ones where a silent wrong guess really hurts get a look first.
+    var reviewLongTextOnly: Bool { didSet { save() } }
+    /// Per-app insertion method pins for apps that hate simulated paste (or typing).
+    /// Keyed by bundle identifier; wins over the mode's and the global method.
+    var appInsertionOverrides: [String: InsertionMethod] { didSet { save() } }
+    /// Pause whatever's playing (music, video) when dictation starts, resume when it ends.
+    var pauseMediaDuringDictation: Bool { didSet { save() } }
+    /// Digit mode-switching while dictating (press 1-9 to pick the post-processing mode).
+    /// Off = number keys type normally during dictation.
+    var digitModeSwitching: Bool { didSet { save() } }
+    /// On: the pop-up returns to its chosen Position for every dictation. Off: it stays
+    /// wherever you dragged it.
+    var panelSnapsBack: Bool { didSet { save() } }
+    /// The last app version whose What's New sheet was shown (nil = never). Existing users see
+    /// the sheet once per version; fresh installs get stamped at onboarding so they never do.
+    var lastSeenWhatsNewVersion: String? { didSet { save() } }
+    /// Optional color for the menu bar waveform visualizer. nil = follow the accent color;
+    /// only applies while "Colored status in the menu bar" is on.
+    var visualizerColorHex: String? { didSet { save() } }
     var restoreClipboard: Bool { didSet { save() } }
+    /// Context-aware insertion: adapt capitalization/spacing to the text around the cursor.
+    var adaptToSurroundings: Bool { didSet { save() } }
+    /// Escape cancels a dictation immediately by default; this opt-in requires a second
+    /// press within 0.6s (for people who fat-finger Esc).
+    var doubleEscapeToCancel: Bool { didSet { save() } }
+    /// The AI model Quick Edit uses. nil = the same model as dictation cleanup.
+    var quickEditModelID: String? { didSet { save() } }
     var trimTrailingNewlines: Bool { didSet { save() } }
     var appendSpaceAfterInsert: Bool { didSet { save() } }
     /// Energy: seconds of idle before the loaded speech/AI models are unloaded from memory.
@@ -183,6 +431,12 @@ final class AppSettings {
     var autoContextMode: Bool { didSet { save() } }
     var inputGain: Double { didSet { save() } }            // manual mic boost, 1.0 = off
     var autoAmplifyInput: Bool { didSet { save() } }       // AGC: auto-boost quiet speech
+    var reduceBackgroundNoise: Bool { didSet { save() } }  // software noise conditioning (AUVoiceIO is permanently off - it wrecked system playback)
+    /// Keep the input route running for a few minutes after each dictation, so the next one
+    /// captures from the very first syllable (a cold route eats the first 1-2 seconds).
+    var keepMicWarm: Bool { didSet { save() } }
+    /// How long (minutes) the warm input route is held after a dictation before it's released.
+    var micWarmMinutes: Double { didSet { save() } }
 
     // Recording behavior
     var silenceTimeout: Double { didSet { save() } }        // seconds of silence to auto-stop; 0 = off
@@ -194,6 +448,30 @@ final class AppSettings {
 
     // Feedback / panel
     var showMenuBarIcon: Bool { didSet { save() } }
+    var menuBarIconStyle: MenuBarIconStyle { didSet { save() } }
+    var menuBarColoredStatus: Bool { didSet { save() } }   // off = all icon styles stay monochrome
+    // Appearance: user-chosen colors. nil = follow the system accent.
+    var accentColorHex: String? { didSet { save() } }
+    var panelTintHex: String? { didSet { save() } }
+    /// The pop-up WAVEFORM's own accent. nil = follow the app accent. Independent of the
+    /// pop-up's glass tint, so the wave can sing in a different colour than its background.
+    var waveColorHex: String? { didSet { save() } }
+    var waveColorStyle: WaveColorStyle { didSet { save() } }
+    /// Vividness of the wave's ribbons: 0 = washed out pastel, 1 = full saturation.
+    var waveStrength: Double { didSet { save() } }
+    /// RGB mode dials - how fast the spectrum cycles, and how far apart the ribbons sit
+    /// in hue (0 = all one colour at once, high = a full rainbow spread across the wave).
+    var waveRGBSpeed: Double { didSet { save() } }
+    var waveRGBSpread: Double { didSet { save() } }
+    /// How fast the pop-up's GLASS drifts through the spectrum in RGB mode.
+    var panelRGBSpeed: Double { didSet { save() } }
+    var panelTintStrength: Double { didSet { save() } }   // 0 = off ... 1 = strong
+    /// Pop-up tint style: on by default, mapped to the accent color; custom and rainbow for fun.
+    var panelTintStyle: PanelTintStyle { didSet { save() } }
+    /// Selectable sound cues (system sound names). Sounds themselves are on by default.
+    var soundStart: String { didSet { save(); Sound.startName = soundStart } }
+    var soundStop: String { didSet { save(); Sound.stopName = soundStop } }
+    var soundError: String { didSet { save(); Sound.errorName = soundError } }
     var showDockIcon: Bool { didSet { save() } }
     /// The Home page's "one key is all it takes" note, dismissible via its close button.
     var hasDismissedHomeNote: Bool { didSet { save() } }
@@ -213,6 +491,7 @@ final class AppSettings {
     var historyRetention: HistoryRetention { didSet { save() } }
     var clearHistoryOnQuit: Bool { didSet { save() } }
     var saveAudio: Bool { didSet { save() } }               // keep the audio recording with each dictation
+    var recordCancelledDictations: Bool { didSet { save() } }   // transcribe + save a cancelled recording to History instead of discarding it
     var autoDeleteDays: Int { didSet { save() } }           // delete history + audio older than N days; 0 = never
 
     // System
@@ -235,14 +514,34 @@ final class AppSettings {
         var switcherHotkey: KeyCombo?
         var aiActionsHotkey: KeyCombo?
         var historyPaletteHotkey: KeyCombo?
+        var redoLastHotkey: KeyCombo?
         var rightCommandTrigger: ModifierTrigger?
+        var fnKeyTrigger: ModifierTrigger?
         var rightCommandSpaceSwitcher: Bool?
         var cancelOnDoubleEscape: Bool?
         var activeModeID: UUID
         var perAppModeOverrides: [String: UUID]
         var userName: String?
         var autoInsert: Bool
+        var liveTyping: Bool?
+        var quickEditDetection: Bool?
+        var smartDictionary: Bool?
+        var quickEditKeyEnabled: Bool?
+        var quickEditTrigger: ModifierTrigger?
+        var primaryTriggerKey: PrimaryTriggerKey?
+        var quickEditTriggerKey: PrimaryTriggerKey?
+        var reviewBeforeInsert: Bool?
+        var reviewLongTextOnly: Bool?
+        var appInsertionOverrides: [String: InsertionMethod]?
+        var pauseMediaDuringDictation: Bool?
+        var digitModeSwitching: Bool?
+        var panelSnapsBack: Bool?
+        var lastSeenWhatsNewVersion: String?
+        var visualizerColorHex: String?
         var restoreClipboard: Bool
+        var adaptToSurroundings: Bool?
+        var doubleEscapeToCancel: Bool?
+        var quickEditModelID: String?
         var trimTrailingNewlines: Bool
         var appendSpaceAfterInsert: Bool?
         var modelCooldownSeconds: Int?
@@ -250,14 +549,33 @@ final class AppSettings {
         var autoContextMode: Bool?
         var inputGain: Double?
         var autoAmplifyInput: Bool?
+        var reduceBackgroundNoise: Bool?
+        var keepMicWarm: Bool?
+        var micWarmMinutes: Double?
         var silenceTimeout: Double
         var maxRecordingSeconds: Double
         var selectedSpeechModelID: String
         var selectedLanguageModelID: String
         var showMenuBarIcon: Bool?
+        var menuBarIconStyle: MenuBarIconStyle?
+        var menuBarColoredStatus: Bool?
+        var accentColorHex: String?
+        var panelTintHex: String?
+        var waveColorHex: String?
+        var waveColorStyle: WaveColorStyle?
+        var waveStrength: Double?
+        var waveRGBSpeed: Double?
+        var waveRGBSpread: Double?
+        var panelRGBSpeed: Double?
+        var panelTintStrength: Double?
+        var panelTintStyle: PanelTintStyle?
+        var soundStart: String?
+        var soundStop: String?
+        var soundError: String?
         var showDockIcon: Bool?
         var hasDismissedHomeNote: Bool?
         var hasDismissedDictionaryTip: Bool?
+        var dictionaryTipV2Reset: Bool?
         var inputDeviceUID: String?
         var showRecordingPanel: Bool
         var livePreviewEnabled: Bool?
@@ -270,6 +588,7 @@ final class AppSettings {
         var historyRetention: HistoryRetention
         var clearHistoryOnQuit: Bool
         var saveAudio: Bool
+        var recordCancelledDictations: Bool?
         var autoDeleteDays: Int
         var launchAtLogin: Bool
         var offeredModelDownloads: Bool?
@@ -293,14 +612,35 @@ final class AppSettings {
         switcherHotkey = loaded?.switcherHotkey
         aiActionsHotkey = loaded?.aiActionsHotkey
         historyPaletteHotkey = loaded?.historyPaletteHotkey
+        redoLastHotkey = loaded?.redoLastHotkey
         rightCommandTrigger = loaded?.rightCommandTrigger ?? .toggle
+        fnKeyTrigger = loaded?.fnKeyTrigger ?? .off
         rightCommandSpaceSwitcher = loaded?.rightCommandSpaceSwitcher ?? true   // Right ⌘ is the default trigger
         cancelOnDoubleEscape = loaded?.cancelOnDoubleEscape ?? true   // Esc closes/cancels the panel by default
         activeModeID = loaded?.activeModeID ?? BuiltInModes.rawTranscriptionID   // Raw is the default: instant, and Whisper alone is already clean
         perAppModeOverrides = loaded?.perAppModeOverrides ?? [:]
         userName = loaded?.userName ?? ""
         autoInsert = loaded?.autoInsert ?? true
+        liveTyping = loaded?.liveTyping ?? false
+        quickEditDetection = loaded?.quickEditDetection ?? true
+        smartDictionary = loaded?.smartDictionary ?? true
+        quickEditKeyEnabled = loaded?.quickEditKeyEnabled ?? true   // on by default
+        // Migrate the old on/off toggle: enabled -> hold-to-talk (its historic behavior).
+        quickEditTrigger = loaded?.quickEditTrigger ?? ((loaded?.quickEditKeyEnabled ?? true) ? .pushToTalk : .off)
+        quickEditTriggerKey = loaded?.quickEditTriggerKey ?? .rightOption
+        primaryTriggerKey = loaded?.primaryTriggerKey ?? .rightCommand
+        reviewBeforeInsert = loaded?.reviewBeforeInsert ?? false
+        reviewLongTextOnly = loaded?.reviewLongTextOnly ?? true
+        appInsertionOverrides = loaded?.appInsertionOverrides ?? [:]
+        pauseMediaDuringDictation = loaded?.pauseMediaDuringDictation ?? true
+        digitModeSwitching = loaded?.digitModeSwitching ?? true
+        panelSnapsBack = loaded?.panelSnapsBack ?? true
+        lastSeenWhatsNewVersion = loaded?.lastSeenWhatsNewVersion
+        visualizerColorHex = loaded?.visualizerColorHex
         restoreClipboard = loaded?.restoreClipboard ?? true
+        adaptToSurroundings = loaded?.adaptToSurroundings ?? true
+        doubleEscapeToCancel = loaded?.doubleEscapeToCancel ?? false
+        quickEditModelID = loaded?.quickEditModelID
         trimTrailingNewlines = loaded?.trimTrailingNewlines ?? true
         appendSpaceAfterInsert = loaded?.appendSpaceAfterInsert ?? true
         modelCooldownSeconds = loaded?.modelCooldownSeconds ?? 120
@@ -308,14 +648,51 @@ final class AppSettings {
         autoContextMode = loaded?.autoContextMode ?? true   // the headline feature ships ON
         inputGain = loaded?.inputGain ?? 1.0
         autoAmplifyInput = loaded?.autoAmplifyInput ?? true
+        reduceBackgroundNoise = loaded?.reduceBackgroundNoise ?? true
+        // Off by default (user's call): the launch prewarm still heats the first session;
+        // idle gaps then pay the route wake-up. Turning this on keeps every start instant.
+        keepMicWarm = loaded?.keepMicWarm ?? false
+        micWarmMinutes = loaded?.micWarmMinutes ?? 5
         silenceTimeout = loaded?.silenceTimeout ?? 0
         maxRecordingSeconds = loaded?.maxRecordingSeconds ?? 0
         selectedSpeechModelID = loaded?.selectedSpeechModelID ?? "whisper-large-v3-turbo"   // superwhisper's "Ultra V3 Turbo"
         selectedLanguageModelID = loaded?.selectedLanguageModelID ?? "phi-3.5-mini-instruct-q4"   // the bundled Phi is the DEFAULT cleanup brain - fully self-contained, no Apple Intelligence dependency
         showMenuBarIcon = loaded?.showMenuBarIcon ?? true
+        menuBarIconStyle = loaded?.menuBarIconStyle ?? .capybara
+        menuBarColoredStatus = loaded?.menuBarColoredStatus ?? true
+        accentColorHex = loaded?.accentColorHex
+        panelTintHex = loaded?.panelTintHex
+        waveColorHex = loaded?.waveColorHex
+        // Migrate: a saved wave colour means the user had picked "custom" before styles existed.
+        waveColorStyle = loaded?.waveColorStyle ?? (loaded?.waveColorHex != nil ? .custom : .accent)
+        waveStrength = loaded?.waveStrength ?? 1.0
+        waveRGBSpeed = loaded?.waveRGBSpeed ?? 1.0
+        waveRGBSpread = loaded?.waveRGBSpread ?? 0.12
+        panelRGBSpeed = loaded?.panelRGBSpeed ?? 1.0
+        // Tint is ON by default (accent-mapped). Migration: an old install that had picked a
+        // custom color keeps it; strength 0 becomes a gentle default so "on" is visible.
+        panelTintStyle = loaded?.panelTintStyle
+            ?? ((loaded?.panelTintHex != nil && (loaded?.panelTintStrength ?? 0) > 0) ? .custom : .accent)
+        let loadedStrength = loaded?.panelTintStrength ?? 0
+        panelTintStrength = loadedStrength > 0.01 ? loadedStrength : 0.35
+        let sStart = loaded?.soundStart ?? "Purr"
+        let sStop = loaded?.soundStop ?? "Bottle"
+        let sError = loaded?.soundError ?? "Blow"
+        soundStart = sStart
+        soundStop = sStop
+        soundError = sError
+        Sound.startName = sStart
+        Sound.stopName = sStop
+        Sound.errorName = sError
         showDockIcon = loaded?.showDockIcon ?? true
         hasDismissedHomeNote = loaded?.hasDismissedHomeNote ?? false
-        hasDismissedDictionaryTip = loaded?.hasDismissedDictionaryTip ?? false
+        // The tip gained the Quick Edit "add this to my dictionary" paragraph - re-show it ONCE
+        // to everyone who had dismissed the old version (one-time reset, marker below).
+        if loaded?.dictionaryTipV2Reset != true {
+            hasDismissedDictionaryTip = false
+        } else {
+            hasDismissedDictionaryTip = loaded?.hasDismissedDictionaryTip ?? false
+        }
         inputDeviceUID = loaded?.inputDeviceUID
         showRecordingPanel = loaded?.showRecordingPanel ?? true
         livePreviewEnabled = loaded?.livePreviewEnabled ?? true
@@ -328,6 +705,7 @@ final class AppSettings {
         historyRetention = loaded?.historyRetention ?? .last500
         clearHistoryOnQuit = loaded?.clearHistoryOnQuit ?? false
         saveAudio = loaded?.saveAudio ?? true
+        recordCancelledDictations = loaded?.recordCancelledDictations ?? false
         autoDeleteDays = loaded?.autoDeleteDays ?? 30
         launchAtLogin = loaded?.launchAtLogin ?? false
         offeredModelDownloads = loaded?.offeredModelDownloads ?? false
@@ -341,19 +719,19 @@ final class AppSettings {
             engine: engine, localeIdentifier: localeIdentifier, insertionMethod: insertionMethod,
             hotkey: hotkey, hotkeyBehavior: hotkeyBehavior, pauseHotkey: pauseHotkey, cycleModeHotkey: cycleModeHotkey,
             switcherHotkey: switcherHotkey, aiActionsHotkey: aiActionsHotkey,
-            historyPaletteHotkey: historyPaletteHotkey, rightCommandTrigger: rightCommandTrigger, rightCommandSpaceSwitcher: rightCommandSpaceSwitcher,
+            historyPaletteHotkey: historyPaletteHotkey, redoLastHotkey: redoLastHotkey, rightCommandTrigger: rightCommandTrigger, fnKeyTrigger: fnKeyTrigger, rightCommandSpaceSwitcher: rightCommandSpaceSwitcher,
             cancelOnDoubleEscape: cancelOnDoubleEscape,
             activeModeID: activeModeID, perAppModeOverrides: perAppModeOverrides, userName: userName,
-            autoInsert: autoInsert, restoreClipboard: restoreClipboard, trimTrailingNewlines: trimTrailingNewlines,
+            autoInsert: autoInsert, liveTyping: liveTyping, quickEditDetection: quickEditDetection, smartDictionary: smartDictionary, quickEditKeyEnabled: quickEditKeyEnabled, quickEditTrigger: quickEditTrigger, primaryTriggerKey: primaryTriggerKey, quickEditTriggerKey: quickEditTriggerKey, reviewBeforeInsert: reviewBeforeInsert, reviewLongTextOnly: reviewLongTextOnly, appInsertionOverrides: appInsertionOverrides, pauseMediaDuringDictation: pauseMediaDuringDictation, digitModeSwitching: digitModeSwitching, panelSnapsBack: panelSnapsBack, lastSeenWhatsNewVersion: lastSeenWhatsNewVersion, visualizerColorHex: visualizerColorHex, restoreClipboard: restoreClipboard, adaptToSurroundings: adaptToSurroundings, doubleEscapeToCancel: doubleEscapeToCancel, quickEditModelID: quickEditModelID, trimTrailingNewlines: trimTrailingNewlines,
             appendSpaceAfterInsert: appendSpaceAfterInsert, modelCooldownSeconds: modelCooldownSeconds, aiCleanupEnabled: aiCleanupEnabled, autoContextMode: autoContextMode,
-            inputGain: inputGain, autoAmplifyInput: autoAmplifyInput,
+            inputGain: inputGain, autoAmplifyInput: autoAmplifyInput, reduceBackgroundNoise: reduceBackgroundNoise, keepMicWarm: keepMicWarm, micWarmMinutes: micWarmMinutes,
             silenceTimeout: silenceTimeout, maxRecordingSeconds: maxRecordingSeconds,
             selectedSpeechModelID: selectedSpeechModelID, selectedLanguageModelID: selectedLanguageModelID,
-            showMenuBarIcon: showMenuBarIcon, showDockIcon: showDockIcon,
-            hasDismissedHomeNote: hasDismissedHomeNote, hasDismissedDictionaryTip: hasDismissedDictionaryTip, inputDeviceUID: inputDeviceUID,
+            showMenuBarIcon: showMenuBarIcon, menuBarIconStyle: menuBarIconStyle, menuBarColoredStatus: menuBarColoredStatus, accentColorHex: accentColorHex, panelTintHex: panelTintHex, waveColorHex: waveColorHex, waveColorStyle: waveColorStyle, waveStrength: waveStrength, waveRGBSpeed: waveRGBSpeed, waveRGBSpread: waveRGBSpread, panelRGBSpeed: panelRGBSpeed, panelTintStrength: panelTintStrength, panelTintStyle: panelTintStyle, soundStart: soundStart, soundStop: soundStop, soundError: soundError, showDockIcon: showDockIcon,
+            hasDismissedHomeNote: hasDismissedHomeNote, hasDismissedDictionaryTip: hasDismissedDictionaryTip, dictionaryTipV2Reset: true, inputDeviceUID: inputDeviceUID,
             showRecordingPanel: showRecordingPanel, livePreviewEnabled: livePreviewEnabled, panelStyle: panelStyle, panelPosition: panelPosition, panelSize: panelSize, panelAnimation: panelAnimation,
             playSounds: playSounds, saveHistory: saveHistory, historyRetention: historyRetention,
-            clearHistoryOnQuit: clearHistoryOnQuit, saveAudio: saveAudio, autoDeleteDays: autoDeleteDays,
+            clearHistoryOnQuit: clearHistoryOnQuit, saveAudio: saveAudio, recordCancelledDictations: recordCancelledDictations, autoDeleteDays: autoDeleteDays,
             launchAtLogin: launchAtLogin, offeredModelDownloads: offeredModelDownloads,
             hasCompletedOnboarding: hasCompletedOnboarding)
         if let data = try? JSONEncoder().encode(snapshot) {

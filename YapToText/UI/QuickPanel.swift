@@ -80,9 +80,13 @@ final class QuickPanel {
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        panel.contentView = NSHostingView(rootView: QuickPanelView(
-            model: model,
-            onPick: { [weak self] index in self?.commit(index) }))
+        let root = QuickPanelView(model: model,
+                                  onPick: { [weak self] index in self?.commit(index) })
+        if let settings = AppDelegate.shared?.state.settings {
+            panel.contentView = NSHostingView(rootView: AnyView(root.yapAccent(settings)))
+        } else {
+            panel.contentView = NSHostingView(rootView: AnyView(root))
+        }
         return panel
     }
 
@@ -174,7 +178,7 @@ private struct QuickPanelView: View {
         }
         .frame(width: 440)
         .symbolRenderingMode(.hierarchical)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func row(_ index: Int, _ item: QuickPanelItem) -> some View {

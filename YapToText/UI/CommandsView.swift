@@ -9,11 +9,11 @@ struct CommandsView: View {
     @Environment(AppState.self) private var state
     @State private var category: CommandCategory = .snippet
     @State private var emojiTarget: UUID?
+    @State private var searchText = ""
 
     var body: some View {
         SettingsPage {
-            personalSuggestions
-            Text("Voice commands turn what you say into symbols while you dictate. Say a trigger phrase and it becomes the punctuation or emoji. Edit any trigger to whatever feels natural, like shortening \"exclamation point\" to just \"exclamation\".")
+            Text("Voice commands turn specific spoken inputs into a customizable replacement. Say a trigger phrase and it becomes punctuation or a custom input. Edit any trigger to whatever feels natural, like shortening \"exclamation point\" to just \"exclamation\".")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             Toggle("Enable voice commands", isOn: masterEnabled).toggleStyle(.switch).controlSize(.small)
@@ -31,6 +31,11 @@ struct CommandsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .frame(maxWidth: 420)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .onChange(of: category) { searchText = "" }
+
+            SearchField(text: $searchText, prompt: "Search \(category.label.lowercased()) commands")
 
             commandList
                 .opacity(state.commands.isEnabled ? 1 : 0.45)
@@ -48,15 +53,24 @@ struct CommandsView: View {
                     .buttonStyle(.solidSecondary)
             }
             .disabled(!state.commands.isEnabled)
+        
+            personalSuggestions   // suggestions live at the BOTTOM now
         }
         .navigationTitle("Commands")
     }
 
     private var commandList: some View {
-        let items = state.commands.commands(in: category)
+        let all = state.commands.commands(in: category)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let items = query.isEmpty ? all : all.filter {
+            $0.triggers.contains(where: { $0.localizedCaseInsensitiveContains(query) })
+                || $0.output.localizedCaseInsensitiveContains(query)
+        }
         return VStack(alignment: .leading, spacing: 8) {
             if items.isEmpty {
-                Caption("No \(category.label.lowercased()) commands yet. Add one below.")
+                Caption(query.isEmpty
+                        ? "No \(category.label.lowercased()) commands yet. Add one below."
+                        : "No \(category.label.lowercased()) commands match \u{201C}\(query)\u{201D}.")
             } else {
                 HStack(spacing: 8) {
                     Text("Say this (separate alternatives with commas)").frame(maxWidth: .infinity, alignment: .leading)
@@ -172,7 +186,7 @@ struct CommandsView: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "YapToText Commands.yapcommands.json"
         panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModalInFront() == .OK, let url = panel.url else { return }
         let snapshot = CommandStore.Snapshot(isEnabled: state.commands.isEnabled,
                                              requireInsertPrefix: state.commands.requireInsertPrefix,
                                              commands: state.commands.commands)
@@ -183,7 +197,7 @@ struct CommandsView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url,
+        guard panel.runModalInFront() == .OK, let url = panel.url,
               let data = try? Data(contentsOf: url),
               let snapshot = try? JSONDecoder().decode(CommandStore.Snapshot.self, from: data) else { return }
         state.commands.replaceAll(with: snapshot)

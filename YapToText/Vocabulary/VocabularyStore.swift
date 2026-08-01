@@ -26,7 +26,12 @@ final class VocabularyStore {
 
     @ObservationIgnored private static let fileName = "vocabulary.json"
 
-    struct Snapshot: Codable { var dictionaries: [VocabDictionary] }
+    struct Snapshot: Codable {
+        var dictionaries: [VocabDictionary]
+        /// One-shot migration marker: v2 added the multi-word "mac os" fixes to EXISTING
+        /// installs (starters only seed brand-new ones).
+        var migratedMacOSFix: Bool? = nil
+    }
     private struct LegacySnapshot: Codable { var replacements: [Replacement]; var vocabularyHints: [String]? }
 
     /// Starter substitutions every user actually benefits from: brand casings the speech models
@@ -38,6 +43,8 @@ final class VocabularyStore {
         Replacement(from: "imac", to: "iMac"),
         Replacement(from: "airpods", to: "AirPods"),
         Replacement(from: "macos", to: "macOS"),
+        Replacement(from: "mac os", to: "macOS"),   // recognizers say it as two words
+        Replacement(from: "mac o s", to: "macOS"),
         Replacement(from: "youtube", to: "YouTube"),
         Replacement(from: "wifi", to: "Wi-Fi"),
     ]
@@ -58,6 +65,18 @@ final class VocabularyStore {
         // nothing); anyone with even one replacement of their own is left completely alone.
         if dictionaries.allSatisfy({ $0.replacements.isEmpty }), !dictionaries.isEmpty {
             dictionaries[0].replacements = VocabularyStore.starterReplacements
+            save()
+        }
+        // v2 migration for EXISTING installs: the recognizer says "Mac OS" as two words, which
+        // the one-word "macos" starter never matched. Add the multi-word forms once, only where
+        // nothing already covers them; the marker keeps a user's deliberate delete deleted.
+        let migrated = Persistence.load(Snapshot.self, from: VocabularyStore.fileName)?.migratedMacOSFix ?? false
+        if !migrated, !dictionaries.isEmpty {
+            let covered = Set(dictionaries.flatMap { $0.replacements.map { $0.from.lowercased() } })
+            for fix in [Replacement(from: "mac os", to: "macOS"), Replacement(from: "mac o s", to: "macOS")]
+            where !covered.contains(fix.from) {
+                dictionaries[0].replacements.append(fix)
+            }
             save()
         }
     }
@@ -106,10 +125,26 @@ final class VocabularyStore {
         } else {
             pattern = escaped
         }
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return text }
+        guard let regex = cachedRegex(pattern, caseSensitive: r.caseSensitive, options: options) else { return text }
         let range = NSRange(text.startIndex..., in: text)
         let template = NSRegularExpression.escapedTemplate(for: r.to)
         return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: template)
+    }
+
+    /// Compiled-regex cache keyed on (pattern, case-sensitivity). Both the pattern and the options
+    /// derive entirely from the immutable fields of a Replacement, so an entry is always valid for
+    /// its key and needs no invalidation. Removes redundant ICU compiles (applyReplacement runs
+    /// ~2x per AI dictation, scaling with dictionary size) from the main-actor path.
+    nonisolated(unsafe) private static var regexCache: [String: NSRegularExpression] = [:]
+    private static let regexCacheLock = NSLock()
+    private static func cachedRegex(_ pattern: String, caseSensitive: Bool,
+                                    options: NSRegularExpression.Options) -> NSRegularExpression? {
+        let key = (caseSensitive ? "1\u{0}" : "0\u{0}") + pattern
+        regexCacheLock.lock(); defer { regexCacheLock.unlock() }
+        if let hit = regexCache[key] { return hit }
+        guard let compiled = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+        regexCache[key] = compiled
+        return compiled
     }
 
     // MARK: Dictionaries
@@ -199,6 +234,9 @@ final class VocabularyStore {
     }
 
     private func save() {
-        Persistence.save(Snapshot(dictionaries: dictionaries), to: VocabularyStore.fileName)
+        // The migration marker is stamped on EVERY save, so the mac-os fix runs exactly once
+        // per install and a deliberate user delete stays deleted.
+        Persistence.save(Snapshot(dictionaries: dictionaries, migratedMacOSFix: true),
+                         to: VocabularyStore.fileName)
     }
 }

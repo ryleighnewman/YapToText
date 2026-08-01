@@ -26,6 +26,8 @@ enum LlamaEngine {
         defer { lock.unlock() }
         if !backendReady { llama_backend_init(); backendReady = true }
         if let model = cachedModel, cachedPath == path { return model }
+        if let ctx = cachedCtx { llama_free(ctx) }   // the context dies with its model
+        cachedCtx = nil
         if let old = cachedModel { llama_free_model(old) }
         cachedModel = nil
         cachedPath = nil
@@ -41,6 +43,13 @@ enum LlamaEngine {
     /// the first AI cleanup after launch doesn't stall for the multi-second GGUF load.
     static func prewarm(modelPath: String) {
         Task.detached(priority: .utility) {
+            // Hold inferenceLock across the load: sharedModel frees the previously cached model on a
+            // path change, and complete() keeps using that raw pointer for its whole body under
+            // inferenceLock. Without this, a prewarm for a different path could free the model a
+            // concurrent complete() is still decoding (use-after-free). evictCachedModel serializes
+            // the same way. Lock order stays inferenceLock -> lock, so no deadlock; prewarm is
+            // fire-and-forget, so blocking here is harmless.
+            inferenceLock.lock(); defer { inferenceLock.unlock() }
             _ = try? sharedModel(path: modelPath)
         }
     }
@@ -88,13 +97,35 @@ enum LlamaEngine {
     /// Serializes generation AND eviction: the cached model must never be freed mid-decode.
     private static let inferenceLock = NSLock()
 
+    /// The CONTEXT is cached alongside the model. Rebuilding it per cleanup re-allocated
+    /// a 1.5GB Metal KV buffer and re-created the whole GPU pipeline on EVERY dictation -
+    /// measured as multiple seconds of "processing" before the first generated token.
+    /// The KV cache is cleared between runs instead; the context dies with the model.
+    nonisolated(unsafe) private static var cachedCtx: OpaquePointer?
+
     /// Drop the cached model (memory pressure). Waits for any in-flight generation.
     static func evictCachedModel() {
         inferenceLock.lock(); defer { inferenceLock.unlock() }
         lock.lock(); defer { lock.unlock() }
+        if let ctx = cachedCtx { llama_free(ctx) }
+        cachedCtx = nil
         if let model = cachedModel { llama_free_model(model) }
         cachedModel = nil
         cachedPath = nil
+    }
+
+    /// Context for the cached model, built once and reused (callers hold inferenceLock).
+    private static func sharedContext(model: OpaquePointer) throws -> OpaquePointer {
+        if let ctx = cachedCtx { return ctx }
+        var ctxParams = llama_context_default_params()
+        ctxParams.n_ctx = 4096
+        ctxParams.n_batch = 1024
+        let threads = Int32(max(2, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
+        ctxParams.n_threads = threads
+        ctxParams.n_threads_batch = threads
+        guard let ctx = llama_new_context_with_model(model, ctxParams) else { throw LlamaError.contextFailed }
+        cachedCtx = ctx
+        return ctx
     }
 
     static func complete(modelPath: String, system: String, user: String,
@@ -107,14 +138,9 @@ enum LlamaEngine {
         // and end tokens without hardcoding a template per model.
         let prompt = Self.formatChat(model: model, system: system, user: user)
 
-        var ctxParams = llama_context_default_params()
-        ctxParams.n_ctx = 4096
-        ctxParams.n_batch = 1024
-        let threads = Int32(max(2, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
-        ctxParams.n_threads = threads
-        ctxParams.n_threads_batch = threads
-        guard let ctx = llama_new_context_with_model(model, ctxParams) else { throw LlamaError.contextFailed }
-        defer { llama_free(ctx) }
+        let ctx = try sharedContext(model: model)
+        // Fresh conversation, reused allocation: clear the KV between runs.
+        llama_kv_cache_clear(ctx)
 
         // Tokenize the prompt.
         let utf8 = Array(prompt.utf8)
@@ -128,12 +154,25 @@ enum LlamaEngine {
         // Prompt too long for the context? Bail to raw text upstream rather than truncating badly.
         guard tokens.count < 3500 else { throw LlamaError.decodeFailed }
 
-        // IMPORTANT: llama_batch_get_one only WRAPS the pointer - the decode must happen inside
-        // the withUnsafe scope. Letting the batch escape the closure (as an earlier version did)
-        // reads a dangling pointer during decode: undefined behavior + heap corruption.
-        let promptOK = tokens.withUnsafeMutableBufferPointer { buf -> Bool in
-            let batch = llama_batch_get_one(buf.baseAddress, Int32(buf.count))
-            return llama_decode(ctx, batch) == 0
+        // Decode the prompt in n_batch-sized slices. A single llama_decode asserts (and crashes the
+        // process) if its batch exceeds n_batch, and a full system prompt + a long transcript can
+        // exceed 1024 tokens. Positions continue automatically from the KV cache across successive
+        // llama_batch_get_one calls - exactly how the per-token generation loop below advances - so
+        // slicing produces identical results without inflating the compute buffer. (This was a
+        // latent crash: any dictation whose prompt topped n_batch would take the app down.)
+        // IMPORTANT: llama_batch_get_one only WRAPS the pointer - the decode must happen inside the
+        // withUnsafe scope, or it reads a dangling pointer during decode (heap corruption).
+        let nBatch = Int(llama_n_batch(ctx))
+        var promptOK = true
+        var decoded = 0
+        while decoded < tokens.count {
+            let sliceLen = min(nBatch, tokens.count - decoded)
+            let ok = tokens.withUnsafeMutableBufferPointer { buf -> Bool in
+                let batch = llama_batch_get_one(buf.baseAddress!.advanced(by: decoded), Int32(sliceLen))
+                return llama_decode(ctx, batch) == 0
+            }
+            if !ok { promptOK = false; break }
+            decoded += sliceLen
         }
         guard promptOK else { throw LlamaError.decodeFailed }
 
@@ -177,12 +216,27 @@ struct LlamaTransformer: TextTransformer {
     func transform(_ text: String, mode: Mode, context: TransformContext) async throws -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
+        // LONG dictations must be chunked: generation is capped at ~1024 tokens (~4100 chars),
+        // and a long transcript's cleanup silently STOPPED at that cap mid-sentence (caught
+        // live: 16-minute dictation cut at 4151 chars). Small chunks keep every call far from
+        // both the output cap and the 4096-token context.
+        if trimmed.count > 2800 {
+            var results: [String] = []
+            for chunk in FoundationModelsTransformer.chunk(trimmed, maxChars: 2200) {
+                results.append(try await transformChunk(chunk, mode: mode, context: TransformContext(), appName: context.appName))
+            }
+            return results.joined(separator: "\n\n")
+        }
+        return try await transformChunk(trimmed, mode: mode, context: context, appName: context.appName)
+    }
+
+    private func transformChunk(_ text: String, mode: Mode, context: TransformContext, appName: String?) async throws -> String {
         let system = FoundationModelsTransformer.systemPrompt()
-        let user = FoundationModelsTransformer.cleanupUserPrompt(for: trimmed, mode: mode, context: context)
+        let user = FoundationModelsTransformer.cleanupUserPrompt(for: text, mode: mode, context: context)
         let path = modelURL.path
         let raw = try await Task.detached(priority: .userInitiated) {
-            try LlamaEngine.complete(modelPath: path, system: system, user: user)
+            try LlamaEngine.complete(modelPath: path, system: system, user: user, maxTokens: 1400)
         }.value
-        return FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: context.appName)
+        return FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: appName)
     }
 }

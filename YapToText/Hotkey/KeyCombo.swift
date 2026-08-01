@@ -13,6 +13,14 @@ struct KeyCombo: Codable, Equatable, Hashable {
     static let shift: UInt32   = 0x0200
     static let option: UInt32  = 0x0800
     static let control: UInt32 = 0x1000
+    /// App-defined Fn/Globe bit, deliberately OUTSIDE Carbon's modifier space: Carbon's
+    /// RegisterEventHotKey cannot express Fn, so combos carrying this bit are registered
+    /// through a CGEvent tap instead (see HotkeyManager).
+    static let fn: UInt32      = 0x0001_0000
+
+    /// The Carbon-only modifier mask, safe to hand to RegisterEventHotKey.
+    var carbonModifiers: UInt32 { modifiers & 0xFFFF }
+    var includesFn: Bool { modifiers & KeyCombo.fn != 0 }
 
     /// Default: Control-Option-Space. A conflict-free chord that works as either a
     /// toggle or push-to-talk trigger without needing Input Monitoring.
@@ -20,6 +28,7 @@ struct KeyCombo: Codable, Equatable, Hashable {
 
     var displayString: String {
         var out = ""
+        if modifiers & KeyCombo.fn      != 0 { out += "\u{1F310}" }
         if modifiers & KeyCombo.control != 0 { out += "⌃" }
         if modifiers & KeyCombo.option  != 0 { out += "⌥" }
         if modifiers & KeyCombo.shift   != 0 { out += "⇧" }
@@ -29,6 +38,7 @@ struct KeyCombo: Codable, Equatable, Hashable {
     }
 
     static func keyName(for code: UInt32) -> String {
+        if code == 63 { return "" }   // bare Fn/Globe: the 🌐 prefix IS the name
         if let named = specialKeys[code] { return named }
         if let letter = letterKeys[code] { return letter }
         return "Key \(code)"

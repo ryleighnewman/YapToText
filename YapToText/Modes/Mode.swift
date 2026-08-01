@@ -49,6 +49,9 @@ struct Mode: Codable, Identifiable, Equatable, Hashable {
     var silenceTimeout: Double?     // per-mode auto-stop; nil = the app-wide setting
     var maxRecordingSeconds: Double? // per-mode length cap; nil = the app-wide setting
     var insertionMethod: InsertionMethod? // how text is delivered; nil = the app-wide setting
+    /// Optional dedicated shortcut: press it anywhere and dictation starts IN THIS MODE
+    /// (pressing again stops it). nil = no dedicated shortcut.
+    var activationHotkey: KeyCombo? = nil
     var trimTrailingNewlines: Bool? // trim trailing whitespace; nil = the app-wide setting
 
     /// Whether this mode is engaged (shown in the switcher and cycled through).

@@ -36,6 +36,9 @@ extension Notification.Name {
     static let yapShowMode = Notification.Name("yapShowMode")   // object: the mode's UUID
     static let yapShowHistory = Notification.Name("yapShowHistory")
     static let yapShowSettings = Notification.Name("yapShowSettings")
+    /// Fired after navigating to Settings from an "Edit binding" link: the Shortcuts card
+    /// glows green for a moment - "hey, it's over here."
+    static let yapHighlightShortcuts = Notification.Name("yapHighlightShortcuts")
     static let yapNewMode = Notification.Name("yapNewMode")
     static let yapTranscribeFile = Notification.Name("yapTranscribeFile")
     /// Jump to any sidebar destination (object: AppDestination.rawValue). Used by Home's quick tips.
@@ -47,11 +50,13 @@ extension Notification.Name {
 /// rather than scattered across a toolbar and a sidebar of presets.
 enum AppDestination: String, Hashable, CaseIterable, Identifiable {
     // Models sits ABOVE Modes: chronologically you pick the brain first, then shape how it writes.
-    case home, utility, models, modes, actions, dictionaries, commands, history, stats, settings
+    case home, dictation, quickEdit, modes, actions, dictionaries, commands, history, models, utility, stats, settings
     var id: String { rawValue }
     var label: String {
         switch self {
         case .home: return "Home"
+        case .dictation: return "Dictation"
+        case .quickEdit: return "Quick Edit"
         case .utility: return "Utility"
         case .models: return "AI Models"
         case .modes: return "Modes"
@@ -66,6 +71,8 @@ enum AppDestination: String, Hashable, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: return "house"
+        case .dictation: return "mic"
+        case .quickEdit: return "pencil.line"
         case .utility: return "square.grid.2x2"
         case .models: return "cpu"
         case .modes: return "slider.horizontal.3"
@@ -86,6 +93,7 @@ struct ContentView: View {
     @State private var settingsTab: SettingsView.SettingsTab = .general
     @State private var sidebarQuery = ""
     @State private var showWelcome = false
+    @State private var showWhatsNew = false
 
     var body: some View {
         ZStack {
@@ -125,7 +133,17 @@ struct ContentView: View {
         // varying opacities (an element of transparency in the secondary layers) instead of one
         // flat solid fill - no gradients.
         .symbolRenderingMode(.hierarchical)
-        .onAppear { if !state.settings.hasCompletedOnboarding { showWelcome = true } }
+        .yapAccent(state.settings)
+        .onAppear {
+            if !state.settings.hasCompletedOnboarding {
+                showWelcome = true
+            } else if state.settings.lastSeenWhatsNewVersion != Changelog.currentVersion {
+                // Existing user, new version: one What's New sheet, once. New installs never
+                // see it (onboarding stamps the version when it completes).
+                showWhatsNew = true
+            }
+        }
+        .sheet(isPresented: $showWhatsNew) { WhatsNewView().environment(state) }
         .onReceive(publisher(.yapShowWelcome)) { _ in withAnimation { showWelcome = true } }
         .onReceive(publisher(.yapShowHome)) { _ in destination = .home }
         .onReceive(publisher(.yapShowModes)) { _ in destination = .modes }
@@ -370,6 +388,10 @@ struct ContentView: View {
         case .home:
             HomeView(onStartDictation: { state.controller.toggle() },
                      onNewMode: { newMode() })
+        case .dictation:
+            DictationPage()
+        case .quickEdit:
+            QuickEditPage()
         case .utility:
             UtilityView()
         case .models:
@@ -407,18 +429,53 @@ struct ContentView: View {
 /// toggle. This is the always-visible way to start and stop dictation from inside the app.
 struct StatusStrip: View {
     let controller: DictationController
+    @Environment(AppState.self) private var state
+
+    /// The strip's icon MIRRORS the user's menu bar icon style in EVERY state - idle,
+    /// recording (filled + record-red), and paused - so the app's corner and the menu bar
+    /// always tell the same story with the same face.
+    private var stripSymbol: String {
+        let style = state.settings.menuBarIconStyle
+        if controller.isPaused { return "pause.fill" }
+        if controller.isRecording {
+            switch style {
+            case .capybara, .microphone: return "mic.fill"
+            case .waveform: return "waveform"
+            case .bubble: return "bubble.left.fill"
+            case .dot: return "circle.fill"
+            }
+        }
+        switch style {
+        case .capybara, .microphone: return "mic"
+        case .waveform: return "waveform"
+        case .bubble: return "bubble.left"
+        case .dot: return "circle.fill"
+        }
+    }
 
     var body: some View {
         let processing = controller.isBusy && !controller.isRecording
         HStack(spacing: 10) {
-            // The mic is a status light: neutral when idle, record-red while listening, and a
-            // spinner while processing (the same story the menu bar icon tells). Stable ZStack
-            // structure per the glass rules - pieces cross-fade, never swap.
+            // The icon is a status light: style-matched when idle, record-red while listening,
+            // and a spinner while processing (the same story the menu bar icon tells). Stable
+            // ZStack structure per the glass rules - pieces cross-fade, never swap.
             ZStack {
-                IconBadge(symbol: controller.isRecording ? (controller.isPaused ? "pause.fill" : "mic.fill") : "mic",
-                          tint: controller.isRecording && !controller.isPaused ? .yapRecord : .primary,
-                          size: 28)
-                    .opacity(processing ? 0 : 1)
+                if state.settings.menuBarIconStyle == .capybara, !controller.isPaused {
+                    // Capybara in every state, like the menu bar: record-red while listening.
+                    Image("CapyGlyph")
+                        .renderingMode(.template).resizable().scaledToFit()
+                        .padding(5)
+                        .iconTint(controller.isRecording ? .yapRecord : .primary)
+                        .frame(width: 28, height: 28)
+                        .innerWell(radius: Metrics.badgeRadius)
+                        .opacity(processing ? 0 : 1)
+                        .accessibilityHidden(true)
+                } else {
+                    IconBadge(symbol: stripSymbol,
+                              tint: controller.isRecording && !controller.isPaused ? .yapRecord : .primary,
+                              size: 28)
+                        .opacity(processing ? 0 : 1)
+                }
                 ProgressView().controlSize(.small)
                     .opacity(processing ? 1 : 0)
             }
@@ -431,6 +488,21 @@ struct StatusStrip: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
             // Circular transport controls - the same language as the panel and menu-bar popover.
+            // Cancel LEADS the row (the discard escape hatch stays away from stop/insert).
+            Button { controller.cancel() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.secondary.opacity(0.14)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .opacity(controller.isRecording ? 1 : 0)
+            .allowsHitTesting(controller.isRecording)
+            .help("Cancel and discard")
+            .accessibilityLabel("Cancel dictation")
+            .accessibilityHidden(!controller.isRecording)
             Button { controller.togglePause() } label: {
                 Image(systemName: controller.isPaused ? "play.fill" : "pause.fill")
                     .font(.system(size: 11, weight: .semibold))

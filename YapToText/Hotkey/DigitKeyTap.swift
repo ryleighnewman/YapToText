@@ -60,6 +60,11 @@ final class DigitKeyTap {
             return Unmanaged.passUnretained(event)
         }
         guard type == .keyDown || type == .keyUp else { return Unmanaged.passUnretained(event) }
+        // Our own synthetic events (live typing, paste keystrokes) must pass straight through -
+        // otherwise a live-typed digit or space would be swallowed as a mode-switch/pause.
+        guard event.getIntegerValueField(.eventSourceUserData) != BareKeyTap.syntheticMarker else {
+            return Unmanaged.passUnretained(event)
+        }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         // Only BARE keys act as controls; keep Cmd-1, Opt-2, Cmd-Space etc. working normally.
         // A push-to-talk trigger is held down while you dictate, so ignore exactly those

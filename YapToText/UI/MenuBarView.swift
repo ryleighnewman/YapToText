@@ -29,20 +29,36 @@ struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 320)
+        .yapAccent(state.settings)
         .symbolRenderingMode(.hierarchical)
         .focusEffectDisabled()   // nothing pre-selected when the popover opens
-        .containerBackground(.ultraThinMaterial, for: .window)
+        .yapWindowBackground()
     }
 
     // MARK: Header (brand + the one action that matters)
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image("CapyGlyph")
-                .renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 26, height: 26)
-                .iconTint(Color.accentColor)
-                .accessibilityHidden(true)
+            // The in-app icon MIRRORS the menu bar icon style the user picked, so the popover
+            // and the thing they clicked to open it always look like the same app.
+            Group {
+                switch state.settings.menuBarIconStyle {
+                case .capybara:
+                    Image("CapyGlyph")
+                        .renderingMode(.template).resizable().scaledToFit()
+                case .microphone:
+                    Image(systemName: "mic.fill").font(.system(size: 20, weight: .medium))
+                case .waveform:
+                    Image(systemName: "waveform").font(.system(size: 20, weight: .medium))
+                case .bubble:
+                    Image(systemName: "bubble.left.fill").font(.system(size: 20, weight: .medium))
+                case .dot:
+                    Image(systemName: "circle.fill").font(.system(size: 14, weight: .medium))
+                }
+            }
+            .frame(width: 26, height: 26)
+            .iconTint(Color.accentColor)
+            .accessibilityHidden(true)
             Text("YapToText").font(.headline)
             Spacer()
             if state.controller.isRecording {
@@ -217,12 +233,18 @@ struct MenuBarView: View {
     /// bar. Grays out until there is something in History to insert.
     private var insertLastButton: some View {
         let last = state.history.records.first
-        return squareButton("Insert last", "text.insert") {
-            if let text = last?.finalText { AppDelegate.shared?.insertIntoLastApp(text) }
+        let busy = state.controller.insertLastBusy
+        return squareButton(busy ? "Inserting\u{2026}" : "Insert last", "text.insert") {
+            guard !busy, let text = last?.finalText else { return }
+            AppDelegate.shared?.insertIntoLastApp(text)
         }
-        .disabled(last == nil)
-        .opacity(last == nil ? 0.45 : 1)
-        .help(last == nil ? "Dictate something first" : "Type your last dictation into the previous app")
+        .overlay(alignment: .topTrailing) {
+            if busy { ProgressView().controlSize(.small).padding(6) }
+        }
+        .disabled(last == nil || busy)
+        .opacity(last == nil ? 0.35 : 1)
+        .help(last == nil ? "Nothing to insert yet - dictate something first"
+                          : "Type your last dictation into the app you were just using")
     }
 
     private func squareButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
@@ -251,51 +273,88 @@ struct MenuBarView: View {
 
     // MARK: Regenerate options (inline page)
 
+    /// Which source the user is regenerating. nil = still choosing between the two.
+    private enum RegenTarget { case lastDictation, selection }
+    @State private var regenTarget: RegenTarget?
+
     private var regenerateOptions: some View {
-        let aiModes = state.modeStore.allModes.filter { $0.usesAI }
         let canLast = state.controller.canRegenerateLast
         return ZStack {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Button { showRegenerate = false } label: {
+                    Button {
+                        // Step back one level: source page -> chooser -> main popover.
+                        if regenTarget != nil { regenTarget = nil } else { showRegenerate = false }
+                    } label: {
                         Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
                             .frame(width: 26, height: 26)
                             .background(Circle().fill(Color.secondary.opacity(0.14)))
                     }
                     .buttonStyle(.plain)
-                    Text("Regenerate").font(.headline)
+                    Text(regenTarget == nil ? "Regenerate"
+                         : regenTarget == .lastDictation ? "Most recent dictation" : "Selected text")
+                        .font(.headline)
                     Spacer()
                 }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        optionSection("Last dictation as", hint: canLast ? nil : "Dictate something first") {
-                            ForEach(aiModes) { mode in
-                                optionRow(mode.name, mode.iconSystemName, enabled: canLast) {
-                                    regenStartedAt = Date()
-                                    launch(mode.name) { state.controller.regenerateLast(using: mode) }
-                                }
-                            }
-                        }
-                        optionSection("Selected text as", hint: "Rewrites the text selected in your last app") {
-                            ForEach(aiModes) { mode in
-                                optionRow(mode.name, mode.iconSystemName, enabled: true) {
-                                    launch(mode.name) { AppDelegate.shared?.regenerateSelection(using: mode) }
-                                }
-                            }
-                        }
-                        if !state.actions.actions.isEmpty {
-                            optionSection("AI Actions on selection", hint: nil) {
-                                ForEach(state.actions.actions) { action in
-                                    optionRow(action.name, action.iconSystemName, enabled: true) {
-                                        launch(action.name) { AppDelegate.shared?.regenerateSelection(applying: action) }
+                switch regenTarget {
+                case nil:
+                    // Step 1: pick WHAT to regenerate - two plain choices, nothing else.
+                    VStack(spacing: 6) {
+                        choiceCard("Most recent dictation", icon: "clock.arrow.circlepath",
+                                   detail: canLast ? "Redo your last dictation in a different style"
+                                                   : "Dictate something first",
+                                   enabled: canLast) { regenTarget = .lastDictation }
+                        choiceCard("Selected text", icon: "text.cursor",
+                                   detail: "Rewrite whatever text is selected in your last app",
+                                   enabled: true) { regenTarget = .selection }
+                    }
+                case .lastDictation:
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Redo it as…").font(.caption).foregroundStyle(.secondary)
+                            VStack(spacing: 2) {
+                                ForEach(state.modeStore.allModes.filter { $0.usesAI }) { mode in
+                                    optionRow(mode.name, mode.iconSystemName, enabled: canLast) {
+                                        regenStartedAt = Date()
+                                        launch(mode.name) { state.controller.regenerateLast(using: mode) }
                                     }
                                 }
                             }
                         }
+                        .padding(.bottom, 4)
                     }
-                    .padding(.bottom, 4)
+                    .frame(maxHeight: 330)
+                case .selection:
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Rewrite it as…").font(.caption).foregroundStyle(.secondary)
+                                VStack(spacing: 2) {
+                                    ForEach(state.modeStore.allModes.filter { $0.usesAI }) { mode in
+                                        optionRow(mode.name, mode.iconSystemName, enabled: true) {
+                                            launch(mode.name) { AppDelegate.shared?.regenerateSelection(using: mode) }
+                                        }
+                                    }
+                                }
+                            }
+                            if !state.actions.actions.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Divider().opacity(0.4)
+                                    Text("Or apply a one-shot edit").font(.caption).foregroundStyle(.secondary)
+                                    VStack(spacing: 2) {
+                                        ForEach(state.actions.actions) { action in
+                                            optionRow(action.name, action.iconSystemName, enabled: true) {
+                                                launch(action.name) { AppDelegate.shared?.regenerateSelection(applying: action) }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.bottom, 4)
+                    }
+                    .frame(maxHeight: 330)
                 }
-                .frame(maxHeight: 360)
             }
             .opacity(launching == nil ? 1 : 0)
 
@@ -304,6 +363,28 @@ struct MenuBarView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
+        .onChange(of: showRegenerate) { if !showRegenerate { regenTarget = nil } }
+    }
+
+    /// A big friendly two-line choice used on the first regenerate step.
+    private func choiceCard(_ title: String, icon: String, detail: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 15)).iconTint(Color.accentColor).frame(width: 24)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.callout.weight(.medium))
+                    Text(detail).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 9)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9))
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.5)
     }
 
     /// A brief, pretty confirmation shown right where the options were: a spinner and the mode
@@ -311,7 +392,11 @@ struct MenuBarView: View {
     /// actual work runs (which must switch apps to paste, so it can't run while the popover shows).
     private func workingCard(_ label: String) -> some View {
         VStack(spacing: 14) {
-            ProgressView().controlSize(.large)
+            // The signature condense: an idle wave folds through the gates into the
+            // spinning ring - the app's own loader, same choreography as the panel.
+            WaveformView(data: AudioVisualData(bands: 26), isActive: false,
+                         style: state.settings.waveStyle, sucking: true, usesSharedClock: false)
+                .frame(width: 200)
             Text("Regenerating as \(label)")
                 .font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -427,9 +512,20 @@ struct MenuBarView: View {
     /// forward and asking ContentView to switch to the right destination.
     private func openMainWindow(destination: Notification.Name) {
         NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows where window.canBecomeMain {
-            window.makeKeyAndOrderFront(nil)
+        let existing = NSApp.windows.filter { $0.canBecomeMain }
+        if existing.isEmpty {
+            // The window was CLOSED and SwiftUI destroyed it - makeKeyAndOrderFront has nothing
+            // to raise (this was "the menu bar buttons don't reopen the app"). A reopen event -
+            // the same thing clicking the Dock icon sends - makes SwiftUI recreate the window.
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                               configuration: NSWorkspace.OpenConfiguration())
+            // Give the new window a beat to exist before ContentView is asked to navigate.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                NotificationCenter.default.post(name: destination, object: nil)
+            }
+            return
         }
+        for window in existing { window.makeKeyAndOrderFront(nil) }
         NotificationCenter.default.post(name: destination, object: nil)
     }
 }

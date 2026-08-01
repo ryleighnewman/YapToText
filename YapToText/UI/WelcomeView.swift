@@ -8,10 +8,11 @@ import AppKit
 struct WelcomeView: View {
     @Environment(AppState.self) private var state
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var activeState
     @Binding var isPresented: Bool
 
     enum Step: Int, CaseIterable, Identifiable {
-        case welcome, permissions, controls, demo, modes, privacy, ready
+        case welcome, permissions, controls, demo, modes, quickEdit, appearance, privacy, ready
         var id: Int { rawValue }
     }
 
@@ -85,7 +86,7 @@ struct WelcomeView: View {
                 .contentShape(Capsule())   // the WHOLE capsule is clickable, not just the text
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.tint(.accentColor).interactive(), in: Capsule())
+        .yapGlassAccent(in: Capsule())
         .keyboardShortcut(.defaultAction)
     }
 
@@ -116,6 +117,8 @@ struct WelcomeView: View {
         case .permissions: permissionsStep
         case .demo: demoStep
         case .modes: modesStep
+        case .quickEdit: quickEditStep
+        case .appearance: appearanceStep
         case .controls: controlsStep
         case .privacy: privacyStep
         case .ready: readyStep
@@ -203,19 +206,14 @@ struct WelcomeView: View {
             autoModeToggleLine
             if state.settings.autoContextMode,
                state.settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
-                HStack(spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Sign emails as:").font(.caption).foregroundStyle(.secondary)
-                    TextField("Your name", text: Binding(
-                        get: { state.settings.userName },
-                        set: { state.settings.userName = $0 }))
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .innerWell(radius: 7)
+                    NameCaptureField()   // draft-commit field: typing can't dismiss its own row
                 }
             }
         }
         .padding(13)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
     }
 
     private var autoModeToggleLine: some View {
@@ -301,7 +299,7 @@ struct WelcomeView: View {
             Toggle("", isOn: $escCancel).labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
         .padding(13)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
     }
 
     private func keycap(_ text: String) -> some View {
@@ -315,6 +313,22 @@ struct WelcomeView: View {
 
     // Privacy / architecture: everything runs and stays on this Mac. Quiet surfaces (not stacked
     // glass) so the slide reads clean and stays light on the glass renderer.
+    private var quickEditStep: some View {
+        stepScaffold(icon: nil, title: "The Quick Edit key",
+                     subtitle: "Fix text after it lands - by talking, not typing.") {
+            QuickEditTutorial()
+                .frame(maxWidth: 520)
+        }
+    }
+
+    private var appearanceStep: some View {
+        stepScaffold(icon: "paintpalette.fill", title: "Make it yours",
+                     subtitle: "Pick your colors - everything applies instantly.") {
+            AppearanceQuickPicker()
+                .frame(maxWidth: 520)
+        }
+    }
+
     private var privacyStep: some View {
         VStack(spacing: 16) {
             VStack(spacing: 8) {
@@ -337,6 +351,12 @@ struct WelcomeView: View {
                            "Dictation needs no network. Nothing is uploaded, and there are no servers to trust.")
             }
             .frame(maxWidth: 480)
+            HStack(spacing: 4) {
+                Text("Our official privacy policy can be read")
+                    .font(.caption).foregroundStyle(.secondary)
+                Link("here", destination: SupportLinks.privacy)
+                    .font(.caption.weight(.medium))
+            }
         }
     }
 
@@ -392,7 +412,7 @@ struct WelcomeView: View {
                     .font(.system(size: 34, weight: .semibold))
                     .iconTint(Color.accentColor)
                     .frame(width: 74, height: 74)
-                    .glassEffect(.regular, in: Circle())
+                    .yapGlass(in: Circle())
             }
             VStack(spacing: 8) {
                 Text(title).font(.title.weight(.bold)).multilineTextAlignment(.center)
@@ -408,7 +428,7 @@ struct WelcomeView: View {
                                 detail: String, grant: @escaping () -> Void) -> some View {
         HStack(spacing: 14) {
             Image(systemName: icon).font(.title2).iconTint(Color.accentColor)
-                .frame(width: 40, height: 40).glassEffect(.regular, in: Circle())
+                .frame(width: 40, height: 40).yapGlass(in: Circle())
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title).fontWeight(.semibold)
@@ -430,7 +450,7 @@ struct WelcomeView: View {
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
     }
 
     /// A selectable glass option card (radio-style) for the start-dictation behavior. Stretches to
@@ -454,7 +474,7 @@ struct WelcomeView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(13)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
+            .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous)
                 .stroke(selected ? Color.accentColor.opacity(0.7) : Color.clear, lineWidth: 1.5))
         }
@@ -476,7 +496,7 @@ struct WelcomeView: View {
                 .innerWell(radius: Metrics.innerRadius)
         }
         .padding(13)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
     }
 
     private func customShortcut(on: Binding<Bool>, combo: Binding<KeyCombo?>, label: String) -> some View {
@@ -488,7 +508,7 @@ struct WelcomeView: View {
                         Text("Press your keys now:").font(.callout).foregroundStyle(.secondary)
                         Spacer()
                         HotkeyRecorderField(combo: combo, allowsEmpty: true, autoStart: true)
-                            .frame(width: 170, height: 26)
+                            .frame(width: 110, height: 24)
                     }
                     Text(captionFor(combo.wrappedValue))
                         .font(.caption).foregroundStyle(.tertiary)
@@ -540,6 +560,9 @@ struct WelcomeView: View {
         s.rightCommandSpaceSwitcher = false
         s.switcherHotkey = nil
         s.hasCompletedOnboarding = true
+        // Fresh installs just saw everything, including Quick Edit - never show them the
+        // What's New sheet for this version.
+        s.lastSeenWhatsNewVersion = Changelog.currentVersion
 
         AppDelegate.shared?.reloadHotkey()
         AppDelegate.shared?.reloadRightCommandTrigger()
@@ -555,6 +578,7 @@ struct WelcomeView: View {
 /// presses and STAYS held for the whole listening phase, then releases to stop. Loops. Key on top,
 /// arrow down, panel underneath.
 private struct ControlsPopupDemo: View {
+    @Environment(AppState.self) private var state
     let pushToTalk: Bool
     private enum Phase { case idle, listening, processing }
     @State private var phase: Phase = .idle
@@ -588,21 +612,20 @@ private struct ControlsPopupDemo: View {
     /// The real panel look: our glass surface with the live WaveformView, or the processing state.
     private var panel: some View {
         HStack(spacing: 10) {
-            switch phase {
-            case .processing:
-                ProgressView().controlSize(.small)
-                Text("Transcribing\u{2026}").font(.caption).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            default:
-                WaveformView(data: demoData, isActive: phase == .listening, scale: 0.78)
-                    .frame(maxWidth: .infinity)
-                Text("Listening\u{2026}").font(.caption).foregroundStyle(.secondary)
-            }
+            // The demo wave condenses into the spinner exactly like the real panel -
+            // no structural swap, the wave IS the processing indicator.
+            WaveformView(data: demoData, isActive: phase == .listening, scale: 0.78,
+                         style: state.settings.waveStyle,
+                         freeze: phase == .processing, sucking: phase == .processing,
+                         usesSharedClock: false)
+                .frame(maxWidth: .infinity)
+            Text(phase == .processing ? "Transcribing\u{2026}" : "Listening\u{2026}")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .frame(height: 30)
         .padding(.horizontal, 14).padding(.vertical, 9)
         .frame(width: 264)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
         .opacity(phase == .idle ? 0 : 1)
         .scaleEffect(phase == .idle ? 0.94 : 1, anchor: .top)
         .animation(.spring(response: 0.34, dampingFraction: 0.82), value: phase)
@@ -660,6 +683,7 @@ private struct ControlsPopupDemo: View {
 /// cohesive glass card: simulated speech animates the real WaveformView and types the raw
 /// transcript, a number key visibly picks the post-processor, then the formatted result types out.
 private struct PipelineDemoView: View {
+    @Environment(AppState.self) private var state
     enum Phase { case listening, picking, processing, result }
 
     private struct Processor { let name: String; let output: String }
@@ -683,7 +707,11 @@ private struct PipelineDemoView: View {
         VStack(spacing: 0) {
             // Top: the mini recording panel.
             VStack(alignment: .leading, spacing: 8) {
-                WaveformView(data: demoData, isActive: phase == .listening, scale: 0.9)
+                WaveformView(data: demoData, isActive: phase == .listening, scale: 0.9,
+                             style: state.settings.waveStyle,
+                             freeze: phase == .picking || phase == .processing,
+                             sucking: phase == .picking || phase == .processing,
+                             usesSharedClock: false)
                     .frame(maxWidth: .infinity)
                 Group {
                     if typedTarget.isEmpty {
@@ -728,7 +756,7 @@ private struct PipelineDemoView: View {
             .frame(maxWidth: .infinity, minHeight: 78, alignment: .topLeading)
             .padding(14)
         }
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
+        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
             .stroke(phase == .result ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.12), lineWidth: 0.75))
         .animation(.easeInOut(duration: 0.3), value: phase)
@@ -858,11 +886,21 @@ private struct ModesDemoView: View {
     @State private var rawTyped = ""
     @State private var showOutputs = false
     @State private var cycle = 0
+    @State private var demoData = AudioVisualData(bands: 26)
+    @Environment(AppState.self) private var state
 
     var body: some View {
         VStack(spacing: 10) {
-            // The spoken sentence.
+            // The spoken sentence - with the real wave above it, listening while the words
+            // stream in and condensing into the ring the moment they land (the same
+            // choreography as the live panel, homogeneous across every demo).
             VStack(alignment: .leading, spacing: 3) {
+                WaveformView(data: demoData, isActive: rawTyped.isEmpty, scale: 0.7,
+                             style: state.settings.waveStyle,
+                             freeze: !rawTyped.isEmpty, sucking: !rawTyped.isEmpty,
+                             usesSharedClock: false)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 26)
                 Group {
                     if rawTyped.isEmpty {
                         Text("Listening\u{2026}").foregroundStyle(.secondary)
@@ -916,7 +954,22 @@ private struct ModesDemoView: View {
             cycle += 1
             rawTyped = ""
             showOutputs = false
-            await nap(0.6)
+            // Animate the demo wave while "listening" (1.6s of synthetic speech).
+            let waveTask = Task { @MainActor in
+                var f = 0.0
+                while !Task.isCancelled {
+                    f += 0.12
+                    demoData.spectrum = (0..<26).map { b in
+                        let u = Double(b) / 25.0
+                        let hump = exp(-pow((u - 0.5) * 2.4, 2))
+                        return Float(max(0, hump * (0.5 + 0.5 * sin(f * 2 + u * 6))))
+                    }
+                    demoData.level = 0.5
+                    try? await Task.sleep(nanoseconds: 33_000_000)
+                }
+            }
+            await nap(1.6)
+            waveTask.cancel()
             guard !Task.isCancelled else { return }
             rawTyped = Self.spoken                                        // types the raw words
             await nap(2.2)
@@ -932,6 +985,7 @@ private struct ModesDemoView: View {
 /// A living mesh-gradient aurora behind the welcome content; drifts slowly, holds still under
 /// Reduce Motion.
 private struct AuroraBackground: View {
+    @Environment(\.controlActiveState) private var activeState
     var reduceMotion: Bool
 
     private let colors: [Color] = [
@@ -944,12 +998,20 @@ private struct AuroraBackground: View {
         // ~20fps, not every display frame: the aurora drifts slowly so this is visually identical,
         // and it roughly 6x's fewer render transactions behind all the onboarding glass - easing the
         // load on macOS 26.5's crash-prone DesignLibrary glass renderer.
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 12.0, paused: reduceMotion || activeState == .inactive)) { timeline in
             let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-            MeshGradient(width: 3, height: 3, points: points(t), colors: colors)
-                .opacity(0.55)
-                .blur(radius: 60)
-                .ignoresSafeArea()
+            if #available(macOS 15.0, *), !CompatPreview.legacy {
+                MeshGradient(width: 3, height: 3, points: points(t), colors: colors)
+                    .opacity(0.55)
+                    .blur(radius: 60)
+                    .ignoresSafeArea()
+            } else {
+                // macOS 14: no MeshGradient - a soft static wash keeps the mood without the drift.
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .opacity(0.45)
+                    .blur(radius: 60)
+                    .ignoresSafeArea()
+            }
         }
     }
 

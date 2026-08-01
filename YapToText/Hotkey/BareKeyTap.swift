@@ -18,11 +18,18 @@ final class BareKeyTap {
     private var keyCode: Int64 = -1
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    /// Modifier spec: cmd/opt/ctrl/shift the combo REQUIRES (any other of the four = someone
+    /// else's shortcut) and whether Fn/Globe must be held. Defaults preserve the original
+    /// bare-key behavior: no modifiers at all.
+    private var requiredFlags: CGEventFlags = []
+    private var requireFn = false
 
     @discardableResult
-    func start(keyCode: UInt32) -> Bool {
+    func start(keyCode: UInt32, requiredFlags: CGEventFlags = [], requireFn: Bool = false) -> Bool {
         stop()
         self.keyCode = Int64(keyCode)
+        self.requiredFlags = requiredFlags
+        self.requireFn = requireFn
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -62,9 +69,14 @@ final class BareKeyTap {
         guard event.getIntegerValueField(.eventSourceUserData) != Self.syntheticMarker else {
             return Unmanaged.passUnretained(event)
         }
-        // Only truly bare presses: with any modifier held this is someone else's shortcut.
+        // Exact modifier match: every required modifier held, and NONE of the other three -
+        // anything else is someone else's shortcut. (Original bare-key mode: all four empty.)
         let mods: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-        guard event.flags.intersection(mods).isEmpty else {
+        let held = event.flags.intersection(mods)
+        guard held == requiredFlags.intersection(mods) else {
+            return Unmanaged.passUnretained(event)
+        }
+        if requireFn, !event.flags.contains(.maskSecondaryFn) {
             return Unmanaged.passUnretained(event)
         }
         switch type {
