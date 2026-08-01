@@ -66,7 +66,7 @@ servers. I didn't want either, so I made my own, and I'm giving it away.
 
 ## Requirements
 
-- macOS 26 (Tahoe) or later, Apple Silicon.
+- macOS 14 (Sonoma) or later, Apple Silicon. On macOS 26 the interface picks up the new Liquid Glass look.
 - Xcode 26+ to build from source.
 - AI modes use Apple Intelligence when it's on, or the bundled local model when it isn't.
   Raw transcription needs neither.
