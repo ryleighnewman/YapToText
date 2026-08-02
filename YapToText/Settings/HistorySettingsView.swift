@@ -409,7 +409,7 @@ struct HistorySettingsView: View {
                 try? await Task.sleep(nanoseconds: 25_000_000)
                 if NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier { break }
             }
-            TextInserter.deliver(text, target: .insertAtCursor, method: method, restoreClipboard: restore)
+            await TextInserter.deliver(text, target: .insertAtCursor, method: method, restoreClipboard: restore)
         }
     }
 

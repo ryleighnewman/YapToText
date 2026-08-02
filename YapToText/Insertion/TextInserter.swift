@@ -12,15 +12,15 @@ enum TextInserter {
     static func deliver(_ text: String,
                         target: OutputTarget,
                         method: InsertionMethod,
-                        restoreClipboard: Bool) {
+                        restoreClipboard: Bool) async {
         guard !text.isEmpty else { return }
         switch target {
         case .clipboardOnly:
             setClipboard(text)
         case .insertAtCursor:
-            insert(text, method: method, restoreClipboard: restoreClipboard, submit: false)
+            await insert(text, method: method, restoreClipboard: restoreClipboard, submit: false)
         case .sendAndSubmit:
-            insert(text, method: method, restoreClipboard: restoreClipboard, submit: true)
+            await insert(text, method: method, restoreClipboard: restoreClipboard, submit: true)
         }
     }
 
@@ -35,11 +35,12 @@ enum TextInserter {
     /// Set by the app at launch; read at insert time so the adapt step is user-controlled.
     static var adaptToSurroundings: () -> Bool = { true }
 
-    private static func insert(_ text: String, method: InsertionMethod, restoreClipboard: Bool, submit: Bool) {
+    private static func insert(_ text: String, method: InsertionMethod, restoreClipboard: Bool, submit: Bool) async {
         // CONTEXT-AWARE INSERTION: fit the transcript into the sentence it lands in
         // (lowercase mid-sentence starts, spacing, trailing period) - deterministic AX
-        // read of the focused field, no-op when the app exposes no text.
-        let text = adaptToSurroundings() ? InsertionContext.adapted(text) : text
+        // read of the focused field, no-op when the app exposes no text. Async: the
+        // sandbox key-sim read awaits instead of blocking, so the panel keeps animating.
+        let text = adaptToSurroundings() ? await InsertionContext.adapted(text) : text
         switch method {
         case .clipboardOnly:
             setClipboard(text)

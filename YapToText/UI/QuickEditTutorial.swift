@@ -262,38 +262,15 @@ struct AppearanceQuickPicker: View {
 struct WhatsNewView: View {
     @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
-    @State private var page = 0
-    private let pageCount = 2
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ZStack {
-                if page == 0 {
-                    featuresPage
-                        .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity),
-                                                removal: .move(edge: .leading).combined(with: .opacity)))
-                } else {
-                    appearancePage
-                        .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                                removal: .move(edge: .trailing).combined(with: .opacity)))
-                }
-            }
-            .animation(.spring(duration: 0.45), value: page)
+            featuresPage
 
             HStack {
-                HStack(spacing: 5) {
-                    ForEach(0..<pageCount, id: \.self) { i in
-                        Capsule()
-                            .fill(i == page ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.secondary.opacity(0.3)))
-                            .frame(width: i == page ? 18 : 6, height: 6)
-                    }
-                }
                 Spacer()
-                Button(page < pageCount - 1 ? "Continue" : "Done") {
-                    if page < pageCount - 1 { page += 1 } else { dismiss() }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(22)
@@ -331,21 +308,4 @@ struct WhatsNewView: View {
         }
     }
 
-    private var appearancePage: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "paintpalette.fill")
-                    .font(.system(size: 24, weight: .semibold))
-                    .iconTint(Color.accentColor)
-                    .frame(width: 44, height: 44)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Make it yours").font(.title2.weight(.bold))
-                    Text("New in this update: pick your colors.").font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            AppearanceQuickPicker()
-        }
-    }
 }

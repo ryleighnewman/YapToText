@@ -854,7 +854,7 @@ final class DictationController {
                     app.activate(options: [.activateIgnoringOtherApps])
                     try? await Task.sleep(nanoseconds: 300_000_000)
                 }
-                TextInserter.deliver(trimmed, target: target, method: method, restoreClipboard: restore)
+                await TextInserter.deliver(trimmed, target: target, method: method, restoreClipboard: restore)
                 self?.announce("Inserted")
             }
         }, discard: { [weak self] in
@@ -1030,7 +1030,7 @@ final class DictationController {
                     }
                 }
                 yapdiag("finish: delivering \(delivered.count) chars target=\(deliveryTarget) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") method=\(method.rawValue)")
-                TextInserter.deliver(delivered, target: deliveryTarget,
+                await TextInserter.deliver(delivered, target: deliveryTarget,
                                      method: method,
                                      restoreClipboard: settings.restoreClipboard)
                 sessionDelivered = delivered
@@ -1300,7 +1300,10 @@ final class DictationController {
         // "app is deaf for 2 seconds after launch" bug (0 buffers for 1s, then a 1.6s fresh-
         // engine rebuild). Warm the route in its final configuration instead.
         recorder.reduceNoise = settings.reduceBackgroundNoise
-        recorder.prewarmRoute()
+        // Only pre-open the mic when the user opted into keep-warm. With it off (the
+        // default), the mic opens when a dictation starts and never before: launch and
+        // app-foreground must not flash the recording indicator.
+        if settings.keepMicWarm { recorder.prewarmRoute() }
         recorder.installKeepAlive()   // revive the route after sleep/lock/device changes
     }
 
@@ -1732,7 +1735,7 @@ final class DictationController {
                    target.bundleIdentifier != Bundle.main.bundleIdentifier, !target.isTerminated {
                     setPhase(.inserting)
                     if await activate(target) {
-                        TextInserter.deliver(text, target: .insertAtCursor,
+                        await TextInserter.deliver(text, target: .insertAtCursor,
                                              method: mode.insertionMethod ?? settings.insertionMethod,
                                              restoreClipboard: settings.restoreClipboard)
                         inserted = true

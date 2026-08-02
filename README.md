@@ -52,6 +52,13 @@ servers. I didn't want either, so I made my own, and I'm giving it away.
 
 ![Privacy](Marketing/posters-v4/08-privacy.jpg)
 
+## What's new in 1.1.1
+
+- The microphone releases as soon as a dictation ends; the recording indicator only shows while you dictate
+- The Quick Edit key is consistent: press on / press off in toggle mode, press on / release off in hold mode
+- The recording pop-up opens the same way every time, and inserting text no longer stalls its closing animation
+- Intelligent insert reads the surrounding text more reliably
+
 ## What's new in 1.1
 
 - Quick Edit: edit any selected text by voice, in any app

@@ -32,6 +32,11 @@ final class QuickEditWindow {
     private var panel: NSPanel?
     private var dismissTask: Task<Void, Never>?
 
+    /// Whether the card is on screen right now, and in which stage - the key handlers
+    /// need both to honor "press turns it off, no exceptions".
+    var isShowing: Bool { (panel?.isVisible ?? false) && (panel?.alphaValue ?? 0) > 0.01 }
+    var currentStage: Stage { model.stage }
+
     func showListening(liveTextSource controller: DictationController) {
         dismissTask?.cancel()
         model.stage = .listening
@@ -56,6 +61,17 @@ final class QuickEditWindow {
         panel?.alphaValue = 1
         panel?.orderFrontRegardless()
         // The card narrows around the ring; the window shadow must follow the new shape.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.panel?.invalidateShadow() }
+    }
+
+    /// The INSTANT the key is released: the card must acknowledge immediately, not sit on
+    /// "Listening…" for however long transcription takes (a cold model is seconds - which
+    /// reads as "letting go did nothing"). Same working stage, no command text yet.
+    func showHeard() {
+        guard case .listening = model.stage else { return }   // never regress a later stage
+        dismissTask?.cancel()
+        model.stage = .working("")
+        panel?.alphaValue = 1
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.panel?.invalidateShadow() }
     }
 
@@ -224,7 +240,7 @@ private struct QuickEditPopupView: View {
     private var title: String {
         switch model.stage {
         case .listening: return "Listening for your edit\u{2026}"
-        case .working: return "Applying your edit"
+        case .working(let command): return command.isEmpty ? "Got it" : "Applying your edit"
         case .result(let message, _): return message
         case .info(let heading, _): return heading
         }
@@ -236,7 +252,7 @@ private struct QuickEditPopupView: View {
             let live = controller.liveText.trimmingCharacters(in: .whitespacesAndNewlines)
             return live.isEmpty ? "Say what to change, then release the key." : "\u{201C}\(live)\u{201D}"
         case .working(let command):
-            return "\u{201C}\(command)\u{201D}"
+            return command.isEmpty ? "Working on your edit\u{2026}" : "\u{201C}\(command)\u{201D}"
         case .result:
             return ""
         case .info(_, let explanation):

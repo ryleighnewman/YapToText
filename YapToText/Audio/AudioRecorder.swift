@@ -92,6 +92,10 @@ final class AudioRecorder: @unchecked Sendable {
 
     private func reviveIfCold(_ why: String) {
         guard !isRunning, !prewarmActive, !armInFlight, !engine.isRunning else { return }
+        // Keep-warm off (or its standby window expired) and nobody at the keyboard: a cold
+        // route is the DESIRED state (mic released, indicator off). Reviving here silently
+        // defeated the setting.
+        guard (keepWarm && !warmStandbyExpired) || activityHoldActive else { return }
         engine.prepare()
         do {
             try engine.start()
@@ -360,8 +364,10 @@ final class AudioRecorder: @unchecked Sendable {
             }
             // If warmth is still wanted (activity hold / keep-warm standby), the engine
             // comes right back up - but VP-FREE: a warm plain route gives the same instant
-            // start without holding the whole system in degraded voice mode.
-            let wantWarm = true   // the route NEVER goes cold: instant capture, no matter what
+            // start without holding the whole system in degraded voice mode. With keep-warm
+            // OFF and no activity hold, the route is fully released: tap out, engine
+            // stopped, and the mic indicator turns off. That is what the setting promises.
+            let wantWarm = (self.keepWarm && !self.warmStandbyExpired) || self.activityHoldActive
             if self.engine.isRunning { self.engine.stop() }
             let input = self.engine.inputNode
             if input.isVoiceProcessingEnabled {
@@ -375,6 +381,10 @@ final class AudioRecorder: @unchecked Sendable {
                 self.engine.prepare()
                 try? self.engine.start()
                 yapdiag("recorder: route re-warmed VP-free")
+            } else {
+                input.removeTap(onBus: 0)
+                self.invalidateResidentTap()
+                yapdiag("recorder: route fully released - microphone indicator off")
             }
         }
         idlePowerDown = item
@@ -431,7 +441,8 @@ final class AudioRecorder: @unchecked Sendable {
         // (stutter, doubled/echoing output) - not just a slight muffle. 6s still covers
         // the rapid back-to-back redictation the prewarm exists for; after that the
         // route stays warm but PLAIN, which starts just as instantly.
-        let grace: TimeInterval = engine.inputNode.isVoiceProcessingEnabled ? 6 : 20
+        var grace: TimeInterval = engine.inputNode.isVoiceProcessingEnabled ? 6 : 20
+        if !keepWarm, !activityHoldActive { grace = 2 }   // default: prewarm ends, mic lets go
         if keepWarm {
             // Leave the engine RUNNING: the whole point of prewarm is a hot route, and
             // stopping here made the FIRST dictation after launch cold again ("recordings
@@ -466,7 +477,7 @@ final class AudioRecorder: @unchecked Sendable {
         let item = DispatchWorkItem { [weak self] in
             guard let self, !self.isRunning, !self.prewarmActive else { return }
             self.activityHoldActive = false
-            self.scheduleIdlePowerDown()   // engine stays RUNNING - instant capture always
+            self.scheduleIdlePowerDown()   // keep-warm on: stays hot; off: fully releases the mic
         }
         activityStop = item
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
@@ -631,12 +642,18 @@ final class AudioRecorder: @unchecked Sendable {
     var warmSeconds: Double = 300
     private var warmShutdown: DispatchWorkItem?
 
+    /// Set when the keep-warm standby window has run out: the NEXT idle power-down fully
+    /// releases the mic instead of re-warming, honoring the "stay warm for N minutes"
+    /// slider. Cleared whenever warmth is legitimately re-established.
+    private var warmStandbyExpired = false
     private func scheduleWarmShutdown() {
+        warmStandbyExpired = false
         warmShutdown?.cancel()
         let item = DispatchWorkItem { [weak self] in
             guard let self, !self.isRunning, !self.prewarmActive else { return }
-            yapdiag("recorder: warm standby expired (route stays hot for instant capture)")
-            self.scheduleIdlePowerDown()
+            yapdiag("recorder: warm standby expired - releasing the route")
+            self.warmStandbyExpired = true
+            self.scheduleIdlePowerDown(after: 1)
         }
         warmShutdown = item
         DispatchQueue.main.asyncAfter(deadline: .now() + max(30, warmSeconds), execute: item)
@@ -660,7 +677,7 @@ final class AudioRecorder: @unchecked Sendable {
         guard input.isVoiceProcessingEnabled || prewarmActive else { return }
         prewarmActive = false
         input.removeTap(onBus: 0)
-        let wantWarm = true   // the route NEVER goes cold: instant capture, no matter what
+        let wantWarm = (keepWarm && !warmStandbyExpired) || activityHoldActive   // keep-warm off/expired = the mic actually lets go
         if engine.isRunning { engine.stop() }
         if input.isVoiceProcessingEnabled {
             try? input.setVoiceProcessingEnabled(false)
@@ -687,9 +704,10 @@ final class AudioRecorder: @unchecked Sendable {
             scheduleWarmShutdown()   // engine stays running: next session has zero cold-route skip
             scheduleIdlePowerDown()  // ...but VP is still released after the grace (restarts VP-free)
         } else {
-            // Engine stays RUNNING between sessions: the next press must capture from
-            // its very first millisecond. The power-down below only sheds VP.
-            scheduleIdlePowerDown()
+            // Keep-warm OFF (the default): the mic lets go right after the dictation ends.
+            // One second of grace covers instant re-dictation taps without holding the
+            // route (or the orange indicator) a moment longer than promised.
+            scheduleIdlePowerDown(after: 1)
         }
         if needsVoiceProcessingPrewarm, reduceNoise, Self.voiceProcessingPermitted {
             needsVoiceProcessingPrewarm = false

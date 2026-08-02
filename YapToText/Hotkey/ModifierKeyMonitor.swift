@@ -134,6 +134,17 @@ final class ModifierKeyMonitor {
             removeGlobalKeyMonitor()
             onUp?(!interrupted)
             interrupted = false
+        } else if !down && !isDown {
+            // A release whose press this instance never saw: the monitor was REBUILT
+            // MID-HOLD (didBecomeActive, a settings save, or the key recorder re-arming
+            // all reload triggers) and the fresh instance started with isDown = false.
+            // Swallowing this release left push-to-talk sessions running forever - the
+            // "Quick Edit card never goes away when I let go" bug. Deliver it as an
+            // UNCLEAN tap: hold-to-talk handlers stop their session (their stop() is a
+            // safe no-op when nothing runs), while toggle handlers guard on `clean` and
+            // correctly ignore it.
+            removeGlobalKeyMonitor()
+            onUp?(false)
         }
     }
 }

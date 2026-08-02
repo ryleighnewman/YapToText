@@ -126,12 +126,31 @@ struct RecordingPanelView: View {
         .onChange(of: controller.isRecording) { if controller.isRecording { miniStayCondensed = false } }
         // Shoot-out trigger for COMPACT and EXPANDED (the mini fires its own, along with
         // its cancel choreography - the style guard prevents double-firing there).
-        .onChange(of: controller.isRecording) { _, recording in
-            guard recording, settings.panelStyle != .mini else { return }
-            replayShoot()
+        // ONE owner, STATE-tracked rather than event-observed: onChange missed session
+        // starts where "recording AND presented" was already true before this view
+        // re-evaluated (window reused back-to-back, or a ring-close leaving waveShot
+        // stuck true) - timing decided whether the shoot played. task(id:) re-runs on
+        // every value change AND at mount, and lastLive says which kind of arrival this is.
+        // The FIRST visible frame must never show a stale full-width wave: when the reset
+        // inside replayShoot ran a few frames after the window surfaced, the user saw
+        // full wave -> snap to sliver -> spring, which reads as a different animation
+        // entirely. Resetting at ORDER-OUT means every show starts from the sliver by
+        // construction - the shoot can only ever play forward.
+        .onChange(of: controller.panelIsPresented) { _, presented in
+            guard !presented else { return }
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { waveShot = false }
         }
-        .task(id: controller.isRecording) {
-            if controller.isRecording, !waveShot, settings.panelStyle != .mini { replayShoot() }
+        .task(id: controller.isRecording && controller.panelIsPresented) {
+            let live = controller.isRecording && controller.panelIsPresented
+            let previous = lastLive
+            lastLive = live
+            guard live, settings.panelStyle != .mini else { return }
+            if previous == false || previous == nil && !waveShot {
+                replayShoot()   // a genuine session start (or mounted pre-shoot): play it
+            } else {
+            }
+            // previous == true: remounted mid-session (style switch) - leave the wave alone.
         }
         // Release the latch once the panel is long closed (1.2s after busy ends): the
         // latch only exists to hold the ring through the close animation. Left set, the
@@ -275,10 +294,10 @@ struct RecordingPanelView: View {
                          scale: scale * 0.82,
                          style: settings.waveStyle,
                          freeze: miniCondensed,
-                         sucking: miniCondensed)
+                         sucking: miniCondensed,
+                         birthAt: waveBirthAt)
                 .frame(maxWidth: .infinity)
                 .scaleEffect(x: !waveShot ? 0.03 : 1)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: waveShot)
             transcript(lines: 1.7)
                 .frame(maxWidth: .infinity, alignment: miniCondensed ? .center : .leading)
                 .multilineTextAlignment(miniCondensed ? .center : .leading)
@@ -381,6 +400,12 @@ struct RecordingPanelView: View {
     /// open: a line that starts in the middle and fires left and right). Starts false so
     /// the very first appearance plays the same shoot-out as every later one.
     @State private var waveShot = false
+    @State private var shootGeneration = 0
+    /// Last observed "recording AND presented" value - nil until the first task run.
+    @State private var lastLive: Bool?
+    /// Birth stamp of the current shoot: WaveformView holds the wave flat until the
+    /// lines have shot out, then blooms the live amplitude in (see birthAt there).
+    @State private var waveBirthAt: Date?
     /// Cancel choreography: the wave FLATTENS to a straight line first, then pulls into the
     /// center - the opening in exact reverse (dance -> flat line -> gone into the middle).
     @State private var waveFlat = false
@@ -404,13 +429,21 @@ struct RecordingPanelView: View {
     /// on screen (replays used to start while it was still ordering in, which made repeated
     /// opens look different), then fire the lines outward on the same spring every time.
     private func replayShoot() {
+        // Re-entrant by design: the recording-start and panel-shown triggers can both fire,
+        // and the LAST one must own the spring (the earlier one may have run against a
+        // still-hidden window). The reset is genuinely instant now (no standing .animation
+        // modifiers re-injecting springs), so restarting mid-flight cannot flip the wave.
+        shootGeneration += 1
+        let gen = shootGeneration
         var tx = Transaction()
         tx.disablesAnimations = true
         withTransaction(tx) {
             waveShot = false; waveFlat = false; waveGone = false; wavePulledIn = false
+            waveBirthAt = Date()   // amplitude is born flat and blooms after the shoot
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 40_000_000)
+            guard gen == shootGeneration else { return }   // a newer shoot owns the wave
             withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) { waveShot = true }
         }
     }
@@ -420,7 +453,8 @@ struct RecordingPanelView: View {
                      isActive: controller.isRecording && !controller.isPaused,
                      style: settings.waveStyle,
                      freeze: miniCondensed,
-                     sucking: miniCondensed)
+                     sucking: miniCondensed,
+                     birthAt: waveBirthAt)
             // Hover: the wave steps WAY back so the revealed buttons own the stage.
             // Processing: the wave SHRINKS toward the center as it fades, so the pill collapse
             // reads as one morph - the wave folds inward while the whirlwind spins up in its
@@ -447,7 +481,6 @@ struct RecordingPanelView: View {
             // ONE animation per value, no duplicates: a second `.animation(value:
             // miniCondensed)` here was hijacking the opacity's delayed fade above and
             // vanishing the wave 0.3s into the pour (caught with a canary stroke).
-            .animation(.spring(response: 0.5, dampingFraction: 0.8), value: waveShot)
             .animation(.easeOut(duration: 0.14), value: waveFlat)
             .opacity(waveGone ? 0 : 1)
             .animation(.easeIn(duration: 0.28), value: waveGone)
@@ -602,12 +635,12 @@ struct RecordingPanelView: View {
                          scale: scale,
                          style: settings.waveStyle,
                          freeze: miniCondensed,
-                         sucking: miniCondensed)
+                         sucking: miniCondensed,
+                         birthAt: waveBirthAt)
                 .frame(maxWidth: .infinity)
                 // The signature open: the lines fire outward from the center - the same
                 // shoot-out the mini has always had, now on every layout.
                 .scaleEffect(x: !waveShot ? 0.03 : 1)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: waveShot)
             // On stop the right side FADES fast but KEEPS ITS SPACE: the wave must not
             // re-center (the ring stays exactly where the wave was), and the glass then
             // slides left over it - the right edge travels the long way in.

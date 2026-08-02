@@ -112,21 +112,22 @@ enum InsertionContext {
     ///   selection must REPLACE it - the selection dance would destroy it. Also covers
     ///   editors that copy the whole line on an empty selection (VS Code-style).
     @MainActor
-    private static func keyRead() -> Surround {
+    private static func keyRead() async -> Surround {
         guard !TextInserter.isSecureInputActive else { return .none }
         let pb = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(pb)
         defer { snapshot.write(to: pb) }
 
         /// Cmd+C, then wait briefly for the pasteboard to change. nil = nothing copied
-        /// (empty selection), which is itself information.
-        func copyChanged(_ timeout: TimeInterval) -> String? {
+        /// (empty selection), which is itself information. The waits are async: this runs
+        /// on the main actor, and blocking here froze the wave mid-choreography.
+        func copyChanged(_ timeout: TimeInterval) async -> String? {
             let token = pb.changeCount
             TextInserter.postCopy()
             let deadline = Date().addingTimeInterval(timeout)
             while Date() < deadline {
                 if pb.changeCount != token { return pb.string(forType: .string) ?? "" }
-                usleep(15_000)
+                try? await Task.sleep(nanoseconds: 15_000_000)
             }
             return nil
         }
@@ -134,24 +135,35 @@ enum InsertionContext {
 
         // 1. Probe: if copying RIGHT NOW yields anything, there is a live selection
         //    (or a copy-line-on-empty editor) - hands off either way.
-        if copyChanged(0.15) != nil {
+        if await copyChanged(0.15) != nil {
             yapdiag("insertctx: live selection (or copy-on-empty app) - inserting unadapted")
             return .none
         }
-        // 2. BEFORE: select up to three words back, copy, collapse to the selection's
-        //    RIGHT edge (the original caret). Collapse only when something was actually
-        //    selected - at the document start a bare Right would WALK the caret forward.
-        for _ in 0..<3 { TextInserter.postKey(0x7B, flags: optShift) }   // Opt+Shift+Left
-        usleep(25_000)
-        let before = copyChanged(0.2)
-        if before != nil { TextInserter.postKey(0x7C, flags: []) }       // Right: restore caret
-        usleep(20_000)
-        // 3. AFTER: mirror image - two words forward, collapse to the LEFT edge.
-        for _ in 0..<2 { TextInserter.postKey(0x7C, flags: optShift) }   // Opt+Shift+Right
-        usleep(25_000)
-        let after = copyChanged(0.2)
-        if after != nil { TextInserter.postKey(0x7B, flags: []) }        // Left: restore caret
-        usleep(20_000)
+        // 2 + 3. Read both sides. Slow apps (Electron especially) sometimes service the
+        //    synthetic selection keys or the copy late; one quiet retry makes the read
+        //    land reliably instead of silently inserting unadapted - the "intelligent
+        //    insert didn't turn on" report. The waits are async, so patience is free.
+        var before: String?
+        var after: String?
+        for attempt in 0..<2 {
+            // BEFORE: select up to three words back, copy, collapse to the selection's
+            // RIGHT edge (the original caret). Collapse only when something was actually
+            // selected - at the document start a bare Right would WALK the caret forward.
+            for _ in 0..<3 { TextInserter.postKey(0x7B, flags: optShift) }   // Opt+Shift+Left
+            try? await Task.sleep(nanoseconds: 30_000_000)
+            before = await copyChanged(attempt == 0 ? 0.25 : 0.4)
+            if before != nil { TextInserter.postKey(0x7C, flags: []) }       // Right: restore caret
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            // AFTER: mirror image - two words forward, collapse to the LEFT edge.
+            for _ in 0..<2 { TextInserter.postKey(0x7C, flags: optShift) }   // Opt+Shift+Right
+            try? await Task.sleep(nanoseconds: 30_000_000)
+            after = await copyChanged(attempt == 0 ? 0.25 : 0.4)
+            if after != nil { TextInserter.postKey(0x7B, flags: []) }        // Left: restore caret
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            if before != nil || after != nil { break }
+            yapdiag("insertctx: key-sim read empty, retrying once")
+            try? await Task.sleep(nanoseconds: 80_000_000)
+        }
 
         guard before != nil || after != nil else { return .none }
         yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after=\((after ?? "").prefix(30).debugDescription)")
@@ -161,9 +173,9 @@ enum InsertionContext {
     /// The one-call entry the inserter uses: read surroundings (AX when the process may,
     /// key-simulation inside the sandbox), adapt if possible.
     @MainActor
-    static func adapted(_ text: String) -> String {
+    static func adapted(_ text: String) async -> String {
         var s = read()
-        if !s.available { s = keyRead() }
+        if !s.available { s = await keyRead() }
         guard s.available, !(s.before.isEmpty && s.after.isEmpty) else { return text }
         return adapt(text, before: s.before, after: s.after)
     }

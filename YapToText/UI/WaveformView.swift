@@ -77,6 +77,11 @@ struct WaveformView: View {
     /// zero-start clock: adopting the panel's stamp made a demo that happened to start
     /// within 5s of a real dictation pop in already-wound, or rewind mid-animation.
     var usesSharedClock: Bool = true
+    /// Birth moment of the current shoot-out. For ~0.3s the drawn amplitude is held at
+    /// the flat idle line, then it ramps up over the next ~0.35s: the lines shoot out
+    /// FLAT to the left and right first, and the wave blooms out of them - identical on
+    /// a cold mic and a hot one. nil = no damping (steady state).
+    var birthAt: Date? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var motion = WaveMotion()
 
@@ -457,6 +462,14 @@ struct WaveformView: View {
         let energyNow = min(1, max(0, motion.fastE * 3))
         // Height tracks real loudness: quiet stays small, loud swells - the expressiveness.
         var ampScale = (isActive ? (0.16 + 1.0 * pow(max(0, motion.loud), 0.55)) : 0.18) * Self.demoAmpBoost
+        if let birth = birthAt, isActive, !sucking {
+            let t = Date().timeIntervalSince(birth)
+            if t < 0.65 {
+                let ramp = min(1, max(0, (t - 0.30) / 0.35))
+                let eased = ramp * ramp * (3 - 2 * ramp)
+                ampScale = 0.18 + (ampScale - 0.18) * eased   // flat idle line -> live height
+            }
+        }
         if isActive { motion.lastLiveAmp = ampScale }
         if sucking {
             // NO chunk at the handoff: start from the amplitude the live wave actually

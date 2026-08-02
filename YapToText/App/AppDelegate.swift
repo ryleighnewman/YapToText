@@ -59,9 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   !self.state.controller.isRecording, !self.state.controller.isBusy else { return }
             // The user is at the keyboard: make sure the SPEECH MODEL is resident too, so a
             // cooldown eviction never turns into a multi-second stall on the next stop.
+            // The MICROPHONE is deliberately not touched here: with keep-warm off (the
+            // default) the mic opens when a dictation starts and lets go when it ends.
             self.state.controller.warmSpeechModel()
-            guard !self.state.settings.keepMicWarm else { return }
-            self.state.controller.holdMicWarmForActivity()
         }
     }
 
@@ -251,7 +251,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dnc.addObserver(forName: .init("yap.debug.ctxprobe"), object: nil, queue: .main) { _ in
             // Context-insertion diagnosis: read the surroundings of whatever is focused
             // RIGHT NOW and log what adapt would do with a canned transcript.
-            yapdiag("ctxprobe: adapted=\(InsertionContext.adapted("Very very much better.").debugDescription)")
+            Task { @MainActor in
+                let adapted = await InsertionContext.adapted("Very very much better.")
+                yapdiag("ctxprobe: adapted=\(adapted.debugDescription)")
+            }
         }
         dnc.addObserver(forName: .init("yap.debug.waveboost"), object: nil, queue: .main) { note in
             // Marketing shots: crank the drawn wave amplitude (object = multiplier string).
@@ -592,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.controller.flashStatus("Couldn't return to the app to paste")
             return
         }
-        TextInserter.deliver(text, target: .insertAtCursor,
+        await TextInserter.deliver(text, target: .insertAtCursor,
                              method: state.settings.insertionMethod,
                              restoreClipboard: state.settings.restoreClipboard)
         state.controller.announceStatus("Inserted")
@@ -669,7 +672,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 primaryCustomTap.onKeyUp = { [weak self] in
                     guard let self, ptt else { return }
-                    if self.state.controller.isRecording { self.state.controller.stop() }
+                    // Unconditional: a release during the arm window (phase not yet
+                    // .recording) must still end the session - stop() defers itself via
+                    // stopRequested, and no-ops when idle.
+                    self.state.controller.stop()
                 }
                 primaryCustomTap.start(keyCode: UInt32(key.keyCode))
             }
@@ -728,25 +734,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tap-to-start/stop on it - same rule as the dictation key.
         let ptt = trigger == .pushToTalk && key != .capsLock
 
-        // ONE handler for both key kinds. Semantics, kept dead simple:
-        //  toggle: tap opens the session; the next tap ends it and applies.
-        //  hold:   press opens; release ends and applies.
-        //  While an edit is APPLYING, presses do nothing (Esc cancels, as everywhere).
+        // THE CONTRACT, no exceptions:
+        //  toggle: press turns it on; press turns it off. A press while listening ends
+        //          the session and applies; a press over ANY other card (select-text
+        //          info, applying, result) shuts the whole surface down.
+        //  hold:   press turns it on; release turns it off. Release while listening (or
+        //          still arming) ends and applies; release over anything else dismisses.
+        // Turn the Quick Edit surface OFF no matter what it is doing.
+        let shutDown: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.disarmQuickEditSelectionRetry()
+            if self.quickEditApplying {
+                self.quickEditCancelled = true
+                self.quickEditApplying = false
+                yapdiag("quickEdit: key press cancelled the apply")
+            }
+            if self.state.controller.isScratchpadSession {
+                self.state.controller.cancel()
+            }
+            QuickEditWindow.shared.dismiss()
+        }
         let down: () -> Void = { [weak self] in
             guard let self else { return }
-            guard !self.quickEditApplying else { return }
             if ptt {
                 self.quickEditKeyHeld = true
-                if !self.state.controller.isRecording { self.beginQuickEdit() }
+                if self.quickEditApplying || QuickEditWindow.shared.isShowing {
+                    // A press over a leftover card starts FRESH: off, then on.
+                    shutDown()
+                }
+                if !self.state.controller.isRecording, !self.state.controller.isBusy {
+                    self.beginQuickEdit()
+                }
             } else {
-                if self.state.controller.isRecording { self.state.controller.stop() }
-                else if !self.state.controller.isBusy { self.beginQuickEdit() }
+                if self.state.controller.isScratchpadSession {
+                    self.state.controller.stop()          // press #2 while listening: end + apply
+                    QuickEditWindow.shared.showHeard()
+                } else if self.quickEditApplying || QuickEditWindow.shared.isShowing {
+                    shutDown()                            // press over any other card: off
+                } else if !self.state.controller.isBusy {
+                    self.beginQuickEdit()                 // press while off: on
+                }
             }
         }
         let up: () -> Void = { [weak self] in
             guard let self, ptt else { return }
             self.quickEditKeyHeld = false
-            if self.state.controller.isRecording { self.state.controller.stop() }
+            if self.state.controller.isScratchpadSession {
+                // Ends the session in EVERY phase: stop() defers itself while the start
+                // is still arming (stopRequested) and stops a live recording outright.
+                self.state.controller.stop()
+                // Acknowledge the release IMMEDIATELY - never sit on "Listening…"
+                // through a slow transcription.
+                QuickEditWindow.shared.showHeard()
+            } else if QuickEditWindow.shared.isShowing {
+                // No session behind the card (select-text info, a stale listening shell):
+                // release means off. Working/result cards ride out their own dismissal.
+                switch QuickEditWindow.shared.currentStage {
+                case .listening, .info: QuickEditWindow.shared.dismiss()
+                default: break
+                }
+            }
         }
 
         if key.isCustom {
