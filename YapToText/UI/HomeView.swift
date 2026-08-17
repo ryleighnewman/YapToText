@@ -18,6 +18,7 @@ struct HomeView: View {
         ScrollView {
             VStack(spacing: 24) {
                 header
+                if let suggestion = state.vocabulary.pendingSuggestion { correctionSuggestion(suggestion) }
                 if !state.settings.hasDismissedHomeNote { funNote }
                 if needsSetup { setupCard }
                 primaryActions
@@ -122,6 +123,31 @@ struct HomeView: View {
         }
     }
 
+
+    /// Surfaced when the user has corrected the same mishear enough times: offer to make it a
+    /// permanent fix, which also primes Whisper to hear it right next time.
+    private func correctionSuggestion(_ s: LearnedCorrection) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.callout).foregroundStyle(Color.accentColor).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Make this correction stick?").font(.caption.weight(.semibold))
+                Text("You've changed \u{201C}\(s.from)\u{201D} to \u{201C}\(s.to)\u{201D} more than once. Add it and YapToText will spell it that way automatically - and listen for it, so it's heard right in the first place.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button("Add it") { state.vocabulary.acceptSuggestion() }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                    Button("Not now") { state.vocabulary.dismissSuggestion() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .innerWell(radius: Metrics.panelRadius)
+    }
 
     /// Compact, closable pointer to Dictionaries - same pattern as the one-key note.
     private var dictionaryTip: some View {
@@ -254,9 +280,19 @@ struct HomeView: View {
                 .onChange(of: settings.menuBarIconStyle) { AppDelegate.shared?.refreshStatusIcon() }
             }
             .padding(.top, 10)
+            // MASTER SWITCH for the whole mode/AI system. Off = extremely rapid transcription:
+            // your words typed exactly as spoken, no AI stage at all.
+            Toggle("Post-transcription analysis", isOn: $settings.aiCleanupEnabled)
+                .toggleStyle(.switch).controlSize(.small)
+            SubOptions {
+                Caption(settings.aiCleanupEnabled
+                    ? "Modes, Auto formatting, voice quick edits, and AI cleanup run after each transcription. Turn this off for the fastest possible raw transcription with no AI."
+                    : "Off: dictation types exactly what you say, instantly, with no AI. Modes and formatting are disabled until you turn this back on.")
+            }
             Toggle("Auto mode: adapt to what you're saying", isOn: $settings.autoContextMode)
                 .toggleStyle(.switch).controlSize(.small)
-            if settings.autoContextMode {
+                .analysisGated(state)
+            if settings.aiCleanupEnabled, settings.autoContextMode {
                 SubOptions {
                     Caption("Each dictation is screened in an instant: emails get formatted as emails, casual chat stays as spoken, everything else is cleaned up.")
                     if settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -314,7 +350,9 @@ struct HomeView: View {
             statusRow(symbol: "mic.fill", title: "Microphone",
                       subtitle: "Required so YapToText can hear you.",
                       granted: state.permissions.microphoneGranted,
-                      actionTitle: "Allow") {
+                      // 5.1.1(iv): pre-permission buttons must use neutral wording
+                      // ("Continue"), never "Allow" - App Review flagged this.
+                      actionTitle: "Continue") {
                           Task {
                               // If it was previously denied, requestAccess can't re-prompt -
                               // send the user straight to System Settings instead of no-op.

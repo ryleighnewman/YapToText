@@ -241,6 +241,15 @@ struct ModeDetailView: View {
                     Text(model.displayName).tag(Optional(model.id))
                 }
             }
+            // The per-mode half of the energy system: this mode's lighter on-battery model.
+            Picker("On battery", selection: $draft.speechModelIDBattery) {
+                Text("Same as plugged in").tag(String?.none)
+                Text("Apple Speech (lightest)").tag(String?.some("apple"))
+                ForEach(state.models.speechModels.filter { state.models.isSelectable($0) && $0.runtime != .apple }) { model in
+                    Text(model.displayName).tag(Optional(model.id))
+                }
+            }
+            Caption("Unplugged, this mode uses the lighter model; on mains it uses the one above.")
         }
     }
 

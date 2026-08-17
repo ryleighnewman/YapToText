@@ -235,7 +235,7 @@ final class DictationController {
             return
         }
         activeMode = modeStore.mode(withID: settings.activeModeID) ?? BuiltInModes.raw
-        if activeMode.usesAI { aiTransformer.prewarm(instructions: activeMode.instructions) }
+        if settings.aiCleanupEnabled, activeMode.usesAI { aiTransformer.prewarm(instructions: activeMode.instructions) }
     }
 
     /// Deliberate selection (menus, panel): picking Auto turns Auto routing on; picking any real
@@ -378,7 +378,7 @@ final class DictationController {
         // If this session's cleanup runs on a GGUF, start loading it NOW, in parallel with the
         // recording, so the model is warm by the time transcription finishes. Loading at app
         // launch instead kept ~2GB resident for users who never touch an AI mode.
-        if mode.usesAI || settings.autoContextMode {
+        if settings.aiCleanupEnabled, mode.usesAI || settings.autoContextMode {
             let cleanupID = mode.languageModelID ?? settings.selectedLanguageModelID
             if cleanupID != "apple", let cleanupModel = models.model(id: cleanupID),
                cleanupModel.runtime == .llamaCpp,
@@ -659,6 +659,11 @@ final class DictationController {
         }
     }
 
+    /// How long the mic stays open AFTER the stop key, so words spoken as/just after the
+    /// press are not clipped. Mirrors the pre-roll that protects the first words. Kept short
+    /// enough that it reads as "finishing", not lag.
+    private static let trailingCaptureSeconds: Double = 0.4
+
     func stop() {
         yapdiag("stop: phase=\(phase.userFacingLabel) startInFlight=\(startInFlight) isFinishing=\(isFinishing) engine=\(engine != nil)")
         yapdiag("stop: levelHistory n=\(levelHistory.count) max=\(String(format: "%.2f", levelHistory.max() ?? 0)) min=\(String(format: "%.2f", levelHistory.min() ?? 0))")
@@ -674,18 +679,45 @@ final class DictationController {
         isFinishing = true
         let sid = sessionID
         stopAutoStopMonitor()
-        recorder.stop()
-        recordingEndedAt = Date()   // speaking time ends HERE, not after transcription/AI cleanup
-        if isPaused { pausedAccumulated += Date().timeIntervalSince(pauseStartedAt) }
-        isPaused = false
+
+        // IMMEDIATE UI teardown: the instant the stop key is pressed, collapse the panel and its
+        // mode menu, update the menu-bar icon, and disarm the in-recording key taps. This is
+        // DECOUPLED from the trailing audio capture below - the visuals must never wait out the
+        // tail (they used to, so menus lingered ~0.4s after the press). Only the microphone
+        // keeps running; everything the user SEES responds to the keypress now.
         onRecordingDidStop?()
         setPhase(.transcribing)
         announce("Transcribing")
-        // If the speech model still has to load (cold Whisper context), say so - a slow first
-        // transcribe used to look frozen. Apple Speech reports nil, so nothing changes there.
-        statusDetail = engine.modelLoadingDetail
 
         Task {
+            // SMART TRAILING CAPTURE (audio only): people finish a word right as - or a hair
+            // after - they press the stop key, and cutting the mic on the keypress clipped those
+            // last words. Hold only the MIC open for a short tail to cover the mismatch (the
+            // pre-roll guards the START of a dictation the same way). But a FIXED tail is a dead
+            // wait when you already stopped talking - the common case - which read as "slow". So
+            // poll the live level and close the tail the instant speech drops off, measured
+            // RELATIVE to how loud this dictation actually was (adapts to any room), capped at
+            // trailingCaptureSeconds. Near-zero wait when you're done; full capture when a word
+            // is still coming. A cancel during the tail bumps the sessionID and stops the
+            // recorder itself, so we bail.
+            if Self.trailingCaptureSeconds > 0, !isPaused {
+                let talkingLevel = max(0.08, (levelHistory.suffix(40).max() ?? 0.5) * 0.35)
+                let deadline = Date().addingTimeInterval(Self.trailingCaptureSeconds)
+                var quietTicks = 0
+                while Date() < deadline {
+                    try? await Task.sleep(nanoseconds: 25_000_000)   // 25 ms
+                    if level < talkingLevel { quietTicks += 1 } else { quietTicks = 0 }
+                    if quietTicks >= 4 { break }                     // ~100 ms below your speaking level = done
+                }
+            }
+            guard sid == sessionID, isFinishing else { return }
+            recorder.stop()
+            recordingEndedAt = Date()   // audio truly ends after the trailing tail
+            if isPaused { pausedAccumulated += Date().timeIntervalSince(pauseStartedAt) }
+            isPaused = false
+            // If the speech model still has to load (cold Whisper context), say so - a slow first
+            // transcribe used to look frozen. Apple Speech reports nil, so nothing changes there.
+            statusDetail = engine.modelLoadingDetail
             do {
                 let raw = try await engine.endSession()
                 statusDetail = nil   // model is warm now; let the cleanup phase set its own detail
@@ -696,7 +728,9 @@ final class DictationController {
                 // how the user asked. Signals, cheapest first: trailing spoken directive ->
                 // heuristic text screen -> destination-app bias -> one-word AI tiebreak.
                 var source = raw
-                if settings.autoContextMode, !sessionAutoSuspended,
+                // Post-transcription analysis (the whole mode/AI system) is the master switch.
+                // OFF = extremely rapid transcription: no Auto routing, no cleanup, raw verbatim.
+                if settings.aiCleanupEnabled, settings.autoContextMode, !sessionAutoSuspended,
                    !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     var extras: [String] = []
 
@@ -773,7 +807,7 @@ final class DictationController {
 
                 var text = vocabulary.apply(to: source, dictionaryIDs: sessionMode.dictionaryIDs)
 
-                if sessionMode.usesAI, cleanupAvailable(for: sessionMode), !text.isEmpty {
+                if settings.aiCleanupEnabled, sessionMode.usesAI, cleanupAvailable(for: sessionMode), !text.isEmpty {
                     // Cold GGUF load: tell the user what the wait is, so they don't cancel.
                     let cleanupID = sessionMode.languageModelID ?? settings.selectedLanguageModelID
                     if cleanupID != "apple", let m = models.model(id: cleanupID), m.runtime == .llamaCpp,
@@ -918,6 +952,9 @@ final class DictationController {
             lastInsert = (text: corrected, date: Date(), pid: last.pid)
             announce("Replaced")
             yapdiag("quickEdit: replaced '\(from)' -> '\(to)'")
+            // Learn from it: a mishear the user fixes repeatedly becomes a suggested dictionary
+            // entry, which then primes Whisper to hear it right in the first place.
+            vocabulary.noteCorrection(from: from, to: to)
         }
         return true
     }
@@ -1226,9 +1263,24 @@ final class DictationController {
     /// must NOT reload gigabytes while the system is still under pressure.
     var suppressModelWarmUntil = Date.distantPast
 
+
+    /// The single place the active speech model is decided, now power-aware.
+    /// Order: the mode's battery override (on battery) -> the mode's model -> the
+    /// energy-adaptive global pair -> the plain global selection.
+    func resolvedSpeechModelID(for mode: Mode) -> String {
+        let onAC = PowerMonitor.shared.onACPower
+        if !onAC, let batteryOverride = mode.speechModelIDBattery { return batteryOverride }
+        if let modeModel = mode.speechModelID { return modeModel }
+        if settings.energyAdaptive {
+            if onAC, let plugged = settings.speechModelPluggedID { return plugged }
+            if !onAC, let battery = settings.speechModelBatteryID { return battery }
+        }
+        return settings.selectedSpeechModelID
+    }
+
     func warmSpeechModel() {
         guard Date() >= suppressModelWarmUntil else { return }
-        let modelID = activeMode.speechModelID ?? settings.selectedSpeechModelID
+        let modelID = resolvedSpeechModelID(for: activeMode)
         guard modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple,
               let url = models.downloads.localURL(for: model) else { return }
         WhisperEngine.warmContext(at: url.path)
@@ -1238,8 +1290,25 @@ final class DictationController {
         scheduleModelCooldown()
     }
 
+    /// Warm the CLEANUP model (Phi/GGUF) the same way, so the first dictation's AI cleanup -
+    /// the single biggest cold cost (~1.4s of context build + shader compile) - is already warm.
+    /// Apple-Intelligence modes need no GGUF warm (their own prewarm handles that). Shares the
+    /// eviction clock so an unused launch never parks the model in RAM.
+    /// The master post-transcription-analysis switch, surfaced for the UI's gating.
+    var analysisEnabled: Bool { settings.aiCleanupEnabled }
+
+    func warmLanguageModel() {
+        guard settings.aiCleanupEnabled else { return }   // nothing to warm when analysis is off
+        guard Date() >= suppressModelWarmUntil else { return }
+        let modelID = activeMode.languageModelID ?? settings.selectedLanguageModelID
+        guard modelID != "apple", let model = models.model(id: modelID), model.runtime == .llamaCpp,
+              let url = models.downloads.localURL(for: model) else { return }
+        LlamaEngine.fullWarm(modelPath: url.path)
+        scheduleModelCooldown()
+    }
+
     private func makeEngine(for mode: Mode) -> TranscriptionEngine {
-        let modelID = mode.speechModelID ?? settings.selectedSpeechModelID
+        let modelID = resolvedSpeechModelID(for: mode)
         if modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple {
             // Only hand off to whisper when the file is actually on disk; otherwise fall back
             // to Apple Speech so dictation always works while a default model downloads.
@@ -1247,6 +1316,10 @@ final class DictationController {
                 yapdiag("makeEngine: WHISPER \(model.displayName) at \(url.path)")
                 let engine = WhisperEngine(modelURL: url, modelName: model.displayName)
                 engine.livePreview = settings.livePreviewEnabled
+                // VOCABULARY PRIMING: bias Whisper toward the user's own words up front, so it
+                // hears names/jargon right instead of the dictionary only fixing them afterward.
+                engine.promptBias = vocabulary.primingPrompt(dictionaryIDs: mode.dictionaryIDs)
+                if let bias = engine.promptBias { yapdiag("makeEngine: primed \(bias.count) chars of vocabulary") }
                 return engine
             }
             yapdiag("makeEngine: model \(modelID) selected but NOT on disk; falling back to Apple Speech")
@@ -1262,17 +1335,32 @@ final class DictationController {
         return UnavailableEngine(message: "Download a Whisper model in Settings > Models to dictate on this version of macOS.")
     }
 
+    /// Hard ceiling on a single dictation, independent of the user's own limits. Nobody
+    /// dictates for half an hour in one press; a session this long means a stop was lost,
+    /// and left alone it grows until the app runs out of memory. The transcript is still
+    /// produced and saved - this ends the recording, it does not discard it.
+    static let runawaySessionSeconds: TimeInterval = 30 * 60
+
     private func startAutoStopMonitor() {
         // Per-mode overrides win; nil falls back to the app-wide preference.
         let silence = sessionMode.silenceTimeout ?? settings.silenceTimeout
         let maxDuration = sessionMode.maxRecordingSeconds ?? settings.maxRecordingSeconds
-        guard silence > 0 || maxDuration > 0 else { return }
+        // The monitor ALWAYS runs, even with both limits off, because of the runaway
+        // backstop below: a session whose stop never fired (a swallowed key release, a
+        // trigger monitor rebuilt mid-hold) otherwise records until the app dies. The
+        // backstop is far above any real dictation, so it can only ever catch a bug.
         autoStopMonitor = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 250_000_000)
                 guard let self, self.phase == .recording else { return }
                 let now = Date()
                 let elapsed = now.timeIntervalSince(self.sessionStart) - self.pausedAccumulated
+                if elapsed >= Self.runawaySessionSeconds {
+                    yapdiag("autostop: RUNAWAY session hit \(Int(elapsed))s - stopping and keeping the audio")
+                    self.flashStatus("Dictation ran for \(Int(elapsed / 60)) minutes and was stopped automatically")
+                    self.stop()
+                    return
+                }
                 if maxDuration > 0, elapsed >= maxDuration { self.stop(); return }
                 if silence > 0, elapsed > 1.0, now.timeIntervalSince(self.lastVoiceAt) >= silence {
                     self.stop(); return

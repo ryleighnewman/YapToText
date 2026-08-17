@@ -23,5 +23,19 @@
 	<!-- Export history and import model files the user picks. -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- Ask Music its REAL player state (playing vs paused) and pause/resume it
+	     precisely. The warm-output-unit heuristic could not tell paused Music from
+	     playing Music, and the global media key it fired routed to the wrong app
+	     (started paused music instead of pausing playback). Playback-scoped scripting
+	     access only - no library access. -->
+	<key>com.apple.security.scripting-targets</key>
+	<dict>
+		<key>com.apple.Music</key>
+		<array>
+			<string>com.apple.Music.playback</string>
+		</array>
+	</dict>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>

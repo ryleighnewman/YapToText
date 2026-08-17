@@ -445,6 +445,11 @@ final class AppSettings {
     // Models
     var selectedSpeechModelID: String { didSet { save() } }
     var selectedLanguageModelID: String { didSet { save() } }
+    // Energy-adaptive models: when enabled, the speech model follows the power source.
+    // nil pluggen/battery IDs fall back to selectedSpeechModelID.
+    var energyAdaptive: Bool { didSet { save() } }
+    var speechModelPluggedID: String? { didSet { save() } }
+    var speechModelBatteryID: String? { didSet { save() } }
 
     // Feedback / panel
     var showMenuBarIcon: Bool { didSet { save() } }
@@ -555,6 +560,9 @@ final class AppSettings {
         var silenceTimeout: Double
         var maxRecordingSeconds: Double
         var selectedSpeechModelID: String
+        var energyAdaptive: Bool? = nil
+        var speechModelPluggedID: String? = nil
+        var speechModelBatteryID: String? = nil
         var selectedLanguageModelID: String
         var showMenuBarIcon: Bool?
         var menuBarIconStyle: MenuBarIconStyle?
@@ -656,6 +664,9 @@ final class AppSettings {
         silenceTimeout = loaded?.silenceTimeout ?? 0
         maxRecordingSeconds = loaded?.maxRecordingSeconds ?? 0
         selectedSpeechModelID = loaded?.selectedSpeechModelID ?? "whisper-large-v3-turbo"   // superwhisper's "Ultra V3 Turbo"
+        energyAdaptive = loaded?.energyAdaptive ?? false
+        speechModelPluggedID = loaded?.speechModelPluggedID
+        speechModelBatteryID = loaded?.speechModelBatteryID
         selectedLanguageModelID = loaded?.selectedLanguageModelID ?? "phi-3.5-mini-instruct-q4"   // the bundled Phi is the DEFAULT cleanup brain - fully self-contained, no Apple Intelligence dependency
         showMenuBarIcon = loaded?.showMenuBarIcon ?? true
         menuBarIconStyle = loaded?.menuBarIconStyle ?? .capybara
@@ -726,7 +737,11 @@ final class AppSettings {
             appendSpaceAfterInsert: appendSpaceAfterInsert, modelCooldownSeconds: modelCooldownSeconds, aiCleanupEnabled: aiCleanupEnabled, autoContextMode: autoContextMode,
             inputGain: inputGain, autoAmplifyInput: autoAmplifyInput, reduceBackgroundNoise: reduceBackgroundNoise, keepMicWarm: keepMicWarm, micWarmMinutes: micWarmMinutes,
             silenceTimeout: silenceTimeout, maxRecordingSeconds: maxRecordingSeconds,
-            selectedSpeechModelID: selectedSpeechModelID, selectedLanguageModelID: selectedLanguageModelID,
+            selectedSpeechModelID: selectedSpeechModelID,
+            energyAdaptive: energyAdaptive,
+            speechModelPluggedID: speechModelPluggedID,
+            speechModelBatteryID: speechModelBatteryID,
+            selectedLanguageModelID: selectedLanguageModelID,
             showMenuBarIcon: showMenuBarIcon, menuBarIconStyle: menuBarIconStyle, menuBarColoredStatus: menuBarColoredStatus, accentColorHex: accentColorHex, panelTintHex: panelTintHex, waveColorHex: waveColorHex, waveColorStyle: waveColorStyle, waveStrength: waveStrength, waveRGBSpeed: waveRGBSpeed, waveRGBSpread: waveRGBSpread, panelRGBSpeed: panelRGBSpeed, panelTintStrength: panelTintStrength, panelTintStyle: panelTintStyle, soundStart: soundStart, soundStop: soundStop, soundError: soundError, showDockIcon: showDockIcon,
             hasDismissedHomeNote: hasDismissedHomeNote, hasDismissedDictionaryTip: hasDismissedDictionaryTip, dictionaryTipV2Reset: true, inputDeviceUID: inputDeviceUID,
             showRecordingPanel: showRecordingPanel, livePreviewEnabled: livePreviewEnabled, panelStyle: panelStyle, panelPosition: panelPosition, panelSize: panelSize, panelAnimation: panelAnimation,

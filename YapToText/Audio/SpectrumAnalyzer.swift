@@ -175,9 +175,14 @@ final class SpectrumAnalyzer {
             blockFrame = 0
         }
 
-        // Brief warmup so the very first frames (floor still seeding) can't flash the wave full.
+        // Brief warmup so the very first frame (floor still seeding) can't flash the wave full.
+        // Just 2 frames: the floor seeds from frame 1 (noiseFloorDB = bandDB), so frame 1's SNR
+        // is already ~0 without help - a longer hard-zero window (was 8, ~0.3-0.8s at this tap's
+        // buffer size) only made the waveform look DEAD for a third of a second while the mic was
+        // already being heard, reading to the user as lag before they could speak. Two frames
+        // keeps the anti-flash guard while letting the wave respond almost immediately.
         warmupFrames += 1
-        if warmupFrames < 8 { return [Float](repeating: 0, count: bandCount) }
+        if warmupFrames < 2 { return [Float](repeating: 0, count: bandCount) }
         // Final NaN/Inf boundary before the spectrum leaves for the UI: every band finite in [0,1].
         return whitener.process(scratchOut).map { $0.isFinite ? min(max($0, 0), 1) : 0 }
     }

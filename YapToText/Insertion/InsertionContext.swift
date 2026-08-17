@@ -133,10 +133,16 @@ enum InsertionContext {
         }
         let optShift: CGEventFlags = [.maskAlternate, .maskShift]
 
-        // 1. Probe: if copying RIGHT NOW yields anything, there is a live selection
-        //    (or a copy-line-on-empty editor) - hands off either way.
-        if await copyChanged(0.15) != nil {
-            yapdiag("insertctx: live selection (or copy-on-empty app) - inserting unadapted")
+        // 1. Probe: if copying RIGHT NOW yields NON-EMPTY text, there is a live selection
+        //    (or a copy-line-on-empty editor) - hands off either way. But browsers
+        //    (Safari/Chrome running Reddit's rich editor) bump the pasteboard changeCount
+        //    on an empty-selection Cmd+C while writing an EMPTY string; the old check
+        //    treated any non-nil result - including "" - as a selection and bailed, so
+        //    smart insert never engaged inside Reddit. An empty copy is never a selection
+        //    worth preserving, so only a non-empty probe aborts the read.
+        if let probe = await copyChanged(0.15),
+           !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            yapdiag("insertctx: live selection - inserting unadapted")
             return .none
         }
         // 2 + 3. Read both sides. Slow apps (Electron especially) sometimes service the

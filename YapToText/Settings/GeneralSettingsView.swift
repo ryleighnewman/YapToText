@@ -149,6 +149,7 @@ struct GeneralSettingsView: View {
                 Caption("Which microphone YapToText listens to. If the chosen one is unplugged, it falls back to the system default.")
                 Text("Live input level").font(.caption).foregroundStyle(.secondary)
                 LiveInputMeter()   // isolated observer - only the bar re-renders
+                MicHealthReadout() // live SNR verdict + guidance, same render isolation
                 Toggle("Keep the microphone warm", isOn: $settings.keepMicWarm)
                     .toggleStyle(.switch).controlSize(.small)
                 SubOptions {

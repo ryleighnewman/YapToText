@@ -10,6 +10,15 @@ struct Replacement: Codable, Identifiable, Equatable, Hashable {
     var wholeWord: Bool = true
 }
 
+/// A mishear the user has corrected by voice ("replace X with Y") - tracked so a REPEATED
+/// correction can be offered as a permanent dictionary entry (which then primes Whisper).
+struct LearnedCorrection: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID = UUID()
+    var from: String
+    var to: String
+    var count: Int = 1
+}
+
 /// A named, toggleable set of substitutions. Users can keep several (e.g. "Work", "Medical").
 struct VocabDictionary: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
@@ -23,14 +32,21 @@ struct VocabDictionary: Codable, Identifiable, Equatable, Hashable {
 @Observable
 final class VocabularyStore {
     private(set) var dictionaries: [VocabDictionary]
+    /// Repeated voice corrections, counted. When one hits the threshold it becomes a suggestion.
+    private(set) var learned: [LearnedCorrection] = []
+    /// A correction the user has made enough times to be worth making permanent. The UI watches
+    /// this and offers "add it to your dictionary?" - transient, never persisted.
+    var pendingSuggestion: LearnedCorrection?
 
     @ObservationIgnored private static let fileName = "vocabulary.json"
+    @ObservationIgnored private static let suggestThreshold = 2
 
     struct Snapshot: Codable {
         var dictionaries: [VocabDictionary]
         /// One-shot migration marker: v2 added the multi-word "mac os" fixes to EXISTING
         /// installs (starters only seed brand-new ones).
         var migratedMacOSFix: Bool? = nil
+        var learned: [LearnedCorrection]? = nil
     }
     private struct LegacySnapshot: Codable { var replacements: [Replacement]; var vocabularyHints: [String]? }
 
@@ -52,6 +68,7 @@ final class VocabularyStore {
     init() {
         if let snap = Persistence.load(Snapshot.self, from: VocabularyStore.fileName), !snap.dictionaries.isEmpty {
             dictionaries = snap.dictionaries
+            learned = snap.learned ?? []
         } else if let legacy = Persistence.load(LegacySnapshot.self, from: VocabularyStore.fileName) {
             // Migrate the old flat replacement list into a default dictionary.
             dictionaries = [VocabDictionary(name: "General", enabled: true, replacements: legacy.replacements)]
@@ -83,6 +100,42 @@ final class VocabularyStore {
 
     func apply(to text: String) -> String {
         apply(to: text, dictionaryIDs: nil)
+    }
+
+    /// A Whisper INITIAL-PROMPT built from the user's own vocabulary - the exact spellings the
+    /// model should hear (names, jargon, brand casings). Priming the decoder with these makes it
+    /// recognize the words in the FIRST place, instead of the post-hoc `apply` substitution only
+    /// catching a mishear AFTER it happened ("grade the chips" for "gray the chips"). The same
+    /// dictionary selection as `apply` (mode-pinned list, else all enabled). Returns nil when
+    /// there's nothing worth priming. Length-capped well under Whisper's ~224-token prompt budget.
+    func primingPrompt(dictionaryIDs: [UUID]?) -> String? {
+        let selected: [VocabDictionary]
+        if let dictionaryIDs {
+            let idSet = Set(dictionaryIDs)
+            selected = dictionaries.filter { idSet.contains($0.id) }
+        } else {
+            selected = dictionaries.filter { $0.enabled }
+        }
+        var seen = Set<String>()
+        var terms: [String] = []
+        for dict in selected {
+            for r in dict.replacements {
+                let term = r.to.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Skip empties, single chars, and long phrases (those aren't vocabulary the
+                // decoder needs primed - they're reformattings the substitution handles).
+                guard term.count >= 2, term.count <= 40 else { continue }
+                if seen.insert(term.lowercased()).inserted { terms.append(term) }
+            }
+        }
+        guard !terms.isEmpty else { return nil }
+        var kept: [String] = []
+        var budget = 0
+        for t in terms {
+            if budget + t.count + 2 > 200 { break }   // ~200 chars stays safely inside the window
+            kept.append(t); budget += t.count + 2
+        }
+        // A glossary framing is the established way to bias Whisper toward specific words.
+        return "Glossary: " + kept.joined(separator: ", ") + "."
     }
 
     /// Apply substitutions. When `dictionaryIDs` is nil, every enabled dictionary runs (the
@@ -236,7 +289,53 @@ final class VocabularyStore {
     private func save() {
         // The migration marker is stamped on EVERY save, so the mac-os fix runs exactly once
         // per install and a deliberate user delete stays deleted.
-        Persistence.save(Snapshot(dictionaries: dictionaries, migratedMacOSFix: true),
+        Persistence.save(Snapshot(dictionaries: dictionaries, migratedMacOSFix: true, learned: learned),
                          to: VocabularyStore.fileName)
+    }
+
+    // MARK: - Learning from corrections
+
+    /// Record a voice correction ("replace X with Y"). When the SAME mishear is corrected enough
+    /// times, `pendingSuggestion` is raised so the UI can offer to make it permanent - which, once
+    /// accepted, both fixes it automatically AND primes Whisper to hear it right next time.
+    func noteCorrection(from rawFrom: String, to rawTo: String) {
+        let from = rawFrom.trimmingCharacters(in: .whitespacesAndNewlines)
+        let to = rawTo.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Learn only word-level fixes (not sentence rewrites), a real change, sane lengths.
+        guard from.count >= 2, from.count <= 40, !to.isEmpty, to.count <= 40,
+              from.lowercased() != to.lowercased(),
+              from.split(separator: " ").count <= 3 else { return }
+        let key = from.lowercased()
+        // Already covered by a substitution? Nothing to learn.
+        if dictionaries.contains(where: { $0.replacements.contains { $0.from.lowercased() == key } }) { return }
+        if let i = learned.firstIndex(where: { $0.from.lowercased() == key }) {
+            learned[i].count += 1
+            learned[i].to = to   // remember the most recent target
+            if learned[i].count >= VocabularyStore.suggestThreshold { pendingSuggestion = learned[i] }
+        } else {
+            learned.append(LearnedCorrection(from: from, to: to))
+        }
+        save()
+    }
+
+    /// Accept the pending suggestion: add it as a permanent substitution in a "Learned" dictionary.
+    func acceptSuggestion() {
+        guard let s = pendingSuggestion else { return }
+        let replacement = Replacement(from: s.from, to: s.to)
+        if let i = dictionaries.firstIndex(where: { $0.name == "Learned" }) {
+            dictionaries[i].replacements.append(replacement)
+        } else {
+            dictionaries.append(VocabDictionary(name: "Learned", enabled: true, replacements: [replacement]))
+        }
+        learned.removeAll { $0.from.lowercased() == s.from.lowercased() }
+        pendingSuggestion = nil
+        save()
+    }
+
+    /// Dismiss the suggestion and stop counting this pair, so it never nags again.
+    func dismissSuggestion() {
+        if let s = pendingSuggestion { learned.removeAll { $0.from.lowercased() == s.from.lowercased() } }
+        pendingSuggestion = nil
+        save()
     }
 }

@@ -62,29 +62,26 @@ final class AudioRecorder: @unchecked Sendable {
     /// continues seamlessly. A gap of ~1s of audio (the transition) is the only loss.
     private func rebuildRouteMidSession() {
         guard isRunning, !armInFlight else { return }
-        let input = engine.inputNode
         if engine.isRunning { engine.stop() }
         invalidateResidentTap()
+        // ALWAYS a fresh engine. Reusing the old engine's input node after a route change
+        // crashed in the field (1.2 (7), SIGABRT in installTap): the node reports a STALE
+        // cached format that passes the >0 guards while the hardware underneath already
+        // runs at the new device's rate, and the mismatched tap install raises an
+        // NSException Swift cannot catch. A fresh engine re-queries the hardware, so its
+        // reported format is consistent with reality by construction.
+        engine = AVAudioEngine()
+        let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
-            // Device truly gone (no input at all): try a fresh engine once.
-            engine = AVAudioEngine()
-            let input2 = engine.inputNode
-            let f2 = input2.outputFormat(forBus: 0)
-            guard f2.channelCount > 0, f2.sampleRate > 0 else {
-                yapdiag("recorder: mid-session device change - NO input available")
-                return
-            }
-            ensureResidentTap(f2, on: input2)
-            engine.prepare(); try? engine.start()
-            yapdiag("recorder: mid-session rebuild on fresh engine (\(Int(f2.sampleRate))Hz)")
+            yapdiag("recorder: mid-session device change - NO input available")
             return
         }
         ensureResidentTap(format, on: input)
         engine.prepare()
         do {
             try engine.start()
-            yapdiag("recorder: mid-session route rebuilt (\(Int(format.sampleRate))Hz) - capture continues")
+            yapdiag("recorder: mid-session route rebuilt fresh (\(Int(format.sampleRate))Hz) - capture continues")
         } catch {
             yapdiag("recorder: mid-session rebuild failed (\(error))")
         }

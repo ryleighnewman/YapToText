@@ -11,6 +11,24 @@ struct ModesView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                if !state.settings.aiCleanupEnabled {
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "sparkles").font(.caption).foregroundStyle(.orange)
+                                Text("Post-transcription analysis is off").font(.callout.weight(.semibold))
+                            }
+                            Text("Modes don't run right now - every dictation is typed exactly as spoken, the fastest path. You can still edit modes here so they're ready. Turn analysis on to use them.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Turn On Post-transcription Analysis") {
+                                state.settings.aiCleanupEnabled = true
+                            }
+                            .buttonStyle(.borderedProminent).controlSize(.small)
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                }
                 Section {
                     HStack(spacing: 7) {
                         Image(systemName: "hand.tap.fill").font(.caption).foregroundStyle(.secondary)

@@ -18,6 +18,23 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
+        Entry(version: "1.2 (8)", points: [
+            "Dramatically faster from stop to text: the AI cleanup reuses its work between dictations, both the speech and AI models warm up at launch, and needless extra passes were trimmed, so your words appear almost instantly",
+            "New master switch: turn off post-transcription analysis for the fastest possible raw transcription, or leave it on for modes, formatting, and cleanup",
+            "Your dictionary now shapes what the app HEARS, not just what it types, so your names and terms come out right the first time",
+            "When you fix the same misheard word twice, the app offers to remember it for good",
+            "A microphone health check in Settings shows how clearly you are being heard, with specific tips to improve it",
+            "Better accuracy in noisy rooms and for fast speech",
+            "Words you finish saying right as you press stop are no longer clipped",
+            "The waveform responds the instant you start talking, with no startup lag",
+            "The pop-up and its menus collapse the moment you stop, without waiting",
+            "Energy-aware transcription: plugged in uses the full model, on battery it switches to the lighter one to save power - automatically, or set your own per mode",
+            "An Energy page in Settings that reads your Mac and recommends the right models for it",
+            "Long recordings now stream out as you go, cut at natural pauses, instead of leaving you on a spinner",
+            "Ending a dictation never starts audio or video that was not already playing; a paused player is only resumed if the app actually paused it",
+            "Intelligent insert adapts to the text around your cursor in more apps, including web editors",
+            "Fixed a freeze that could happen at the start of a dictation while checking Music",
+        ]),
         Entry(version: "1.1.1 (6)", points: [
             "The microphone releases about a second after each dictation ends - the orange indicator only shows while you dictate",
             "\u{201C}Keep the microphone warm\u{201D} now genuinely lets go when off, or when its standby window ends",

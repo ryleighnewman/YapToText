@@ -128,7 +128,7 @@ draw_center(dr, 160, "Yap it. Bam. It's typed.", t, INK)
 s0 = font(70, "Semibold")
 draw_center(dr, 360, "Speech to text, done right.", s0, INK)
 s1 = font(54, "Regular")
-draw_center(dr, 468, "Free. Private and on-device. Open source. Built for accessibility.", s1, SUB)
+draw_center(dr, 468, "Private and on-device. Open source. Built for accessibility.", s1, SUB)
 shot = load_shot("page-home.png")
 sheet, pad = with_shadow(shot)
 place(c, sheet, pad, W/2, 620, 2340)
@@ -152,7 +152,7 @@ draw_center(dr, 300, "My hands don't work.", t, INK)
 draw_center(dr, 590, "So I built this.", t, ACCENT)
 s = font(60, "Regular")
 draw_center(dr, 950, "YapToText is an accessibility tool first: built by someone who depends on it,", s, SUB)
-draw_center(dr, 1044, "for everyone who types with their voice. Free forever, because it has to be.", s, SUB)
+draw_center(dr, 1044, "for everyone who types with their voice, because it has to be.", s, SUB)
 syms = ["sym-accessibility.png", "sym-voiceover.png", "sym-waveform-and-mic.png",
         "sym-keyboard-fill.png", "sym-ear-fill.png", "sym-textformat-size.png"]
 row_w = 1500

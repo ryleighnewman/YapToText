@@ -311,7 +311,13 @@ struct RecordingPanelView: View {
             // then the panel options - no separate mode row.
             HStack(spacing: 8 * scale) {
                 controls
+                // Modes do nothing while post-transcription analysis is off (everything is raw),
+                // so gray the chips out and make them inert - no misleading "pick a mode" here.
                 modeChips
+                    .opacity(controller.analysisEnabled ? 1 : 0.35)
+                    .disabled(!controller.analysisEnabled)
+                    .help(controller.analysisEnabled ? "Switch how your words get formatted"
+                                                     : "Post-transcription analysis is off - modes won't run")
                 optionsMenu
                 jumpToAppButton
             }

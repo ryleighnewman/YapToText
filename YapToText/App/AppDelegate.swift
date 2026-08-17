@@ -373,10 +373,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastPrewarmAt = Date()
             state.controller.prewarmAudioInput()
         }
-        // Preload the speech model a few seconds after launch (off the startup path), so
-        // even the FIRST dictation transcribes instantly.
+        // Preload BOTH on-device models a few seconds after launch (off the startup path), so
+        // even the FIRST dictation transcribes AND cleans up instantly - no cold model load or
+        // Metal shader compile at stop time. Staggered so they don't fight for GPU/disk at once:
+        // speech first (needed earlier in the pipeline), then the cleanup model.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.state.controller.warmSpeechModel()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.state.controller.warmLanguageModel()
         }
 
         // Re-check permissions whenever the app returns to the foreground, so a grant made in
@@ -888,8 +893,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func beginQuickEdit() {
         disarmQuickEditSelectionRetry()   // a live entry supersedes any pending retry
         let c = state.controller
-        guard !c.isBusy, !c.isProcessing else { return }
+        guard !c.isBusy, !c.isProcessing else {
+            yapdiag("quickEdit: beginQuickEdit BLOCKED (isBusy=\(c.isBusy) isProcessing=\(c.isProcessing))")
+            return
+        }
         let target = NSWorkspace.shared.frontmostApplication
+        yapdiag("quickEdit: beginQuickEdit front=\(target?.localizedName ?? "?") trigger=\(state.settings.quickEditTrigger) key=\(state.settings.quickEditTriggerKey)")
         // Window FIRST, selection second: the popup used to wait behind captureSelection's
         // Cmd-C + up-to-400ms clipboard poll, which read as "the popup opens slowly". Showing
         // it the instant the key goes down makes the feature feel wired to the key.
@@ -897,6 +906,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             guard let self else { return }
             let selection = await SelectionEditor.captureSelection()
+            yapdiag("quickEdit: captureSelection -> \(selection == nil ? "nil (nothing copied)" : "\(selection!.count) chars") secureInput=\(TextInserter.isSecureInputActive)")
             guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 // Nothing selected: teach in the moment, in the feature's own popup - a status
                 // flash elsewhere is invisible when someone is looking at their document.

@@ -15,6 +15,10 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
     static let shared = InputLevelMonitor()
 
     @Published var level: Float = 0
+    /// Live signal-to-noise ratio in dB (speech above the room's own floor), measured on the RAW
+    /// pre-gain signal so it reflects true capture quality, not how hard auto-gain is pushing.
+    /// nil until enough audio has been seen to judge. Drives the mic-health readout in Settings.
+    @Published var snrDB: Float? = nil
     /// Manual boost to preview on the meter; set from the slider.
     var gain: Float = 1.0
     /// Preview auto-gain on the meter too, so it matches what dictation will actually hear.
@@ -25,6 +29,10 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
     private var wantsRunning = false   // the meter is wanted (settings card visible)
     private var agcGain: Float = 1.0
     private var lastPublish: CFTimeInterval = 0
+    // SNR tracking (raw RMS): the floor chases the quiet minimum, the peak follows recent speech.
+    private var noiseFloorRMS: Float = 0
+    private var speechPeakRMS: Float = 0
+    private var snrFrames = 0
 
     /// The settings meter appeared: run the tap.
     func start() { wantsRunning = true; startEngine() }
@@ -42,9 +50,18 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
         guard format.channelCount > 0, format.sampleRate > 0 else { return }
         agcGain = 1.0
         lastPublish = 0
+        noiseFloorRMS = 0; speechPeakRMS = 0; snrFrames = 0
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             let raw = AudioRecorder.rawRMS(buffer)
+            // SNR from the RAW signal: floor chases the quiet minimum (fast down, slow up so a
+            // breath can't ratchet it), peak follows recent speech energy with a gentle decay.
+            if raw.isFinite, raw > 0 {
+                if self.snrFrames == 0 { self.noiseFloorRMS = raw; self.speechPeakRMS = raw }
+                self.noiseFloorRMS += (raw - self.noiseFloorRMS) * (raw < self.noiseFloorRMS ? 0.25 : 0.002)
+                self.speechPeakRMS = max(raw, self.speechPeakRMS * 0.995)
+                self.snrFrames += 1
+            }
             var g = self.gain
             if self.autoAmplify {
                 if raw > 0.004 {
@@ -60,7 +77,14 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
             let now = CFAbsoluteTimeGetCurrent()
             guard now - self.lastPublish > 0.05 else { return }
             self.lastPublish = now
-            DispatchQueue.main.async { [weak self] in self?.level = lvl }
+            // Only report SNR once the floor has settled AND some speech-level energy was seen,
+            // so a silent room doesn't read as a huge or zero ratio.
+            let ready = self.snrFrames > 40 && self.speechPeakRMS > max(0.006, self.noiseFloorRMS * 2)
+            let snr: Float? = ready ? 20 * log10(max(self.speechPeakRMS, 1e-6) / max(self.noiseFloorRMS, 1e-6)) : nil
+            DispatchQueue.main.async { [weak self] in
+                self?.level = lvl
+                if let snr { self?.snrDB = min(60, max(0, snr)) }
+            }
         }
         engine.prepare()
         do { try engine.start(); running = true } catch { running = false }
@@ -71,7 +95,59 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
-        DispatchQueue.main.async { [weak self] in self?.level = 0 }
+        DispatchQueue.main.async { [weak self] in self?.level = 0; self?.snrDB = nil }
+    }
+}
+
+/// A plain-language verdict on how clean the microphone signal is, from the measured SNR.
+/// Thresholds are grounded in real capture: clean studio speech is 25-40 dB, a typical laptop
+/// mic in an ordinary room lands ~12-18 dB, and below ~12 dB Whisper starts dropping words.
+enum MicHealth {
+    case unknown, excellent, good, fair, poor
+
+    static func from(snrDB: Float?) -> MicHealth {
+        guard let s = snrDB else { return .unknown }
+        switch s {
+        case 25...: return .excellent
+        case 18..<25: return .good
+        case 12..<18: return .fair
+        default: return .poor
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .unknown: return "Listening…"
+        case .excellent: return "Excellent"
+        case .good: return "Good"
+        case .fair: return "Fair"
+        case .poor: return "Needs attention"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .unknown: return .secondary
+        case .excellent, .good: return .green
+        case .fair: return .yellow
+        case .poor: return .orange
+        }
+    }
+
+    /// Honest, specific guidance - what's happening and what to do about it.
+    var advice: String {
+        switch self {
+        case .unknown:
+            return "Say a few words so the app can measure how clearly it hears you."
+        case .excellent:
+            return "Your mic is heard clearly, well above the room noise. Transcription will be at its best."
+        case .good:
+            return "A clean signal. The occasional word may slip in a noisy moment, but accuracy will be strong."
+        case .fair:
+            return "There's noticeable background noise relative to your voice. A headset or getting closer to the mic would raise accuracy the most. If you're in a call app (Teams, Zoom), it may be holding the mic and lowering your level."
+        case .poor:
+            return "Your voice is close to the room noise, which is the biggest limit on accuracy. Move closer to the mic or use a headset, quiet fans or nearby noise, and quit call apps (Teams, Zoom) that may be ducking your input."
+        }
     }
 }
 
@@ -81,6 +157,28 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
 struct LiveInputMeter: View {
     @ObservedObject private var monitor = InputLevelMonitor.shared
     var body: some View { InputMeter(level: monitor.level) }
+}
+
+/// Live mic-health verdict, isolated the same way as the meter so its updates never re-render the
+/// surrounding glass cards. Shows a colored badge, the measured SNR, and plain-language guidance.
+struct MicHealthReadout: View {
+    @ObservedObject private var monitor = InputLevelMonitor.shared
+    var body: some View {
+        let health = MicHealth.from(snrDB: monitor.snrDB)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle().fill(health.color).frame(width: 7, height: 7)
+                Text(health.label).font(.caption.weight(.semibold)).foregroundStyle(health.color)
+                if let snr = monitor.snrDB {
+                    Text(String(format: "· %.0f dB signal-to-noise", snr))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+            Text(health.advice).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 /// A segmented input-level meter styled like macOS Sound settings: green rising into yellow, then

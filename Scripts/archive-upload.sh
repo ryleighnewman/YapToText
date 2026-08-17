@@ -9,9 +9,9 @@
 set -u
 PROJ="/Users/ryleighnewman/Desktop/Apps/YapToText"
 DD="$HOME/Library/Caches/YapToTextDD-Release"
-ARCHIVE="$DD/YapToText-1.1.1-6.xcarchive"
-ALOG="/tmp/yap-archive6c.log"
-ULOG="/tmp/yap-upload6.log"
+ARCHIVE="$DD/YapToText-1.2-8.xcarchive"
+ALOG="/tmp/yap-archive7c.log"
+ULOG="/tmp/yap-upload7.log"
 
 # Wedge PREVENTION: keep the compilation-cache (CAS) layer out of the build entirely.
 rm -rf "$DD/CompilationCache.noindex" 2>/dev/null

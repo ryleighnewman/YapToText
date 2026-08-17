@@ -28,6 +28,7 @@ enum LlamaEngine {
         if let model = cachedModel, cachedPath == path { return model }
         if let ctx = cachedCtx { llama_free(ctx) }   // the context dies with its model
         cachedCtx = nil
+        cachedPromptTokens = []
         if let old = cachedModel { llama_free_model(old) }
         cachedModel = nil
         cachedPath = nil
@@ -51,6 +52,20 @@ enum LlamaEngine {
             // fire-and-forget, so blocking here is harmless.
             inferenceLock.lock(); defer { inferenceLock.unlock() }
             _ = try? sharedModel(path: modelPath)
+        }
+    }
+
+    /// FULL warm for launch: not just the weights (that is `prewarm`), but the flash-attn
+    /// context, the compiled Metal kernels, AND the fixed system-prompt prefix left resident in
+    /// the KV cache. Cleanup is the biggest cold cost on the first dictation (~1.4s of context
+    /// build + shader compile + guardrail prefill); after this it runs at warm speed (~0.2s)
+    /// from the very first use. Runs one throwaway completion (1 token) with the real guardrail
+    /// so the prefix cache is seeded exactly the way the first real cleanup will want it.
+    static func fullWarm(modelPath: String) {
+        Task.detached(priority: .utility) {
+            _ = try? complete(modelPath: modelPath,
+                              system: FoundationModelsTransformer.systemPrompt(),
+                              user: "Warm up.", maxTokens: 1)
         }
     }
 
@@ -102,6 +117,11 @@ enum LlamaEngine {
     /// measured as multiple seconds of "processing" before the first generated token.
     /// The KV cache is cleared between runs instead; the context dies with the model.
     nonisolated(unsafe) private static var cachedCtx: OpaquePointer?
+    /// The prompt tokens currently resident in cachedCtx's KV cache (positions 0..<count).
+    /// Lets the next call re-encode only the tokens that differ from this prefix. MUST be
+    /// reset to [] whenever the context is torn down or rebuilt, or the KV and this record
+    /// fall out of sync and reuse decodes at the wrong positions.
+    nonisolated(unsafe) private static var cachedPromptTokens: [llama_token] = []
 
     /// Drop the cached model (memory pressure). Waits for any in-flight generation.
     static func evictCachedModel() {
@@ -109,6 +129,7 @@ enum LlamaEngine {
         lock.lock(); defer { lock.unlock() }
         if let ctx = cachedCtx { llama_free(ctx) }
         cachedCtx = nil
+        cachedPromptTokens = []
         if let model = cachedModel { llama_free_model(model) }
         cachedModel = nil
         cachedPath = nil
@@ -120,11 +141,17 @@ enum LlamaEngine {
         var ctxParams = llama_context_default_params()
         ctxParams.n_ctx = 4096
         ctxParams.n_batch = 1024
+        // Flash attention on Metal: same math, fused kernel - faster prompt prefill and
+        // decode with NO change to the output. Whisper already runs with it; the cleanup
+        // LLM (the measured bottleneck, ~1.4s vs ~0.3s for transcription) did not. Keeps
+        // Phi's quality identical while cutting its latency.
+        ctxParams.flash_attn = true
         let threads = Int32(max(2, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
         ctxParams.n_threads = threads
         ctxParams.n_threads_batch = threads
         guard let ctx = llama_new_context_with_model(model, ctxParams) else { throw LlamaError.contextFailed }
         cachedCtx = ctx
+        cachedPromptTokens = []   // fresh, empty KV
         return ctx
     }
 
@@ -139,8 +166,6 @@ enum LlamaEngine {
         let prompt = Self.formatChat(model: model, system: system, user: user)
 
         let ctx = try sharedContext(model: model)
-        // Fresh conversation, reused allocation: clear the KV between runs.
-        llama_kv_cache_clear(ctx)
 
         // Tokenize the prompt.
         let utf8 = Array(prompt.utf8)
@@ -154,17 +179,40 @@ enum LlamaEngine {
         // Prompt too long for the context? Bail to raw text upstream rather than truncating badly.
         guard tokens.count < 3500 else { throw LlamaError.decodeFailed }
 
-        // Decode the prompt in n_batch-sized slices. A single llama_decode asserts (and crashes the
-        // process) if its batch exceeds n_batch, and a full system prompt + a long transcript can
-        // exceed 1024 tokens. Positions continue automatically from the KV cache across successive
-        // llama_batch_get_one calls - exactly how the per-token generation loop below advances - so
-        // slicing produces identical results without inflating the compute buffer. (This was a
-        // latent crash: any dictation whose prompt topped n_batch would take the app down.)
+        // PROMPT-PREFIX KV REUSE (the big speed win): the cleanup prompt is ~1100 tokens, but
+        // nearly all of it - the safety guardrail plus the fixed REWRITE-RULE framing - is
+        // IDENTICAL on every dictation; only the ~30-token transcript at the tail changes.
+        // Re-encoding the whole prompt cost ~1s of prefill per dictation (measured), dwarfing
+        // the ~0.15s of actual generation. So we keep the previous call's KV cache and re-encode
+        // only the tokens that differ: find how long a prefix this prompt shares with the last
+        // one, drop the KV from that point on (which also clears the previous run's generated
+        // tail), and decode just the divergent remainder. Reusing a prefix's KV yields the same
+        // logits as recomputing it - positions and attention are identical - so the output is
+        // unchanged; only the redundant compute is skipped.
+        let nBatch = Int(llama_n_batch(ctx))
+        var reuse = 0
+        let maxReuse = min(cachedPromptTokens.count, tokens.count - 1)   // keep >=1 token to decode for fresh logits
+        while reuse < maxReuse && cachedPromptTokens[reuse] == tokens[reuse] { reuse += 1 }
+        if reuse > 0 {
+            // Evict positions >= reuse for sequence 0; the KV now holds exactly the shared prefix,
+            // and the next decode continues at position `reuse` (llama tracks n_past from the cache).
+            llama_kv_cache_seq_rm(ctx, 0, Int32(reuse), -1)
+        } else {
+            llama_kv_cache_clear(ctx)
+        }
+        // Until this call finishes cleanly, the KV/record could disagree - clear the record so a
+        // failure can never leave a stale prefix that a later call would trust.
+        cachedPromptTokens = []
+
+        // Decode the divergent tail in n_batch-sized slices. A single llama_decode asserts (and
+        // crashes the process) if its batch exceeds n_batch. Positions continue automatically from
+        // the KV cache across successive llama_batch_get_one calls - exactly how the per-token
+        // generation loop below advances - so slicing (and the prefix reuse above) produce
+        // identical results without inflating the compute buffer.
         // IMPORTANT: llama_batch_get_one only WRAPS the pointer - the decode must happen inside the
         // withUnsafe scope, or it reads a dangling pointer during decode (heap corruption).
-        let nBatch = Int(llama_n_batch(ctx))
         var promptOK = true
-        var decoded = 0
+        var decoded = reuse
         while decoded < tokens.count {
             let sliceLen = min(nBatch, tokens.count - decoded)
             let ok = tokens.withUnsafeMutableBufferPointer { buf -> Bool in
@@ -174,7 +222,11 @@ enum LlamaEngine {
             if !ok { promptOK = false; break }
             decoded += sliceLen
         }
-        guard promptOK else { throw LlamaError.decodeFailed }
+        guard promptOK else { llama_kv_cache_clear(ctx); throw LlamaError.decodeFailed }
+        // The KV now holds exactly these prompt tokens at positions 0..<count; record it so the
+        // NEXT call can reuse this prefix. (Generation appends tokens beyond this, but the next
+        // call's seq_rm drops everything past the shared prefix, generated tail included.)
+        cachedPromptTokens = tokens
 
         // Greedy sampler: deterministic cleanup, no creative drift.
         let sparams = llama_sampler_chain_default_params()
@@ -237,6 +289,8 @@ struct LlamaTransformer: TextTransformer {
         let raw = try await Task.detached(priority: .userInitiated) {
             try LlamaEngine.complete(modelPath: path, system: system, user: user, maxTokens: 1400)
         }.value
-        return FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: appName)
+        return FoundationModelsTransformer.stripEditorialAnnotations(
+            FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: appName),
+            raw: text)
     }
 }

@@ -43,6 +43,7 @@ struct Mode: Codable, Identifiable, Equatable, Hashable {
     // Per-mode engine + vocabulary selection. All optional so older saved modes still decode;
     // nil means "use the global default".
     var speechModelID: String?      // transcription model for this mode
+    var speechModelIDBattery: String?  // lighter model this mode uses on battery (nil = same as plugged)
     var languageModelID: String?    // cleanup model for this mode
     var dictionaryIDs: [UUID]?      // which dictionaries to apply; nil = all enabled ones
     var isEnabled: Bool?            // appears in the quick switcher / cycle; nil = yes

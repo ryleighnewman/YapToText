@@ -50,7 +50,7 @@ extension Notification.Name {
 /// rather than scattered across a toolbar and a sidebar of presets.
 enum AppDestination: String, Hashable, CaseIterable, Identifiable {
     // Models sits ABOVE Modes: chronologically you pick the brain first, then shape how it writes.
-    case home, dictation, quickEdit, modes, actions, dictionaries, commands, history, models, utility, stats, settings
+    case home, dictation, quickEdit, modes, actions, dictionaries, commands, history, models, energy, utility, stats, settings
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -59,6 +59,7 @@ enum AppDestination: String, Hashable, CaseIterable, Identifiable {
         case .quickEdit: return "Quick Edit"
         case .utility: return "Utility"
         case .models: return "AI Models"
+        case .energy: return "Energy"
         case .modes: return "Modes"
         case .actions: return "AI Actions"
         case .dictionaries: return "Dictionaries"
@@ -75,6 +76,7 @@ enum AppDestination: String, Hashable, CaseIterable, Identifiable {
         case .quickEdit: return "pencil.line"
         case .utility: return "square.grid.2x2"
         case .models: return "cpu"
+        case .energy: return "bolt.badge.clock"
         case .modes: return "slider.horizontal.3"
         case .actions: return "wand.and.rays"
         case .dictionaries: return "character.book.closed"
@@ -144,6 +146,17 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showWhatsNew) { WhatsNewView().environment(state) }
+        // Tapping any grayed-out mode/AI control while post-transcription analysis is off raises
+        // this - explaining WHY it's disabled and offering to turn it back on or go to the setting.
+        .alert("Post-transcription analysis is off", isPresented: Binding(
+            get: { state.analysisOffPromptVisible },
+            set: { state.analysisOffPromptVisible = $0 })) {
+            Button("Turn It On") { state.settings.aiCleanupEnabled = true }
+            Button("Open Settings") { destination = .home }
+            Button("Not Now", role: .cancel) { }
+        } message: {
+            Text("Modes, Auto formatting, voice quick edits, and AI cleanup all run on the post-transcription analysis stage. It's turned off right now, so dictation types your words exactly as spoken - the fastest path. Turn it on to use modes and formatting.")
+        }
         .onReceive(publisher(.yapShowWelcome)) { _ in withAnimation { showWelcome = true } }
         .onReceive(publisher(.yapShowHome)) { _ in destination = .home }
         .onReceive(publisher(.yapShowModes)) { _ in destination = .modes }
@@ -396,6 +409,8 @@ struct ContentView: View {
             UtilityView()
         case .models:
             ModelsSettingsView()
+        case .energy:
+            EnergySettingsView()
         case .modes:
             ModesView(path: $modePath)
         case .actions:

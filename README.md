@@ -2,8 +2,12 @@
 
 **Yap it. Bam. It's typed.**
 
-Free, private speech to text for your whole Mac. Press one key, talk, and your words land
-wherever your cursor is. Everything runs on your Mac, and nothing ever leaves it.
+YapToText is a free, open-source dictation app for macOS that runs entirely on your Mac.
+It is a no-subscription alternative to Wispr Flow, superwhisper, and MacWhisper: Whisper
+speech to text plus local AI cleanup, with no account and no cloud.
+
+Press one key, talk, and your words land wherever your cursor is. Nothing ever leaves your
+machine.
 
 [<img src=".github/assets/mac-app-store-badge.svg" alt="Download on the Mac App Store" height="48">](https://apps.apple.com/us/app/yaptotext/id6786382289?mt=12)
 
@@ -14,6 +18,22 @@ wherever your cursor is. Everything runs on your Mac, and nothing ever leaves it
 I built YapToText because I need it. My hands make typing difficult, so I dictate
 everything. The good dictation apps all wanted a subscription and sent my voice to their
 servers. I didn't want either, so I made my own, and I'm giving it away.
+
+## How it compares
+
+| | YapToText | Wispr Flow | superwhisper | MacWhisper | Apple Dictation |
+|---|---|---|---|---|---|
+| Cost | Free, forever | Subscription | Free tier, paid tiers | Paid, one time | Free |
+| Where your voice goes | Never leaves your Mac | Cloud | Local or cloud | Local | Local |
+| Open source | Yes, GPL-3.0 | No | No | No | No |
+| Works offline | Yes, from first launch | No | Yes | Yes | Yes |
+| AI cleanup of what you said | Yes, on device | Yes | Yes | Yes | No |
+| Edit selected text by voice | Yes | No | No | No | No |
+| Account required | No | Yes | No | No | No |
+| Built for accessibility | Yes, VoiceOver and Voice Control | Not stated | Not stated | Not stated | Yes |
+
+Checked August 2026. The paid apps are good software and some of them do things I don't
+do yet. Prices and features change, so check for yourself before you switch.
 
 ## What it does
 
@@ -51,6 +71,35 @@ servers. I didn't want either, so I made my own, and I'm giving it away.
 ![Teach it your words](Marketing/posters-v4/09-personalize.jpg)
 
 ![Privacy](Marketing/posters-v4/08-privacy.jpg)
+
+## What's new in 1.2
+
+- Dramatically faster from stop to text: the AI cleanup reuses its work between dictations, both models warm up at launch, and needless passes were trimmed, so your words appear almost instantly
+- New master switch: turn off post-transcription analysis for the fastest possible raw transcription, or leave it on for modes and formatting
+- Your dictionary now shapes what the app hears, not just what it types, so your names and terms come out right the first time
+- When you fix the same misheard word twice, the app offers to remember it for good
+- A microphone health check in Settings shows how clearly you are being heard, with tips to improve it
+- Better accuracy in noisy rooms and for fast speech
+- Words you finish saying right as you press stop are no longer clipped, and the waveform responds the instant you talk
+- Energy-aware transcription: plugged in uses the full model, on battery it switches to the lighter one to save power, automatically or per mode
+- A new Energy page reads your Mac and recommends the right models for it
+- Long recordings stream out as you go, cut at natural pauses, instead of waiting on a spinner
+- Ending a dictation never starts audio or video that was not already playing; a paused player is only resumed if the app paused it
+- Intelligent insert adapts to the text around your cursor in more apps, including web editors
+- Fixed a freeze that could happen at the start of a dictation while checking Music
+
+## What's new in 1.2
+
+- Dramatically faster from stop to text: models warm at launch, the AI cleanup reuses its work between dictations, and needless extra passes were trimmed
+- New master switch: turn off post-transcription analysis for the fastest possible raw transcription
+- Your dictionary now shapes what the app hears, not just what it types; fix the same misheard word twice and it offers to remember it for good
+- Energy-aware transcription: the full model plugged in, a lighter one on battery, automatically or per mode, with an Energy page that reads your Mac and recommends the right models
+- A diagnostic history: raw transcript, cleaned text, delivered text, delivery outcome, processing time, and optional audio playback for every dictation
+- A microphone health check in Settings with specific tips
+- Long recordings stream out as you go, cut at natural pauses
+- Better accuracy in noisy rooms and for fast speech; words finished right at the stop key are no longer clipped
+- Ending a dictation never starts audio that was not already playing; a paused player is only resumed if the app paused it
+- Fixed a rare crash when the audio device changed mid-dictation, and a freeze at dictation start while checking Music
 
 ## What's new in 1.1.1
 
@@ -135,6 +184,41 @@ open YapToText/YapToText.xcodeproj
 
 Select the YapToText scheme and press Cmd-R. The app is sandboxed and builds the same way
 it ships.
+
+## Questions people ask
+
+**Is there a free alternative to Wispr Flow?**
+This is one. YapToText does the same job, costs nothing, and runs on your Mac instead of a
+server, so there is no subscription and no account.
+
+**Is there an open-source superwhisper alternative?**
+Yes. The whole app is here under GPL-3.0, including the speech and AI pipeline, so you can
+read exactly what happens to your voice.
+
+**What is the best free dictation app for Mac?**
+I am biased, so here is the honest version: Apple's built-in dictation is free and fine for
+short bursts. If you want AI cleanup, modes, custom vocabulary, and editing text by voice
+without paying monthly, that is what I built this for.
+
+**How is this different from Apple's built-in dictation?**
+Apple's transcribes what you say. This transcribes it, then formats it: an email comes out
+as an email, a note as a note. It also fixes words it mishears, remembers your history, and
+lets you edit any selected text by speaking.
+
+**Does it work offline?**
+Yes, from the first launch. The speech model and the AI cleanup model are inside the app.
+
+**Does my voice get sent anywhere?**
+No. There are no network calls at all unless you click a button to download an optional
+model. The Privacy section below documents every byte.
+
+**Is it really free? What is the catch?**
+No catch. No paid tier, no locked features, no ads, no data collection. There is a tip jar
+in the app if you want to, and that is it. I built it because I need it, and charging
+disabled people for the ability to type felt wrong.
+
+**Which Macs does it run on?**
+macOS 14 (Sonoma) or later on Apple Silicon.
 
 ## Support
 

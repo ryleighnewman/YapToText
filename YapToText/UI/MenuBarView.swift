@@ -164,6 +164,7 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .help("Switch how your words get formatted")
+            .analysisGated(state)   // modes do nothing while post-transcription analysis is off
 
             Menu {
                 Button {

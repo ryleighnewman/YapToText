@@ -19,6 +19,19 @@ final class AppState {
     /// False when the global shortcut could not be registered (already claimed elsewhere).
     var mainHotkeyActive = true
 
+    /// Set true when a grayed-out mode/AI control is tapped while post-transcription analysis
+    /// is OFF. ContentView watches this and shows an explanatory alert that offers to turn the
+    /// analysis back on (or take the user to the setting). Any disabled mode control routes its
+    /// tap through `requestAnalysisControl()` instead of doing nothing silently.
+    var analysisOffPromptVisible = false
+
+    /// Called by a disabled mode/AI control. If analysis is already on, this is a no-op (the
+    /// control should be live); otherwise it raises the explanatory prompt.
+    func requestAnalysisControl() {
+        guard !settings.aiCleanupEnabled else { return }
+        analysisOffPromptVisible = true
+    }
+
     init() {
         let settings = AppSettings()
         let modeStore = ModeStore()
