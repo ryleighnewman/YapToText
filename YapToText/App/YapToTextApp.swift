@@ -326,7 +326,11 @@ enum MenuBarIcon {
             var age = (head - frac).truncatingRemainder(dividingBy: 1.0)
             if age < 0 { age += 1 }
             let opacity = 0.12 + 0.88 * (1.0 - age)
-            let angle = frac * 2 * .pi - .pi / 2   // start at 12 o'clock, go clockwise
+            // Start at 12 o'clock and go CLOCKWISE. The canvas is y-UP, so an angle that
+            // merely increases sweeps counter-clockwise - the spinner ran backwards, and
+            // began at 6 o'clock rather than 12 (frac 0 mapped to (0,-1)). Measuring the
+            // angle DOWN from +y fixes both: frac 0 -> 12 o'clock, frac 0.25 -> 3 o'clock.
+            let angle = .pi / 2 - frac * 2 * .pi
             let ci = cos(angle), si = sin(angle)
             let path = NSBezierPath()
             path.move(to: NSPoint(x: cx + ci * rInner, y: cy + si * rInner))

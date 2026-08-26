@@ -85,6 +85,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         ud.set(false, forKey: "diag.cleanExit")
         AppDelegate.shared = self
+        // MODEL MIGRATION (1.2.1): the bundled speech model changed from the full Turbo
+        // to Turbo Q5. Most users never downloaded the full model - it lived only inside
+        // the old app bundle - so after this update their selection points at a file that
+        // no longer exists anywhere. Detect exactly that case and move them to Q5 (the
+        // new bundled model, measured near-identical on real dictations). A user who
+        // DOWNLOADED the full model keeps it: the file exists, nothing changes.
+        if state.settings.selectedSpeechModelID == "whisper-large-v3-turbo",
+           let fp16 = state.models.model(id: "whisper-large-v3-turbo"),
+           state.models.downloads.localURL(for: fp16) == nil {
+            state.settings.selectedSpeechModelID = "whisper-large-v3-turbo-q5"
+            yapdiag("migration: full-turbo selection had no local file; moved to bundled Q5")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.state.controller.flashStatus("Speech model updated to the faster Turbo Q5. The full model is still available on the AI Models page.")
+            }
+        }
+        // DEFAULT CHANGED (1.3): users on another speech model get one clear offer to
+        // move to the new default, with a single click. Never repeated, never forced -
+        // "Keep" is a full answer, and the AI Models page always has both.
+        if !state.settings.q5SwitchOfferShown,
+           state.settings.selectedSpeechModelID != "whisper-large-v3-turbo-q5" {
+            state.settings.q5SwitchOfferShown = true
+            let current = state.models.model(id: state.settings.selectedSpeechModelID)?.displayName
+                ?? (state.settings.selectedSpeechModelID == "apple" ? "Apple Speech" : "your current model")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { return }
+                let alert = NSAlert()
+                alert.messageText = "A faster default model"
+                alert.informativeText = "YapToText's default speech model is now Whisper Large v3 Turbo Q5: verified on hundreds of real dictations to hear as well as the full model, while loading three times faster and using a third of the memory. You're currently using \(current). Switch anytime on the AI Models page."
+                alert.addButton(withTitle: "Switch to Turbo Q5")
+                alert.addButton(withTitle: "Keep \(current)")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    self.state.settings.selectedSpeechModelID = "whisper-large-v3-turbo-q5"
+                    self.state.controller.flashStatus("Speech model switched to Whisper Large v3 Turbo Q5")
+                }
+            }
+        }
         // Build the Quick Edit popup (hidden) now, so the first key press doesn't pay
         // NSPanel + hosting-view construction on top of the selection grab.
         QuickEditWindow.shared.prewarm(controller: state.controller)
@@ -195,6 +231,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // runs each file through the REAL pipeline (decoder -> enhancer -> whisper) with no
         // clipboard, insertion, history, or UI side effects, and writes
         // /tmp/yap-test-results.json ([{"path":...,"ref":...,"text":...,"seconds":...}]).
+        dnc.addObserver(forName: .init("yap.debug.cleanupBench"), object: nil, queue: .main) { [weak self] _ in
+            guard let self,
+                  let phi = self.state.models.languageModels.first(where: { $0.runtime == .llamaCpp }),
+                  let modelURL = self.state.models.downloads.localURL(for: phi) else {
+                yapdiag("cleanupBench: no local cleanup model"); return
+            }
+            Task.detached(priority: .userInitiated) {
+                struct Res: Codable { var text: String; var plain: String; var spec: String
+                                      var plainSeconds: Double; var specSeconds: Double; var identical: Bool }
+                let tmpDir = FileManager.default.temporaryDirectory
+                guard let data = try? Data(contentsOf: tmpDir.appendingPathComponent("yap-cleanup-jobs.json")),
+                      let texts = try? JSONDecoder().decode([String].self, from: data) else {
+                    yapdiag("cleanupBench: no readable jobs file"); return
+                }
+                let system = FoundationModelsTransformer.systemPrompt()
+                var results: [Res] = []
+                for text in texts {
+                    let user = FoundationModelsTransformer.cleanupUserPrompt(for: text, mode: BuiltInModes.clean, context: TransformContext())
+                    var t0 = Date()
+                    let plain = (try? LlamaEngine.complete(modelPath: modelURL.path, system: system, user: user, maxTokens: 1400)) ?? "<ERR>"
+                    let plainS = Date().timeIntervalSince(t0)
+                    t0 = Date()
+                    let spec = (try? LlamaEngine.complete(modelPath: modelURL.path, system: system, user: user, draft: text, maxTokens: 1400)) ?? "<ERR>"
+                    let specS = Date().timeIntervalSince(t0)
+                    results.append(Res(text: text, plain: plain, spec: spec,
+                                       plainSeconds: plainS, specSeconds: specS, identical: plain == spec))
+                    if let out = try? JSONEncoder().encode(results) {
+                        try? out.write(to: tmpDir.appendingPathComponent("yap-cleanup-results.json"))
+                    }
+                }
+                yapdiag("cleanupBench: DONE - \(results.count) texts")
+            }
+        }
         dnc.addObserver(forName: .init("yap.debug.transcribeBatch"), object: nil, queue: .main) { [weak self] _ in
             guard let controller = self?.state.controller else { return }
             Task { @MainActor in
@@ -420,7 +489,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if state.settings.launchAtLogin { LaunchAtLogin.set(true) }
         yapdiag("launch: AXIsProcessTrusted=\(AXIsProcessTrusted()) rightCmd=\(state.settings.rightCommandTrigger.rawValue) hotkeyBehavior=\(state.settings.hotkeyBehavior.rawValue) engine=\(state.settings.engine.rawValue) speech=\(state.settings.selectedSpeechModelID) aiCleanup=\(state.settings.aiCleanupEnabled)")
-        offerRecommendedModelsIfNeeded()
         state.history.pruneOlderThan(days: state.settings.autoDeleteDays)
         prepareSpeechModel()
         // If the last session died mid-dictation, rescue whatever audio made it to disk.
@@ -1179,29 +1247,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if isCancelled?() != true { self.state.controller.flashStatus("AI action failed") }
                 onFinish?(false)
             }
-        }
-    }
-
-    /// One-time startup offer: download the recommended models (Whisper Large v3 Turbo for
-    /// speech, Qwen2.5 3B for cleanup) so defaults work at full quality. Declining keeps the
-    /// instant Apple engines; everything stays downloadable later on the AI Models page.
-    private func offerRecommendedModelsIfNeeded() {
-        guard !state.settings.offeredModelDownloads else { return }
-        let wanted = ["whisper-large-v3-turbo", "phi-3.5-mini-instruct-q4"]
-            .compactMap { state.models.model(id: $0) }
-            .filter { state.models.downloads.localURL(for: $0) == nil }
-        guard !wanted.isEmpty else { state.settings.offeredModelDownloads = true; return }
-        state.settings.offeredModelDownloads = true
-        let totalGB = wanted.reduce(0.0) { $0 + $1.sizeMB } / 1024
-        let names = wanted.map(\.displayName).joined(separator: " and ")
-        let alert = NSAlert()
-        alert.messageText = "Download the recommended models?"
-        alert.informativeText = "For the best accuracy, YapToText uses \(names) (\(String(format: "%.1f", totalGB)) GB, one time). Everything runs and stays on your Mac. Until they finish, the built-in Apple engines are used."
-        alert.addButton(withTitle: "Download")
-        alert.addButton(withTitle: "Later")
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            for model in wanted { state.models.downloads.download(model) }
         }
     }
 

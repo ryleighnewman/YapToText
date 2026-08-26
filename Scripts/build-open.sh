@@ -32,10 +32,10 @@ if [ -f "$BIN" ] && [ -f "$STAMP" ] && [ -z "$(find "$PROJ/YapToText" -name '*.s
    && [ ! "$PROJ/YapToText.xcodeproj/project.pbxproj" -nt "$STAMP" ]; then
   # Even without a rebuild, a binary produced outside this script may be missing the bundled
   # models or the stable signature - ensure both before opening.
-  if [ ! -f "$APP/Contents/Resources/Models/ggml-large-v3-turbo.bin" ]; then
+  if [ ! -f "$APP/Contents/Resources/Models/ggml-large-v3-turbo-q5_0.bin" ]; then
     STAGE="$HOME/Library/Application Support/YapToText-bundled-models"
     mkdir -p "$APP/Contents/Resources/Models"
-    for m in ggml-large-v3-turbo.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do
+    for m in ggml-large-v3-turbo-q5_0.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do
       [ -f "$STAGE/$m" ] && cp -c "$STAGE/$m" "$APP/Contents/Resources/Models/" && echo "bundled $m"
     done
     ENT="/tmp/yaptotext-entitlements.plist"
@@ -90,7 +90,7 @@ touch "$HOME/Library/Caches/YapToTextDD/.build-stamp"
   STAGE="$HOME/Library/Application Support/YapToText-bundled-models"
   APPSTORE="/Applications/YapToText.app/Contents/Resources/Models"
   mkdir -p "$MODELS_DEST"
-  for m in ggml-large-v3-turbo.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do
+  for m in ggml-large-v3-turbo-q5_0.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do
     if [ ! -f "$MODELS_DEST/$m" ]; then
       if [ -f "$STAGE/$m" ]; then cp -c "$STAGE/$m" "$MODELS_DEST/" && echo "bundled $m"
       elif [ -f "$APPSTORE/$m" ]; then cp -c "$APPSTORE/$m" "$MODELS_DEST/" && echo "bundled $m (from App Store app)"

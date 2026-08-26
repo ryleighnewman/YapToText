@@ -198,7 +198,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nif [ \"$CONFIGURATION\" != \"Release\" ]; then\n  # Debug: skip 3.8GB model copy+re-sign; the loader falls back to Application Support\n  rm -rf \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\n  exit 0\nfi\nSRC=\"$HOME/Library/Application Support/YapToText-bundled-models\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\nmkdir -p \"$DEST\"\nfor f in ggml-large-v3-turbo.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do\n  if [ -f \"$SRC/$f\" ]; then\n    if [ ! -f \"$DEST/$f\" ] || [ \"$SRC/$f\" -nt \"$DEST/$f\" ]; then\n      rm -f \"$DEST/$f\"\n      /bin/cp -c \"$SRC/$f\" \"$DEST/$f\" 2>/dev/null || /bin/cp \"$SRC/$f\" \"$DEST/$f\"\n    fi\n  else\n    echo \"warning: bundled model missing: $f\" >&2\n  fi\ndone\n";
+			shellScript = "set -e\nif [ \"$CONFIGURATION\" != \"Release\" ]; then\n  # Debug: skip 3.8GB model copy+re-sign; the loader falls back to Application Support\n  rm -rf \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\n  exit 0\nfi\nSRC=\"$HOME/Library/Application Support/YapToText-bundled-models\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\n# Authoritative: anything not in the list below must NOT survive (the FP16 model\n# shipped in 1.3 because a stale copy lingered here after the list changed).\nrm -rf \"$DEST\"\nmkdir -p \"$DEST\"\nfor f in ggml-large-v3-turbo-q5_0.bin Phi-3.5-mini-instruct-Q4_K_M.gguf; do\n  if [ -f \"$SRC/$f\" ]; then\n    if [ ! -f \"$DEST/$f\" ] || [ \"$SRC/$f\" -nt \"$DEST/$f\" ]; then\n      rm -f \"$DEST/$f\"\n      /bin/cp -c \"$SRC/$f\" \"$DEST/$f\" 2>/dev/null || /bin/cp \"$SRC/$f\" \"$DEST/$f\"\n    fi\n  else\n    echo \"warning: bundled model missing: $f\" >&2\n  fi\ndone\n# ITMS-91109: com.apple.quarantine rides along on downloaded models via cp -c and gets\n# the whole package rejected. Strip every extended attribute from what we just copied.\nxattr -cr \"$DEST\" 2>/dev/null || true\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -294,7 +294,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -309,7 +309,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3.1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = YapToText;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -329,7 +329,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -344,7 +344,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3.1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = YapToText;
 				PRODUCT_NAME = "$(TARGET_NAME)";

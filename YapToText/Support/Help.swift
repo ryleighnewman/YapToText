@@ -131,7 +131,8 @@ enum HelpContent {
             summary: "Say it; the app figures out what it is.",
             blocks: [
                 .paragraph("With Auto mode on, you stop picking modes. Every dictation is screened in an instant and routed to the right treatment: a letter with a greeting and sign-off becomes a formatted email, casual chat stays exactly as spoken, notes read like notes, and everything else gets the standard cleanup."),
-                .paragraph("It reads more than the words. The app you are dictating into counts: Mail leans email, Messages leans casual, editors lean code, Notes leans note. If you dictated a name like \u{201C}Dear Jessica\u{201D}, the email is addressed to her. And the output always stays in the language you spoke."),
+                .paragraph("It reads more than the words. The app you are dictating into counts: Mail leans email, Messages leans casual, editors lean code. If you dictated a name like \u{201C}Dear Jessica\u{201D}, the email is addressed to her. And the output always stays in the language you spoke."),
+                .paragraph("Auto never turns your speech into a bulleted list or a headed note on its own - that only happens if you ask for it, either by picking Note mode or by ending a dictation with \u{201C}as a bullet list\u{201D}."),
                 .heading("Steer it with your voice"),
                 .paragraph("End a dictation with a directive and it becomes an instruction instead of text: \u{201C}\u{2026} make that formal\u{201D}, \u{201C}\u{2026} make it concise\u{201D}, or \u{201C}\u{2026} as a bullet list\u{201D}."),
                 .heading("Replying to something?"),
@@ -141,12 +142,31 @@ enum HelpContent {
 
         HelpArticle(
             id: "cleanup", section: "Writing", icon: "sparkles",
-            title: "AI cleanup and models",
-            summary: "What runs where, and why it is all private.",
+            title: "AI models",
+            summary: "The two models that do the work, and how to change them.",
             blocks: [
-                .paragraph("Two engines do the work. Speech recognition turns audio into text: either Whisper Large v3 Turbo, which ships with the app, or Apple's built-in speech engine. AI cleanup then rewrites that text when the mode asks for it, powered by Apple Intelligence when your Mac has it, or by the bundled Phi model when it does not."),
-                .paragraph("Everything runs on your Mac. The AI Models page shows what is installed, what is available to download, and which engine each mode will use. Models you download are stored locally and can be removed any time."),
-                .tip("The first AI cleanup after launch loads the model, which can take a few seconds. After that it is fast. The panel says so while it happens."),
+                .paragraph("Two models run in sequence, and the AI Models page names them exactly that way. The dictation model turns your voice into words: Whisper Large v3 Turbo (Q5) ships inside the app. The cleanup model then turns those words into finished text when the mode asks for it: the bundled Phi-3.5 Mini, or Apple Intelligence if you prefer it."),
+                .heading("Choosing a different model"),
+                .paragraph("Below your defaults are two libraries: the Dictation Model Library and the Cleanup Model Library. Every entry shows its size and a star rating, and clicking the stars reveals how it rates for accuracy and for performance, plus whether it is the recommended pick. Bigger models hear better; smaller ones are lighter on battery and memory."),
+                .paragraph("You can also bring your own. Any whisper.cpp speech model (.bin) or llama.cpp cleanup model (.gguf) can be added under Your own models, and it then appears everywhere a model can be chosen. Anything that is not a supported architecture is rejected automatically."),
+                .heading("What runs where"),
+                .paragraph("Everything runs on your Mac. Models are stored locally, survive updates, and are never uploaded. Models you download can be removed any time; the bundled ones stay with the app."),
+                .tip("The first dictation after launch loads the model, which takes a moment. After that it is fast, and the panel tells you while it happens."),
+            ]),
+
+        HelpArticle(
+            id: "smartinsert", section: "Writing", icon: "text.cursor",
+            title: "Intelligent insert",
+            summary: "Dictating into the middle of a sentence, without the cleanup afterwards.",
+            blocks: [
+                .paragraph("Text dropped into the middle of existing writing usually needs fixing up: a capital letter that should be lowercase, a missing space, a period that closes a sentence which was meant to continue. Intelligent insert does that for you, by reading the words immediately around your cursor before the text lands."),
+                .steps([
+                    "The first word lowercases itself when you are mid-sentence, sparing names, acronyms, and I.",
+                    "Exactly one space is added where words would otherwise collide.",
+                    "A trailing period is dropped when the sentence continues after the cursor, or when a period is already sitting there.",
+                ]),
+                .paragraph("It is on by default and can be switched off in the Home page's quick controls. Apps that do not expose their text simply get the transcript unchanged, and dictating over a selection always replaces that selection rather than adapting to it."),
+                .tip("Nothing is copied to read your surroundings, and nothing is stored. If an app never answers, YapToText stops asking it and inserts plainly instead, so it never slows a dictation down."),
             ]),
 
         HelpArticle(
@@ -170,6 +190,33 @@ enum HelpContent {
             blocks: [
                 .paragraph("Commands turn a spoken phrase into something typed. Say \u{201C}insert smiley face\u{201D} and the emoji appears in your text. The insert prefix is there so ordinary sentences that happen to contain a command name never trigger by accident; you can turn the prefix off per command."),
                 .paragraph("Punctuation commands glue correctly: saying \u{201C}hashtag vibes\u{201D} produces #vibes with no stray space."),
+            ]),
+
+        HelpArticle(
+            id: "quickedit", section: "Writing", icon: "pencil.and.outline",
+            title: "Quick Edit",
+            summary: "Select text anywhere, then say the change out loud.",
+            blocks: [
+                .paragraph("Quick Edit rewrites text that already exists. Select anything in any app, hold the Quick Edit key, and say what you want changed: make this shorter, fix the grammar, turn it into bullet points, translate it to Spanish. The rewrite replaces your selection in place."),
+                .steps([
+                    "Select the text you want changed.",
+                    "Hold the Quick Edit key (Right Option by default) and say the change.",
+                    "Release. The selection is replaced with the result.",
+                ]),
+                .paragraph("It works on anything selectable: an email you are drafting, a comment in your code, a message you have not sent yet. Your instruction is an instruction, not text to insert, so nothing you say is typed literally."),
+                .tip("The key and whether it is hold-to-talk or tap-to-toggle are both configurable on the Quick Edit page."),
+            ]),
+
+        HelpArticle(
+            id: "energy", section: "Around the app", icon: "bolt.badge.clock",
+            title: "Energy",
+            summary: "This Mac's specifications, and models that follow the power source.",
+            blocks: [
+                .paragraph("The Energy page shows what this Mac is: its chip, memory, core count, model identifier, and whether it is running on battery or plugged in right now."),
+                .heading("Adaptive models"),
+                .paragraph("Turn on Switch models with the power source and you can run different models depending on how the Mac is powered. The dictation model and the cleanup model are set separately, each with its own plugged-in and on-battery choice, and every model you have appears in those menus, including ones you added yourself."),
+                .paragraph("Leave any of them on Use the main selection to keep whatever is set on the AI Models page. A mode carrying its own model choice always wins over these defaults."),
+                .tip("The cleanup model is the heaviest thing the app runs, so putting a lighter one on battery saves the most power."),
             ]),
 
         HelpArticle(
@@ -197,6 +244,7 @@ enum HelpContent {
             summary: "Every dictation kept, searchable, and recoverable.",
             blocks: [
                 .paragraph("Every dictation is saved on your Mac: the raw transcript, the final text, which mode ran, and optionally the audio itself. Search it, filter by date or mode, play recordings back, re-copy anything, or regenerate an old dictation with a different mode."),
+                .paragraph("Open a dictation's details and it also shows where its time went: how long the dictation model took, how long cleanup took, and how long the text took to reach the app you were in."),
                 .heading("If something goes wrong"),
                 .paragraph("Recordings are crash-safe. If the app, or your Mac, dies mid-sentence, the audio survives. On the next launch YapToText finds it, transcribes it, puts the text on your clipboard, and files it in History as \u{201C}Recovered after a crash\u{201D}. You do not lose the words."),
             ]),

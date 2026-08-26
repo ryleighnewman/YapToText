@@ -9,7 +9,8 @@ import Foundation
 ///  2. A heuristic screen (microseconds) confidently routes the obvious text shapes:
 ///     "What's up man?" stays as spoken; "Dear Jessica, ... Thank you, Ryleigh" is an email.
 ///  3. The DESTINATION app breaks ties: dictating into Mail leans email, into Messages leans
-///     casual, into an editor leans code, into Notes leans note.
+///     casual, into an editor leans code. Notes apps get no bias: Auto never
+///     reformats speech into headings or bullets on its own.
 ///  4. Only when everything is still ambiguous does the on-device AI get a one-word
 ///     classification call, so common cases never pay AI latency.
 enum AutoContext {
@@ -30,14 +31,14 @@ enum AutoContext {
         let code = ["com.apple.dt.xcode", "com.microsoft.vscode", "com.todesktop.230313mzl4w4u92",
                     "com.jetbrains", "com.sublimetext", "dev.zed.zed", "com.googlecode.iterm2",
                     "com.apple.terminal", "co.zeit.hyper", "com.github.wez.wezterm"]
-        let note = ["com.apple.notes", "md.obsidian", "notion.id", "com.agiletortoise.drafts",
-                    "com.bear-writer", "net.shinyfrog.bear", "com.evernote"]
+        // NOTE bias removed deliberately: dictating into a notes app is not a request to be
+        // reformatted into headings and bullets. Those apps now fall through to ordinary
+        // cleanup, which keeps the words as spoken. Note mode is still there to PICK.
         // hasPrefix only: every entry is a reverse-DNS prefix, so `.contains` added no real matches
         // and risked false positives from an unrelated ID that happens to embed one of these strings.
         if mail.contains(where: { id.hasPrefix($0) }) { return .email }
         if chat.contains(where: { id.hasPrefix($0) }) { return .message }
         if code.contains(where: { id.hasPrefix($0) }) { return .code }
-        if note.contains(where: { id.hasPrefix($0) }) { return .note }
         return nil
     }
 
@@ -156,7 +157,6 @@ enum AutoContext {
     EMAIL only if it is unmistakably a letter or email with a greeting or sign-off. Polite \
     phrases alone (thanks, please let me know) do NOT make something an email.
     MESSAGE if it is a short casual chat message that should stay as spoken.
-    NOTE if it is a personal note, list, or reminder.
     CLEANUP for everything else.
     Answer with one word only. No punctuation, no explanation.
     """
@@ -165,7 +165,8 @@ enum AutoContext {
         let r = reply.lowercased()
         if r.contains("email") { return .email }
         if r.contains("message") { return .message }
-        if r.contains("note") { return .note }
+        // "note" intentionally NOT mapped: Auto must never reformat speech into a list on
+        // its own. Saying "as a bullet list" still works - that is the user asking.
         return .cleanup
     }
 }

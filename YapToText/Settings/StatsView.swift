@@ -94,7 +94,7 @@ struct StatsView: View {
     // MARK: Activity (last 30 days)
 
     private func activityCard(_ s: Stats) -> some View {
-        CardSection("Last 30 days", subtitle: "Words dictated per day") {
+        CardSection("Words dictated per day for the last 30 days") {
             Chart(s.dailyWords, id: \.day) { point in
                 BarMark(x: .value("Day", point.day, unit: .day),
                         y: .value("Words", point.words))
@@ -148,7 +148,7 @@ struct StatsView: View {
     // MARK: Breakdown (modes + apps)
 
     private func breakdownCard(_ s: Stats) -> some View {
-        CardSection("Where the words go", subtitle: "Top modes and destinations") {
+        CardSection("Top modes and destinations") {
             HStack(alignment: .top, spacing: Metrics.gap) {
                 rankList(title: "Modes", rows: s.topModes, tint: .accentColor)
                 rankList(title: "Apps", rows: s.topApps, tint: .accentColor)
@@ -158,7 +158,9 @@ struct StatsView: View {
 
     private func rankList(title: String, rows: [(String, Int)], tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.tertiary).tracking(0.6)
+            Text(title)
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
             if rows.isEmpty {
                 Text("Nothing yet").font(.caption).foregroundStyle(.secondary)
             }

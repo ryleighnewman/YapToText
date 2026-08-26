@@ -55,6 +55,10 @@ final class DictationController {
     /// True while the recording panel is playing its close choreography: the expanded
     /// layout fades its transcript/bottom bar and leaves the wave to carry the exit.
     var panelIsClosing = false
+    /// Set by cancel() just before dismissing: the panel's close choreography must join
+    /// the wave's cancel farewell (flatten + pull to center), not the finished-session
+    /// collapse into a ring that never formed. Read-and-cleared by RecordingPanel.hide().
+    var closeIsCancel = false
     /// True from show() until the panel actually orders out (set by RecordingPanel).
     /// The condense latch reads it: releasing the latch while the panel is still on
     /// screen snapped the ring back into a full-width wave in front of the user.
@@ -106,6 +110,15 @@ final class DictationController {
     private var sessionDelivered: String?
     private var sessionOutcome: String?
     private var sessionCleanupModel: String?
+    /// The smart-insert surround read, started in parallel with AI cleanup.
+    /// Live width of the compact layout's trailing control block, reported by the view -
+    /// the panel's cancel pinch uses it to aim at the wave band's true center.
+    var compactTrailingWidth: CGFloat = 120
+    private var sessionSurroundTask: Task<InsertionContext.Surround, Never>?
+    /// The stage stopwatch, per session: transcription / cleanup / delivery seconds.
+    private var sessionWhisperSeconds: Double?
+    private var sessionCleanupSeconds: Double?
+    private var sessionDeliverySeconds: Double?
     private var sessionAutoVerdict: String?
     /// True when the dictation began with YapToText itself frontmost - delivery falls back to the
     /// clipboard (see beginRecording for the crash rationale).
@@ -417,6 +430,10 @@ final class DictationController {
         sessionDelivered = nil
         sessionOutcome = nil
         sessionCleanupModel = nil
+        sessionSurroundTask = nil
+        sessionWhisperSeconds = nil
+        sessionCleanupSeconds = nil
+        sessionDeliverySeconds = nil
         sessionAutoVerdict = nil
         Phase.sessionSeed &+= 1   // fresh fun-label variation each dictation
         if settings.pauseMediaDuringDictation { MediaPauser.pauseIfPlaying() }
@@ -713,14 +730,30 @@ final class DictationController {
             guard sid == sessionID, isFinishing else { return }
             recorder.stop()
             recordingEndedAt = Date()   // audio truly ends after the trailing tail
+            // SMART-INSERT PRE-READ starts HERE, not at the cleanup stage. Hooking it to
+            // cleanup meant any dictation that skips the AI pass - anything Auto routes to
+            // "keep as spoken", or every dictation with post-transcription analysis off -
+            // never read its surroundings at all, so smart insert silently did nothing
+            // (caught in Safari: deliveries with no insertctx line whatsoever). Started at
+            // stop it overlaps transcription as well, so it costs even less than before.
+            if sessionSurroundTask == nil, settings.adaptToSurroundings,
+               deliveryTargetIsFrontmost() {
+                sessionSurroundTask = Task { @MainActor in await InsertionContext.readSurroundings(patient: true) }
+            }
             if isPaused { pausedAccumulated += Date().timeIntervalSince(pauseStartedAt) }
             isPaused = false
             // If the speech model still has to load (cold Whisper context), say so - a slow first
             // transcribe used to look frozen. Apple Speech reports nil, so nothing changes there.
             statusDetail = engine.modelLoadingDetail
             do {
+                // STAGE STOPWATCH: one line per stage so "where did the time go" is
+                // answerable from the diagnostics alone.
+                let stageClock = Date()
                 let raw = try await engine.endSession()
+                let tWhisper = Date().timeIntervalSince(stageClock)
+                sessionWhisperSeconds = tWhisper
                 statusDetail = nil   // model is warm now; let the cleanup phase set its own detail
+                yapdiag(String(format: "stage: whisper %.2fs", tWhisper))
                 yapdiag("stop: endSession raw.len=\(raw.count) sid==cur:\(sid == sessionID)")
                 guard sid == sessionID else { return }   // cancelled while finishing
 
@@ -815,6 +848,13 @@ final class DictationController {
                         statusDetail = "Loading the AI model (first time only)…"
                     }
                     setPhase(.transforming)
+                    // Fallback kickoff: normally the read already started at stop (above).
+                    // This covers paths that arrive at cleanup without a recording stop,
+                    // such as regenerating an old dictation.
+                    if sessionSurroundTask == nil, settings.adaptToSurroundings,
+                       deliveryTargetIsFrontmost() {
+                        sessionSurroundTask = Task { @MainActor in await InsertionContext.readSurroundings(patient: true) }
+                    }
                     let cleaned = await runCleanup(text, mode: sessionMode, context: context)
                     guard sid == sessionID else { return }
                     if cleaned != text {
@@ -1067,9 +1107,24 @@ final class DictationController {
                     }
                 }
                 yapdiag("finish: delivering \(delivered.count) chars target=\(deliveryTarget) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") method=\(method.rawValue)")
+                let deliverClock = Date()
+                defer {
+                    sessionDeliverySeconds = Date().timeIntervalSince(deliverClock)
+                    yapdiag(String(format: "stage: delivery %.2fs", Date().timeIntervalSince(deliverClock)))
+                }
+                // Use the surround read that ran during cleanup, but ONLY if the same app
+                // is still frontmost - a focus change makes the cached context a lie.
+                var presurround: InsertionContext.Surround?
+                if let task = sessionSurroundTask {
+                    sessionSurroundTask = nil
+                    if deliveryTargetIsFrontmost() {
+                        presurround = await task.value
+                    } else { task.cancel() }
+                }
                 await TextInserter.deliver(delivered, target: deliveryTarget,
                                      method: method,
-                                     restoreClipboard: settings.restoreClipboard)
+                                     restoreClipboard: settings.restoreClipboard,
+                                     presurround: presurround)
                 sessionDelivered = delivered
                 sessionOutcome = deliveryTarget == .clipboardOnly
                     ? (announcedAXFallback ? "failed: needs Accessibility, copied instead" : "copied to clipboard")
@@ -1117,6 +1172,9 @@ final class DictationController {
                 outcome: sessionOutcome,
                 processSeconds: recordingEndedAt.map { max(0, Date().timeIntervalSince($0)) },
                 cleanupModel: sessionCleanupModel,
+                whisperSeconds: sessionWhisperSeconds,
+                cleanupSeconds: sessionCleanupSeconds,
+                deliverySeconds: sessionDeliverySeconds,
                 autoVerdict: sessionAutoVerdict))
             if !keepSessionAudio { AudioStore.delete(sessionAudioFileName) }   // recovery-only file
         } else {
@@ -1221,6 +1279,7 @@ final class DictationController {
         setPhase(.idle)
         setLiveText("")
         level = 0
+        closeIsCancel = true
         onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
         announce(archiveCancelled ? "Cancelled, saved to History" : "Cancelled")
     }
@@ -1267,6 +1326,11 @@ final class DictationController {
     /// The single place the active speech model is decided, now power-aware.
     /// Order: the mode's battery override (on battery) -> the mode's model -> the
     /// energy-adaptive global pair -> the plain global selection.
+    private func deliveryTargetIsFrontmost() -> Bool {
+        guard let target = sessionTargetApp else { return false }
+        return NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
+    }
+
     func resolvedSpeechModelID(for mode: Mode) -> String {
         let onAC = PowerMonitor.shared.onACPower
         if !onAC, let batteryOverride = mode.speechModelIDBattery { return batteryOverride }
@@ -1276,6 +1340,18 @@ final class DictationController {
             if !onAC, let battery = settings.speechModelBatteryID { return battery }
         }
         return settings.selectedSpeechModelID
+    }
+
+    /// The cleanup model for right now, same precedence as speech: a mode's own choice
+    /// wins, then the power-source pair, then the main selection.
+    func resolvedLanguageModelID(for mode: Mode) -> String {
+        if let modeModel = mode.languageModelID { return modeModel }
+        if settings.energyAdaptive {
+            let onAC = PowerMonitor.shared.onACPower
+            if onAC, let plugged = settings.languageModelPluggedID { return plugged }
+            if !onAC, let battery = settings.languageModelBatteryID { return battery }
+        }
+        return settings.selectedLanguageModelID
     }
 
     func warmSpeechModel() {
@@ -1318,8 +1394,18 @@ final class DictationController {
                 engine.livePreview = settings.livePreviewEnabled
                 // VOCABULARY PRIMING: bias Whisper toward the user's own words up front, so it
                 // hears names/jargon right instead of the dictionary only fixing them afterward.
-                engine.promptBias = vocabulary.primingPrompt(dictionaryIDs: mode.dictionaryIDs)
-                if let bias = engine.promptBias { yapdiag("makeEngine: primed \(bias.count) chars of vocabulary") }
+                // Dictionary terms plus the LIVE working vocabulary: distinctive words and
+                // repeated phrases from the last few dictations, so a term you just used
+                // is heard correctly the next time you say it.
+                var bias = vocabulary.primingPrompt(dictionaryIDs: mode.dictionaryIDs)
+                let recent = history.recentDistinctiveTerms()
+                if !recent.isEmpty {
+                    let recentPart = recent.joined(separator: ", ")
+                    bias = (bias ?? "Glossary: ").replacingOccurrences(of: ".", with: "") + ", " + recentPart + "."
+                    if bias!.hasPrefix("Glossary: , ") { bias = "Glossary: " + recentPart + "." }
+                }
+                engine.promptBias = bias
+                if let bias { yapdiag("makeEngine: primed \(bias.count) chars (recent: \(recent.joined(separator: "|")))") }
                 return engine
             }
             yapdiag("makeEngine: model \(modelID) selected but NOT on disk; falling back to Apple Speech")
@@ -1635,7 +1721,7 @@ final class DictationController {
         // GGUF cleanup is BACK ON: the old segfault was never a llama/ggml version mismatch - the
         // package simply never defined GGML_USE_CPU, so ggml's backend registry had no CPU device
         // and llama's loader null-dereffed in make_cpu_buft_list. Fixed in Vendor Package.swift.
-        let modelID = mode.languageModelID ?? settings.selectedLanguageModelID
+        let modelID = resolvedLanguageModelID(for: mode)
         if modelID != "apple", let model = models.model(id: modelID), model.runtime == .llamaCpp,
            let url = models.downloads.localURL(for: model) {
             return LlamaTransformer(modelURL: url)
@@ -1687,7 +1773,7 @@ final class DictationController {
     /// Human-readable name of the engine cleanupTransformer(for:) would pick - recorded into
     /// history so a bad output can be blamed on the right model. Mirrors that function's order.
     private func cleanupEngineName(for mode: Mode) -> String? {
-        let modelID = mode.languageModelID ?? settings.selectedLanguageModelID
+        let modelID = resolvedLanguageModelID(for: mode)
         if modelID != "apple", let model = models.model(id: modelID), model.runtime == .llamaCpp,
            models.downloads.localURL(for: model) != nil {
             return model.displayName
@@ -1725,6 +1811,11 @@ final class DictationController {
         var context = context
         context.userName = promptUserName(for: mode)
         sessionCleanupModel = cleanupEngineName(for: mode)
+        let stageClock = Date()
+        defer {
+            sessionCleanupSeconds = Date().timeIntervalSince(stageClock)
+            yapdiag(String(format: "stage: cleanup %.2fs (\(sessionCleanupModel ?? "?"))", Date().timeIntervalSince(stageClock)))
+        }
         guard let cleaned = try? await transformer.transform(text, mode: mode, context: context),
               !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
         // If the model answered/refused instead of cleaning, DISCARD it and keep the raw words -

@@ -450,6 +450,12 @@ final class AppSettings {
     var energyAdaptive: Bool { didSet { save() } }
     var speechModelPluggedID: String? { didSet { save() } }
     var speechModelBatteryID: String? { didSet { save() } }
+    // The cleanup model follows the power source too: a 2.3GB local LLM is the single
+    // heaviest thing the app runs, so "lighter on battery" matters most here.
+    var languageModelPluggedID: String? { didSet { save() } }
+    var languageModelBatteryID: String? { didSet { save() } }
+    /// One-time 1.3 offer to move to the new default speech model.
+    var q5SwitchOfferShown: Bool { didSet { save() } }
 
     // Feedback / panel
     var showMenuBarIcon: Bool { didSet { save() } }
@@ -563,6 +569,9 @@ final class AppSettings {
         var energyAdaptive: Bool? = nil
         var speechModelPluggedID: String? = nil
         var speechModelBatteryID: String? = nil
+        var languageModelPluggedID: String? = nil
+        var languageModelBatteryID: String? = nil
+        var q5SwitchOfferShown: Bool? = nil
         var selectedLanguageModelID: String
         var showMenuBarIcon: Bool?
         var menuBarIconStyle: MenuBarIconStyle?
@@ -663,10 +672,13 @@ final class AppSettings {
         micWarmMinutes = loaded?.micWarmMinutes ?? 5
         silenceTimeout = loaded?.silenceTimeout ?? 0
         maxRecordingSeconds = loaded?.maxRecordingSeconds ?? 0
-        selectedSpeechModelID = loaded?.selectedSpeechModelID ?? "whisper-large-v3-turbo"   // superwhisper's "Ultra V3 Turbo"
+        selectedSpeechModelID = loaded?.selectedSpeechModelID ?? "whisper-large-v3-turbo-q5"   // measured vs fp16 on real dictations: near-identical accuracy, 1/3 the memory, faster load
         energyAdaptive = loaded?.energyAdaptive ?? false
         speechModelPluggedID = loaded?.speechModelPluggedID
         speechModelBatteryID = loaded?.speechModelBatteryID
+        languageModelPluggedID = loaded?.languageModelPluggedID
+        languageModelBatteryID = loaded?.languageModelBatteryID
+        q5SwitchOfferShown = loaded?.q5SwitchOfferShown ?? false
         selectedLanguageModelID = loaded?.selectedLanguageModelID ?? "phi-3.5-mini-instruct-q4"   // the bundled Phi is the DEFAULT cleanup brain - fully self-contained, no Apple Intelligence dependency
         showMenuBarIcon = loaded?.showMenuBarIcon ?? true
         menuBarIconStyle = loaded?.menuBarIconStyle ?? .capybara
@@ -741,6 +753,9 @@ final class AppSettings {
             energyAdaptive: energyAdaptive,
             speechModelPluggedID: speechModelPluggedID,
             speechModelBatteryID: speechModelBatteryID,
+            languageModelPluggedID: languageModelPluggedID,
+            languageModelBatteryID: languageModelBatteryID,
+            q5SwitchOfferShown: q5SwitchOfferShown,
             selectedLanguageModelID: selectedLanguageModelID,
             showMenuBarIcon: showMenuBarIcon, menuBarIconStyle: menuBarIconStyle, menuBarColoredStatus: menuBarColoredStatus, accentColorHex: accentColorHex, panelTintHex: panelTintHex, waveColorHex: waveColorHex, waveColorStyle: waveColorStyle, waveStrength: waveStrength, waveRGBSpeed: waveRGBSpeed, waveRGBSpread: waveRGBSpread, panelRGBSpeed: panelRGBSpeed, panelTintStrength: panelTintStrength, panelTintStyle: panelTintStyle, soundStart: soundStart, soundStop: soundStop, soundError: soundError, showDockIcon: showDockIcon,
             hasDismissedHomeNote: hasDismissedHomeNote, hasDismissedDictionaryTip: hasDismissedDictionaryTip, dictionaryTipV2Reset: true, inputDeviceUID: inputDeviceUID,

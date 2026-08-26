@@ -9,7 +9,7 @@
 set -u
 PROJ="/Users/ryleighnewman/Desktop/Apps/YapToText"
 DD="$HOME/Library/Caches/YapToTextDD-Release"
-ARCHIVE="$DD/YapToText-1.2-8.xcarchive"
+ARCHIVE="$DD/YapToText-1.3.1-11.xcarchive"
 ALOG="/tmp/yap-archive7c.log"
 ULOG="/tmp/yap-upload7.log"
 
@@ -38,7 +38,11 @@ done
 wait $BPID 2>/dev/null
 echo "ARCHIVE-EXIT=$?" >> "$ALOG"
 
-if grep -q "ARCHIVE SUCCEEDED" "$ALOG"; then
+MODELS="$ARCHIVE/Products/Applications/YapToText.app/Contents/Resources/Models"
+if grep -q "ARCHIVE SUCCEEDED" "$ALOG" \
+   && [ -f "$MODELS/ggml-large-v3-turbo-q5_0.bin" ] \
+   && [ ! -f "$MODELS/ggml-large-v3-turbo.bin" ] \
+   && [ -z "$(xattr -r "$ARCHIVE/Products/Applications/YapToText.app" 2>/dev/null)" ]; then
   plutil -p "$ARCHIVE/Info.plist" | grep -E "ShortVersion|BundleVersion" >> "$ALOG"
   du -sh "$ARCHIVE/Products/Applications/YapToText.app/Contents/Resources/Models" >> "$ALOG" 2>&1
   xcodebuild -exportArchive -archivePath "$ARCHIVE" \
@@ -46,5 +50,7 @@ if grep -q "ARCHIVE SUCCEEDED" "$ALOG"; then
     -allowProvisioningUpdates > "$ULOG" 2>&1
   echo "UPLOAD-EXIT=$?" >> "$ULOG"
 else
-  echo "ARCHIVE FAILED - upload skipped" >> "$ALOG"
+  echo "ARCHIVE FAILED, WRONG MODELS, OR EXTENDED ATTRIBUTES PRESENT - upload skipped" >> "$ALOG"
+  xattr -r "$ARCHIVE/Products/Applications/YapToText.app" 2>/dev/null | head >> "$ALOG"
+  ls -la "$MODELS" >> "$ALOG" 2>&1
 fi

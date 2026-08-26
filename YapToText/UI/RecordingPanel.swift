@@ -371,6 +371,19 @@ final class RecordingPanel {
         shownAt = Date()
         chromeHosting.layer?.removeAnimation(forKey: "chromeCollapse")
         chromeHosting.layer?.removeAnimation(forKey: "closeShrink")
+        // The cancel pinch holds its end state (scale 0.04, opacity 0) via fillMode -
+        // leaving these on the layer made every panel AFTER a big-menu cancel invisible.
+        chromeHosting.layer?.removeAnimation(forKey: "cancelPinch")
+        hosting.layer?.removeAnimation(forKey: "cancelPinch")
+        hosting.layer?.removeAnimation(forKey: "chromeCollapse")
+        // HEAL any anchor drift from past closes (this build once mutated anchors; the
+        // mini pinch still recenters legitimately): a layer-backed view's frame math
+        // assumes anchor (0,0), so every show restores the contract frame-preservingly.
+        for l in [chromeHosting.layer, hosting.layer].compactMap({ $0 }) where l.anchorPoint != .zero {
+            let f = l.frame
+            l.anchorPoint = .zero
+            l.position = f.origin
+        }
         hosting.layer?.removeAnimation(forKey: "closeShrink")
         hosting.layer?.removeAnimation(forKey: "closeLift")
         for layer in [chromeHosting.layer, hosting.layer].compactMap({ $0 })
@@ -404,6 +417,7 @@ final class RecordingPanel {
         styleMorphLink?.invalidate(); styleMorphLink = nil
         chromeOffset = .zero
         controller.panelIsClosing = false
+        controller.closeIsCancel = false
         // CANONICAL CONDENSE CANCEL - runs on EVERY show, in any state. A new dictation
         // started while the pill was mid-condense (spam-toggling) must always kill the
         // shrink loop, unfreeze the geometry bridge, and drop any leftover layer mask -
@@ -481,6 +495,8 @@ final class RecordingPanel {
         // its own the moment a new recording starts, and show() still resets everything.
         styleMorphLink?.invalidate(); styleMorphLink = nil
         closeLink?.invalidate(); closeLink = nil
+        let closeIsCancel = controller.closeIsCancel
+        controller.closeIsCancel = false
         guard panel.isVisible else { return }
         // Never tear the window down INSIDE a SwiftUI render transaction, and never within the
         // panel's first moments on screen: a quick push-to-talk tap shows and hides the panel in
@@ -502,21 +518,79 @@ final class RecordingPanel {
         // glass collapses into the center point alongside the lines - matching flatten
         // beat (0.15s), then a 0.3s pinch to the middle with a fade. Pure Core Animation
         // on the composited layer; fillMode holds the end state until orderOut.
-        if settings.panelStyle == .mini, chromeSize.width > 100,
-           !controller.isRecording, !controller.isBusy, let layer = chromeHosting.layer {
-            if layer.anchorPoint != CGPoint(x: 0.5, y: 0.5) {
-                let f = layer.frame
-                layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-                layer.position = CGPoint(x: f.midX, y: f.midY)
+        if settings.panelStyle == .mini || settings.panelStyle == .compact, chromeSize.width > 100,
+           !controller.isRecording, !controller.isBusy,
+           let layer = chromeHosting.layer, let contentLayer = hosting.layer {
+            controller.panelIsClosing = true   // triggers the wave's own pull-into-center farewell
+            // SAME LOGIC AS THE BIG CARD'S CANCEL (proven on film there): pinch the glass
+            // into the pill's OWN center - located from the alignment, anchor-relative,
+            // in render space - and fade the content in the same envelope so the wave
+            // never outlives the glass. The old scale.x-about-anchor pinch collapsed
+            // toward the hosting layer's middle and left the line hanging.
+            let bounds = layer.bounds
+            let margin = Self.shadowMargin
+            let h = chromeSize.height
+            let cardTopVisual: CGFloat
+            switch settings.panelPosition.cardAlignment.vertical {
+            case .top:    cardTopVisual = margin
+            case .bottom: cardTopVisual = bounds.height - margin - h
+            default:      cardTopVisual = (bounds.height - h) / 2
             }
-            // Same spring as the line's pull-in (response 0.28, damping 0.9), so pill and
-            // line condense as ONE motion; the fades share the same 0.28s ease too.
-            let pinch = CASpringAnimation(keyPath: "transform.scale.x")
-            pinch.fromValue = 1.0
-            pinch.toValue = 0.04
-            pinch.stiffness = 503
-            pinch.damping = 40
-            pinch.mass = 1
+            // Vertically the pill IS the wave band; horizontally the wave holds only the
+            // LEADING stretch (the trailing block of controls keeps its space during the
+            // farewell), so the pinch must aim at the wave's center, not the pill's -
+            // otherwise glass and line converge on two different points (filmed).
+            let targetY = cardTopVisual + h / 2
+            let renderTargetY = bounds.height - targetY
+            let vScale = Self.panelWidth / 380
+            let cardW = chromeSize.width
+            let cardLeft = (bounds.width - cardW) / 2
+            let waveX: CGFloat
+            if settings.panelStyle == .compact {
+                // Compact: the trailing control block keeps its space, so the wave holds
+                // only the leading stretch.
+                let pad = 10 * vScale
+                let waveW = max(40, cardW - 2 * pad - 8 - controller.compactTrailingWidth)
+                waveX = cardLeft + pad + waveW / 2
+            } else {
+                // Mini: the pill IS the wave - it collapses into its own center.
+                waveX = bounds.midX
+            }
+            let cy = renderTargetY - bounds.height * layer.anchorPoint.y
+            // Aiming the whole pinch at the wave's (off-center) point from the first
+            // frame made the far right edge sprint while the left crawled - a lopsided
+            // collapse. Instead the convergence point MIGRATES: the shrink starts
+            // symmetric about the pill's own center (edges at matched speeds) and the
+            // pinch point slides onto the wave center as the box gets small, so it
+            // still lands exactly on the wave's speck.
+            func pinchTransform(scale sc: CGFloat, aimX: CGFloat) -> CATransform3D {
+                let cx = aimX - bounds.width * layer.anchorPoint.x
+                var m = CATransform3DMakeTranslation(cx, cy, 0)
+                m = CATransform3DScale(m, sc, sc, 1)
+                m = CATransform3DTranslate(m, -cx, -cy, 0)
+                return m
+            }
+            // TWO BEATS, per the eye's demand for symmetry: the wave center sits left of
+            // the pill's middle, so the right wall has farther to travel. Beat 1: the
+            // RIGHT wall alone accelerates in (left edge pinned) until both walls sit
+            // equidistant from the wave center. Beat 2: the now-balanced box closes in
+            // uniformly around that center. In the mini the wave center IS the pill
+            // center, so beat 1 degenerates to identity and only the clean pinch shows.
+            let ax = layer.anchorPoint.x
+            let leftEdgeCx = cardLeft - bounds.width * ax
+            var balance = CATransform3DMakeTranslation(leftEdgeCx, 0, 0)
+            let balancedW = 2 * (waveX - cardLeft)
+            balance = CATransform3DScale(balance, max(0.05, balancedW / max(cardW, 1)), 1, 1)
+            balance = CATransform3DTranslate(balance, -leftEdgeCx, 0, 0)
+            let pinch = CAKeyframeAnimation(keyPath: "transform")
+            pinch.values = [
+                CATransform3DIdentity,
+                balance,
+                pinchTransform(scale: 0.04, aimX: waveX),
+            ]
+            pinch.keyTimes = [0, 0.35, 1]
+            pinch.timingFunctions = [CAMediaTimingFunction(name: .easeIn),
+                                     CAMediaTimingFunction(name: .easeOut)]
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 1.0
             fade.toValue = 0.0
@@ -528,6 +602,94 @@ final class RecordingPanel {
             group.fillMode = .forwards
             group.isRemovedOnCompletion = false
             layer.add(group, forKey: "chromeCollapse")
+            let contentFade = CABasicAnimation(keyPath: "opacity")
+            contentFade.fromValue = 1.0
+            contentFade.toValue = 0.0
+            contentFade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            contentFade.beginTime = CACurrentMediaTime() + 0.15
+            contentFade.duration = 0.32
+            contentFade.fillMode = .forwards
+            contentFade.isRemovedOnCompletion = false
+            contentLayer.add(contentFade, forKey: "chromeCollapse")
+        } else if settings.panelStyle == .expanded, closeIsCancel, chromeSize.width > 100,
+                  let layer = chromeHosting.layer, let contentLayer = hosting.layer {
+            // THE BIG CARD'S CANCEL: the wave plays its farewell (flatten 0.10s, then a
+            // spring pull into its own center), so the glass pinches into that SAME point
+            // with the SAME spring - one motion, no ring, no three-beat collapse. Running
+            // the finished-session choreography here left a full-width slab hanging while
+            // the line vanished (caught frame by frame), because that choreography
+            // collapses into a ring that never formed on cancel.
+            controller.panelIsClosing = true   // transcript/bottom bar fade leads (0.12s)
+            // THE ORIGINAL CANCEL, applied to the big card: the wave plays its own
+            // farewell (flatten, then pull into the center - the reverse of the shoot-out
+            // birth) COMPLETELY untouched, and the glass simply collapses into the middle
+            // alongside it, matching the small menu's long-standing cancel. No ring
+            // targets, no content animations, no anchor mutation (a composed transform
+            // keeps the layer geometry contract intact).
+            // Collapse INTO THE WAVE'S CENTER, not the hosting layer's midpoint. The card
+            // is drawn inside a larger fixed hosting view at the panel-position alignment
+            // (bottom/center/top), so bounds.midY is usually OUTSIDE the card - pinching
+            // toward it dragged the glass off toward a corner (the reported bug). Locate
+            // the visible card from the alignment, then the wave band's center within it
+            // (same measurement as the finished-session close).
+            let bounds = layer.bounds
+            let margin = Self.shadowMargin
+            let h = chromeSize.height
+            let vScale = Self.panelWidth / 380
+            let ringY = (11 * vScale) + (44 * 0.82 * vScale) / 2   // wave center from card top
+            let cardTopVisual: CGFloat
+            switch settings.panelPosition.cardAlignment.vertical {
+            case .top:    cardTopVisual = margin
+            case .bottom: cardTopVisual = bounds.height - margin - h
+            default:      cardTopVisual = (bounds.height - h) / 2
+            }
+            // cardTopVisual is measured top-down; convert when the layer is bottom-up.
+            let targetX = bounds.midX
+            let targetY = cardTopVisual + ringY   // top-down; render-space flip below
+            // A layer transform applies RELATIVE TO THE ANCHOR POINT, not the bounds
+            // origin - composing with bounds coordinates put the fixed point at
+            // position + target, which parked the collapse at the top-right corner
+            // (filmed). Express the pinch target as an offset from the anchor.
+            // ...and the transform itself runs in RENDER space (y-up), even when the
+            // layer tree is geometryFlipped - so a top-down target must flip to y-up
+            // before going into the matrix (filmed: the pinch point sat mirrored below
+            // the wave by exactly the flip distance).
+            let renderTargetY = bounds.height - targetY   // layout is top-down, the matrix is y-up
+            let cx = targetX - bounds.width * layer.anchorPoint.x
+            let cy = renderTargetY - bounds.height * layer.anchorPoint.y
+            yapdiag("cancelPinch: bounds=\(bounds) anchor=\(layer.anchorPoint) pos=\(layer.position) flipped=\(layer.isGeometryFlipped) h=\(h) cardTop=\(cardTopVisual) ringY=\(ringY) target=(\(targetX),\(targetY))")
+            var collapse = CATransform3DMakeTranslation(cx, cy, 0)
+            collapse = CATransform3DScale(collapse, 0.04, 0.04, 1)
+            collapse = CATransform3DTranslate(collapse, -cx, -cy, 0)
+            let pinch = CASpringAnimation(keyPath: "transform")
+            pinch.fromValue = CATransform3DIdentity
+            pinch.toValue = collapse
+            pinch.stiffness = 503; pinch.damping = 40; pinch.mass = 1   // the line's pull-in spring
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1.0
+            fade.toValue = 0.0
+            fade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            let group = CAAnimationGroup()
+            group.animations = [pinch, fade]
+            group.beginTime = CACurrentMediaTime() + 0.15   // after the flatten beat, same as mini
+            group.duration = 0.32
+            group.fillMode = .forwards
+            group.isRemovedOnCompletion = false
+            layer.add(group, forKey: "cancelPinch")
+            // The wave's farewell choreography stays untouched, but its FINAL state (the
+            // tiny flat line) was held until orderOut - a visible leftover speck after
+            // the glass had gone. Fade the content in the same envelope as the chrome so
+            // both reach zero on the same frame.
+            let contentFade = CABasicAnimation(keyPath: "opacity")
+            contentFade.fromValue = 1.0
+            contentFade.toValue = 0.0
+            contentFade.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            contentFade.beginTime = CACurrentMediaTime() + 0.15
+            contentFade.duration = 0.32
+            contentFade.fillMode = .forwards
+            contentFade.isRemovedOnCompletion = false
+            contentLayer.add(contentFade, forKey: "cancelPinch")
+            closingWithShrink = true   // orderOut waits for the full pinch+fade (0.42s), never clipping it
         } else if settings.panelStyle == .expanded, !controller.isRecording,
                   chromeSize.width > 100,   // already condensed to the pill: plain fade below
                   let chromeLayer = chromeHosting.layer, let contentLayer = hosting.layer {

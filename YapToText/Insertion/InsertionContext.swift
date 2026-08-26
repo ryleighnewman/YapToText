@@ -83,9 +83,13 @@ enum InsertionContext {
         }
 
         // The sentence continues right after the cursor: the transcript must not close it.
+        // And when a terminator ALREADY sits right after the cursor, the sentence is
+        // closed without our help - keeping the transcript's own period printed ".."
+        // (dictating just before an existing period doubled it).
         if let nextVisible = after.first(where: { !$0.isWhitespace }) {
             let continues = nextVisible.isLowercase || ",;:)]".contains(nextVisible)
-            if continues, t.hasSuffix(".") { t.removeLast() }
+            let alreadyClosed = ".!?\u{2026}".contains(nextVisible)
+            if continues || alreadyClosed, t.hasSuffix(".") { t.removeLast() }
         }
 
         // Spacing against the neighbors: one space where words would otherwise collide.
@@ -112,8 +116,8 @@ enum InsertionContext {
     ///   selection must REPLACE it - the selection dance would destroy it. Also covers
     ///   editors that copy the whole line on an empty selection (VS Code-style).
     @MainActor
-    private static func keyRead() async -> Surround {
-        guard !TextInserter.isSecureInputActive else { return .none }
+    private static func keyRead(patient: Bool) async -> (s: Surround, appAnswered: Bool) {
+        guard !TextInserter.isSecureInputActive else { return (.none, false) }
         let pb = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(pb)
         defer { snapshot.write(to: pb) }
@@ -140,10 +144,12 @@ enum InsertionContext {
         //    treated any non-nil result - including "" - as a selection and bailed, so
         //    smart insert never engaged inside Reddit. An empty copy is never a selection
         //    worth preserving, so only a non-empty probe aborts the read.
-        if let probe = await copyChanged(0.15),
-           !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let probe = await copyChanged(patient ? 0.15 : 0.1)
+        if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             yapdiag("insertctx: live selection - inserting unadapted")
-            return .none
+            // Deliberate abort, not a capability failure - report unanswered so the
+            // outcome stays neutral and no strike is recorded.
+            return (.none, false)
         }
         // 2 + 3. Read both sides. Slow apps (Electron especially) sometimes service the
         //    synthetic selection keys or the copy late; one quiet retry makes the read
@@ -151,37 +157,154 @@ enum InsertionContext {
         //    insert didn't turn on" report. The waits are async, so patience is free.
         var before: String?
         var after: String?
-        for attempt in 0..<2 {
+        // On the critical path (insert time) a single tight attempt: an app that answers
+        // does so in well under 200ms, and a silent one should not hold the delivery
+        // hostage. The pre-read keeps the patient two-attempt timing - it runs hidden
+        // behind AI cleanup, where waiting costs nothing.
+        // ONE attempt, even when patient. Every attempt fires ~9 command-key events and the
+        // target's Edit menu flashes on each one - visibly ugly, and the second attempt
+        // doubled it. A longer settle below buys the same reliability for half the flashing.
+        let attempts = 1
+        let probeAnswered = probe != nil
+        // How long the target gets to ACT on the selection keys before we copy. 30ms is
+        // fine for a native text field, but a canvas-backed web editor (Google Docs,
+        // Notion) runs its own JS key handling and had not moved the selection yet - the
+        // copy then returned an EMPTY string, which is exactly what "smart insert does
+        // nothing in Google Docs" looked like. The pre-read has time to spare, so spend it.
+        let settle: UInt64 = patient ? 240_000_000 : 30_000_000
+        func isBlank(_ v: String?) -> Bool { (v ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        for attempt in 0..<attempts {
             // BEFORE: select up to three words back, copy, collapse to the selection's
             // RIGHT edge (the original caret). Collapse only when something was actually
             // selected - at the document start a bare Right would WALK the caret forward.
             for _ in 0..<3 { TextInserter.postKey(0x7B, flags: optShift) }   // Opt+Shift+Left
-            try? await Task.sleep(nanoseconds: 30_000_000)
-            before = await copyChanged(attempt == 0 ? 0.25 : 0.4)
+            try? await Task.sleep(nanoseconds: settle)
+            before = await copyChanged(patient ? 0.5 : 0.18)
+            // Collapse ONLY when the copy answered - a non-answer means we cannot tell
+            // whether anything got selected, and a bare Right with NO selection WALKS the
+            // caret forward one character. Doing it unconditionally moved the cursor to
+            // the wrong spot on every silent read, which is now every dictation since the
+            // pre-read runs at stop. The stranded-selection risk this guarded against is
+            // covered instead by the pre-read running ~a second before delivery, which
+            // gives even a slow app time to service the keys before the paste lands.
             if before != nil { TextInserter.postKey(0x7C, flags: []) }       // Right: restore caret
             try? await Task.sleep(nanoseconds: 20_000_000)
             // AFTER: mirror image - two words forward, collapse to the LEFT edge.
             for _ in 0..<2 { TextInserter.postKey(0x7C, flags: optShift) }   // Opt+Shift+Right
-            try? await Task.sleep(nanoseconds: 30_000_000)
-            after = await copyChanged(attempt == 0 ? 0.25 : 0.4)
+            try? await Task.sleep(nanoseconds: settle)
+            after = await copyChanged(patient ? 0.5 : 0.18)
             if after != nil { TextInserter.postKey(0x7B, flags: []) }        // Left: restore caret
             try? await Task.sleep(nanoseconds: 20_000_000)
-            if before != nil || after != nil { break }
+            // A non-nil but BLANK read on both sides means the target bumped the
+            // pasteboard without having moved its selection yet: no context at all, so
+            // treat it as unanswered and give it the retry rather than "adapting" to "".
+            if !isBlank(before) || !isBlank(after) { break }
+            if attempt + 1 >= attempts { break }
+            // The retry stays: slow apps (Electron) often answer on the second attempt,
+            // and counting their first-beat silence as failure got a WORKING app banned
+            // by the capability cache ("smart insert stopped working" in the user's main
+            // app). Dead apps now get caught by the cache instead of by skipping retries.
             yapdiag("insertctx: key-sim read empty, retrying once")
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
 
-        guard before != nil || after != nil else { return .none }
+        guard !isBlank(before) || !isBlank(after) else {
+            // Reported as UNANSWERED on purpose, so a blank read scores neutral and never
+            // accrues strikes: a slow web editor that gave nothing this time is not an app
+            // that can never answer, and banning it is how the feature silently died in
+            // the user's main app once already.
+            yapdiag("insertctx: read came back blank - inserting unadapted")
+            return (.none, false)
+        }
         yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after=\((after ?? "").prefix(30).debugDescription)")
-        return Surround(before: before ?? "", after: after ?? "", available: true)
+        return (Surround(before: before ?? "", after: after ?? "", available: true), true)
     }
 
-    /// The one-call entry the inserter uses: read surroundings (AX when the process may,
-    /// key-simulation inside the sandbox), adapt if possible.
+    // PER-APP CAPABILITY MEMORY: some apps never answer the key-sim read (games, some
+    // Electron surfaces, terminals) - every dictation there paid the full ~2s timeout
+    // budget and inserted unadapted anyway. After 3 consecutive total failures in an app
+    // the read is skipped there, with a re-probe every 25th insert so an app that starts
+    // cooperating (update, settings change) gets rediscovered.
+    private static func failKey(_ b: String) -> String { "insertctx.fail." + b }
+    private static func skipKey(_ b: String) -> String { "insertctx.skips." + b }
+
+    private static func shouldSkipRead(bundleID: String?) -> Bool {
+        guard let b = bundleID else { return false }
+        let ud = UserDefaults.standard
+        guard ud.integer(forKey: failKey(b)) >= 5 else { return false }
+        let skips = ud.integer(forKey: skipKey(b)) + 1
+        if skips >= 25 {
+            ud.set(0, forKey: skipKey(b))
+            ud.set(4, forKey: failKey(b))   // one strike from re-banning: a single failed re-probe re-skips
+            yapdiag("insertctx: re-probing \(b) after 25 skipped reads")
+            return false
+        }
+        ud.set(skips, forKey: skipKey(b))
+        return true
+    }
+
+    private enum ReadOutcome { case success, failure, neutral }
+
+    private static func recordReadOutcome(bundleID: String?, _ outcome: ReadOutcome) {
+        guard let b = bundleID else { return }
+        let ud = UserDefaults.standard
+        switch outcome {
+        case .success:
+            ud.set(0, forKey: failKey(b))
+            ud.set(0, forKey: skipKey(b))
+        case .failure:
+            ud.set(ud.integer(forKey: failKey(b)) + 1, forKey: failKey(b))
+        case .neutral:
+            // Total silence is ambiguous: a dead app OR an empty field (empty-selection
+            // Cmd+C never bumps the pasteboard in most native and Electron editors, and
+            // an empty field needs no adaptation anyway). Never a strike. The read's
+            // cost hides behind cleanup via the pre-read, so ambiguity is cheap.
+            break
+        }
+    }
+
+    /// Read the surroundings NOW (AX when the process may, key-simulation inside the
+    /// sandbox), with the per-app skip. Separated from adapt() so the read can run
+    /// CONCURRENTLY with AI cleanup - its latency hides behind the model's.
     @MainActor
-    static func adapted(_ text: String) async -> String {
+    static func readSurroundings(patient: Bool = false) async -> Surround {
+        let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        if shouldSkipRead(bundleID: bundle) {
+            yapdiag("insertctx: skipping read for \(bundle ?? "?") (never answers)")
+            return .none
+        }
         var s = read()
-        if !s.available { s = await keyRead() }
+        var appAnswered = true          // the AX path answering IS an answer
+        if !s.available {
+            let key = await keyRead(patient: patient)
+            s = key.s
+            appAnswered = key.appAnswered
+        }
+        let outcome: ReadOutcome = s.available ? .success : (appAnswered ? .failure : .neutral)
+        recordReadOutcome(bundleID: bundle, outcome)
+        return s
+    }
+
+    /// The one-call entry the inserter uses when no pre-read is available.
+    @MainActor
+    static func adapted(_ text: String, presurround: Surround? = nil,
+                        allowInsertTimeRead: Bool = false) async -> String {
+        var s: Surround
+        if presurround == nil, !allowInsertTimeRead {
+            // No pre-read (focus changed mid-cleanup, or adaptation was off when the
+            // session started): insert unadapted rather than driving the caret while the
+            // paste is milliseconds away - synthetic selection keys racing a Cmd+V is how
+            // text ends up replaced instead of inserted.
+            return text
+        }
+        if let presurround {
+            // A completed pre-read is authoritative - it already ran patiently in the
+            // frontmost target during cleanup. Re-reading here would repeat the whole
+            // caret dance on the critical path for the same answer.
+            s = presurround
+        } else {
+            s = await readSurroundings()
+        }
         guard s.available, !(s.before.isEmpty && s.after.isEmpty) else { return text }
         return adapt(text, before: s.before, after: s.after)
     }

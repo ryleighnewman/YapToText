@@ -12,7 +12,7 @@ struct WelcomeView: View {
     @Binding var isPresented: Bool
 
     enum Step: Int, CaseIterable, Identifiable {
-        case welcome, permissions, controls, demo, modes, quickEdit, appearance, energy, privacy, ready
+        case welcome, permissions, controls, demo, modes, quickEdit, appearance, privacy, ready
         var id: Int { rawValue }
     }
 
@@ -119,7 +119,6 @@ struct WelcomeView: View {
         case .modes: modesStep
         case .quickEdit: quickEditStep
         case .appearance: appearanceStep
-        case .energy: energyStep
         case .controls: controlsStep
         case .privacy: privacyStep
         case .ready: readyStep
@@ -356,72 +355,6 @@ struct WelcomeView: View {
             AppearanceQuickPicker()
                 .frame(maxWidth: 520)
         }
-    }
-
-    // The energy setup: what Mac this is, the recommended model pair, and the honest
-    // compromise. One click accepts; the alternative keeps full power everywhere.
-    @State private var energyChoiceMade = false
-    private var energyStep: some View {
-        let hardware = HardwareProfile.current
-        return VStack(spacing: 16) {
-            VStack(spacing: 8) {
-                Image(systemName: "bolt.badge.clock")
-                    .font(.system(size: 40, weight: .semibold))
-                    .iconTint(Color.accentColor)
-                    .frame(width: 74, height: 74)
-                Text("Models that fit this Mac").font(.title.weight(.bold)).multilineTextAlignment(.center)
-                Text(hardware.summaryLine)
-                    .font(.callout).foregroundStyle(.secondary)
-                Text(hardware.recommendationExplanation)
-                    .font(.body).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 470)
-            }
-            VStack(spacing: 10) {
-                Button {
-                    let rec = hardware.recommendedSpeechModels
-                    state.settings.energyAdaptive = true
-                    state.settings.speechModelPluggedID = rec.plugged
-                    state.settings.speechModelBatteryID = rec.battery
-                    energyChoiceMade = true
-                } label: {
-                    energyChoiceRow("checkmark.seal",
-                                    "Use the recommendation",
-                                    "Adaptive: the best model this Mac carries when plugged in, the efficient one on battery.",
-                                    selected: energyChoiceMade && state.settings.energyAdaptive)
-                }
-                .buttonStyle(.plain)
-                Button {
-                    state.settings.energyAdaptive = false
-                    state.settings.speechModelPluggedID = nil
-                    state.settings.speechModelBatteryID = nil
-                    energyChoiceMade = true
-                } label: {
-                    energyChoiceRow("gauge.with.needle",
-                                    "Full power everywhere",
-                                    "One model regardless of power source. You can change this anytime in Settings > Energy.",
-                                    selected: energyChoiceMade && !state.settings.energyAdaptive)
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(maxWidth: 480)
-        }
-    }
-
-    private func energyChoiceRow(_ icon: String, _ title: String, _ detail: String, selected: Bool) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.title3).iconTint(Color.accentColor).frame(width: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.callout.weight(.semibold))
-                Text(detail).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            if selected { Image(systemName: "checkmark.circle.fill").iconTint(Color.accentColor) }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(selected ? 0.16 : 0.08)))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private var privacyStep: some View {

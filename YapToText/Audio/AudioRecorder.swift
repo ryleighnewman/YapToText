@@ -171,7 +171,11 @@ final class AudioRecorder: @unchecked Sendable {
                 sessionLock.lock()
                 preRoll.append(copy)
                 preRollLastAppend = Date()
-                let cap = Int(0.5 * buffer.format.sampleRate / Double(max(1, buffer.frameLength))) + 1
+                // 1.0s, up from 0.5s: rapid-fire dictation starts speech BEFORE the press
+                // more than half a second early (measured: 1.6s recordings of 2.2s phrases,
+                // first words lost, whisper hallucinating the openings). A second of ring
+                // at 16k mono is trivial memory; the reach-back must cover a fast talker.
+                let cap = Int(1.0 * buffer.format.sampleRate / Double(max(1, buffer.frameLength))) + 1
                 while preRoll.count > cap { preRoll.removeFirst() }
                 sessionLock.unlock()
             }

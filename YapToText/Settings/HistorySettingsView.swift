@@ -188,6 +188,10 @@ struct HistorySettingsView: View {
                         if let app = record.appName { detailBullet("Target app", app) }
                         detailBullet("Spoken for", String(format: "%.1fs", record.durationSeconds))
                         if let secs = record.processSeconds { detailBullet("Stop to text", String(format: "%.1fs", secs)) }
+                        // The stage split: where stop-to-text actually went.
+                        if let w = record.whisperSeconds { detailBullet("- transcription", String(format: "%.1fs", w)) }
+                        if let c = record.cleanupSeconds { detailBullet("- AI cleanup", String(format: "%.1fs", c)) }
+                        if let d = record.deliverySeconds { detailBullet("- delivery", String(format: "%.1fs", d)) }
                         detailBullet("Language", record.localeIdentifier)
                         detailBullet("Audio", record.hasAudio ? "saved with this entry" : "not kept")
                     }

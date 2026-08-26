@@ -1,4 +1,5 @@
 import Foundation
+import Accelerate
 
 /// Quiet, behind-the-scenes speech conditioning for the transcription pipeline.
 ///
@@ -126,6 +127,90 @@ enum SpeechEnhancer {
             }
         }
         return (out, gain)
+    }
+
+    /// STATIONARY-NOISE SPECTRAL SUBTRACTION. Built for the measured failure case: a
+    /// running machine (printer, fan) parking 70-80% of its energy in a narrow low band,
+    /// dragging the whole clip to 8-11dB SNR where whisper starts inventing first words.
+    /// The noise's per-frequency fingerprint is estimated from the clip's own quietest
+    /// frames (15th percentile per bin - speech can't pollute it), subtracted from every
+    /// frame with a spectral floor so speech texture survives, and the clip is rebuilt
+    /// with the original phase. Callers gate this on LOW measured SNR: healthy audio
+    /// never passes through it, so the clean case carries zero risk.
+    static func denoiseStationary(_ audio: [Float]) -> [Float] {
+        let n = 512, hop = 128
+        guard audio.count > n * 4 else { return audio }
+        let bins = n / 2 + 1
+        var window = [Float](repeating: 0, count: n)
+        vDSP_hann_window(&window, vDSP_Length(n), Int32(vDSP_HANN_DENORM))
+
+        guard let fwd = vDSP.DFT(count: n, direction: .forward, transformType: .complexComplex, ofType: Float.self),
+              let inv = vDSP.DFT(count: n, direction: .inverse, transformType: .complexComplex, ofType: Float.self)
+        else { return audio }
+
+        let frameCount = (audio.count - n) / hop + 1
+        // Magnitudes for the noise profile come from a capped sample of frames so a very
+        // long clip doesn't hold every spectrum in memory at once.
+        let profileStride = max(1, frameCount / 2000)
+        var profileMags: [[Float]] = []   // [sampledFrame][bin]
+
+        var realIn = [Float](repeating: 0, count: n)
+        var imagIn = [Float](repeating: 0, count: n)
+        var realOut = [Float](repeating: 0, count: n)
+        var imagOut = [Float](repeating: 0, count: n)
+
+        // Pass 1: collect sampled magnitude spectra for the profile.
+        for f in stride(from: 0, to: frameCount, by: profileStride) {
+            let start = f * hop
+            for i in 0..<n { realIn[i] = audio[start + i] * window[i] }
+            imagIn = [Float](repeating: 0, count: n)
+            fwd.transform(inputReal: realIn, inputImaginary: imagIn,
+                          outputReal: &realOut, outputImaginary: &imagOut)
+            var mags = [Float](repeating: 0, count: bins)
+            for b in 0..<bins { mags[b] = (realOut[b]*realOut[b] + imagOut[b]*imagOut[b]).squareRoot() }
+            profileMags.append(mags)
+        }
+        guard profileMags.count >= 8 else { return audio }
+        var noise = [Float](repeating: 0, count: bins)
+        let idx = max(0, Int(Double(profileMags.count) * 0.15) - 1)
+        for b in 0..<bins {
+            var col = profileMags.map { $0[b] }
+            col.sort()
+            noise[b] = col[idx]
+        }
+
+        // Pass 2: subtract and rebuild by weighted overlap-add.
+        let alpha: Float = 1.2      // measured: 1.6 ate speech onsets on the worst clips
+        let beta: Float = 0.10      // spectral floor (fraction of the ORIGINAL magnitude)
+        var out = [Float](repeating: 0, count: audio.count)
+        var wsum = [Float](repeating: 0, count: audio.count)
+        for f in 0..<frameCount {
+            let start = f * hop
+            for i in 0..<n { realIn[i] = audio[start + i] * window[i] }
+            imagIn = [Float](repeating: 0, count: n)
+            fwd.transform(inputReal: realIn, inputImaginary: imagIn,
+                          outputReal: &realOut, outputImaginary: &imagOut)
+            // Scale each bin's magnitude; mirror bins share their conjugate's factor.
+            for b in 0..<bins {
+                let mag = (realOut[b]*realOut[b] + imagOut[b]*imagOut[b]).squareRoot()
+                let target = max(mag - alpha * noise[b], beta * mag)
+                let scale = mag > 1e-9 ? target / mag : 0
+                realOut[b] *= scale
+                imagOut[b] *= scale
+                if b > 0 && b < n - b {   // conjugate mirror
+                    realOut[n - b] *= scale
+                    imagOut[n - b] *= scale
+                }
+            }
+            inv.transform(inputReal: realOut, inputImaginary: imagOut,
+                          outputReal: &realIn, outputImaginary: &imagIn)
+            for i in 0..<n {
+                out[start + i] += (realIn[i] / Float(n)) * window[i]
+                wsum[start + i] += window[i] * window[i]
+            }
+        }
+        for i in 0..<out.count where wsum[i] > 1e-6 { out[i] /= wsum[i] }
+        return out
     }
 
     /// SILENCE COMPRESSION (endpointing): whisper-family models degrade on long dead air -

@@ -18,6 +18,25 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
+        Entry(version: "1.3.1 (11)", points: [
+            "Dictation is over twice as fast, with a new default speech model",
+            "The app is about a gigabyte smaller",
+            "Intelligent insert is faster and now works in far more apps",
+            "Your clipboard is handed back right after a dictation is pasted",
+            "Auto mode no longer turns what you say into a list on its own",
+            "Energy settings now switch the cleanup model with the power source, not just the dictation model",
+            "The AI Models page shows what each model is for, with accuracy and speed ratings",
+            "A rewritten in-app Help covering Quick Edit, intelligent insert, and energy",
+            "Bug fixes, including the menu bar spinner running backwards",
+        ]),
+        Entry(version: "1.3 (9)", points: [
+            "Dictation is over twice as fast",
+            "New lighter default speech model, and the app is 1GB smaller",
+            "Background noise is removed before transcribing",
+            "Learns your vocabulary from your recent dictations",
+            "Smarter, faster text insertion",
+            "Smoother animations and many small fixes",
+        ]),
         Entry(version: "1.2 (8)", points: [
             "Dramatically faster from stop to text: the AI cleanup reuses its work between dictations, both the speech and AI models warm up at launch, and needless extra passes were trimmed, so your words appear almost instantly",
             "New master switch: turn off post-transcription analysis for the fastest possible raw transcription, or leave it on for modes, formatting, and cleanup",

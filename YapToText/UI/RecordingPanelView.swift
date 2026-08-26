@@ -655,10 +655,14 @@ struct RecordingPanelView: View {
                 optionsMenu
                 jumpToAppButton
             }
-            .opacity(miniCondensed ? 0 : 1)
+            // Fade on the CLOSE too, not just the processing condense - on cancel these
+            // buttons (expand, open app) hung on screen after everything else had gone,
+            // caught only by the glass's late fade. Same 0.12s lead the expanded row uses.
+            .opacity(controller.panelIsClosing || miniCondensed ? 0 : 1)
+            .animation(.easeOut(duration: 0.12), value: controller.panelIsClosing)
             .animation(.easeOut(duration: 0.16), value: miniCondensed)
-            .allowsHitTesting(!miniCondensed)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { compactTrailingWidth = $0 }
+            .allowsHitTesting(!controller.panelIsClosing && !miniCondensed)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { compactTrailingWidth = $0; controller.compactTrailingWidth = $0 }
         }
         .frame(height: 34)
         // Style switched INTO compact while already condensed - the exact mirror of the

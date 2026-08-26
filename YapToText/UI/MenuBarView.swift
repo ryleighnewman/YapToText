@@ -60,6 +60,11 @@ struct MenuBarView: View {
             .iconTint(Color.accentColor)
             .accessibilityHidden(true)
             Text("YapToText").font(.headline)
+            // The running build, right where you look while testing - text only, no button.
+            Text(Changelog.currentVersion)
+                .font(.caption).monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .padding(.top, 2)
             Spacer()
             if state.controller.isRecording {
                 // Plain circular transport controls, matching the dictation panel's language.

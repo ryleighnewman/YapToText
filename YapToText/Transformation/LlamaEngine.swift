@@ -156,7 +156,7 @@ enum LlamaEngine {
     }
 
     static func complete(modelPath: String, system: String, user: String,
-                         maxTokens: Int32 = 1024) throws -> String {
+                         draft: String? = nil, maxTokens: Int32 = 1024) throws -> String {
         inferenceLock.lock(); defer { inferenceLock.unlock() }
         let model = try sharedModel(path: modelPath)
 
@@ -234,27 +234,111 @@ enum LlamaEngine {
         defer { llama_sampler_free(sampler) }
         llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
 
+        // SELF-SPECULATIVE DECODING: cleanup is copy-editing, so the model mostly re-types
+        // the raw transcript. Use the transcript itself as the draft: after each confirmed
+        // token, look up where the draft continues the same way and decode a RUN of draft
+        // tokens in one batch, verifying every position against the model's own greedy
+        // argmax. Sampling is greedy, so accepted runs are bit-identical to what the plain
+        // loop would have produced - this changes speed, never output. Where the model
+        // edits (the interesting parts), verification fails and decoding falls back to
+        // single steps until the draft realigns.
+        var draftTokens: [llama_token] = []
+        if let draft, !draft.isEmpty {
+            let dUtf8 = Array(draft.utf8)
+            var dBuf = [llama_token](repeating: 0, count: dUtf8.count + 8)
+            let dn = llama_tokenize(model, draft, Int32(dUtf8.count), &dBuf, Int32(dBuf.count), false, false)
+            if dn > 0 { draftTokens = Array(dBuf[0..<Int(dn)]) }
+        }
+        let specWidth = 10
+        let nVocab = Int(llama_n_vocab(model))
+
+        func argmax(_ i: Int32) -> llama_token {
+            guard let logits = llama_get_logits_ith(ctx, i) else { return -1 }
+            var best = 0
+            var bestV = logits[0]
+            for v in 1..<nVocab where logits[v] > bestV { best = v; bestV = logits[v] }
+            return llama_token(best)
+        }
+        /// Next draft run after a (prev, cur) pair - bigram match first, unigram fallback.
+        func speculate(prev: llama_token?, cur: llama_token) -> [llama_token] {
+            guard draftTokens.count > 1 else { return [] }
+            var fallback: Int? = nil
+            for i in 0..<(draftTokens.count - 1) where draftTokens[i] == cur {
+                if let prev, i > 0, draftTokens[i - 1] != prev {
+                    if fallback == nil { fallback = i }
+                    continue
+                }
+                return Array(draftTokens[(i + 1)..<min(draftTokens.count, i + 1 + specWidth)])
+            }
+            if let f = fallback {
+                return Array(draftTokens[(f + 1)..<min(draftTokens.count, f + 1 + specWidth)])
+            }
+            return []
+        }
+
         var out = ""
         var pieceBuf = [CChar](repeating: 0, count: 256)
-        var tokenBuf = [llama_token](repeating: 0, count: 1)
-        for _ in 0..<maxTokens {
-            let token = llama_sampler_sample(sampler, ctx, -1)
-            if llama_token_is_eog(model, token) { break }
+        var nPast = tokens.count             // prompt occupies positions 0..<tokens.count
+        var emitted = 0
+        var prevTok: llama_token? = nil
+        var next = llama_sampler_sample(sampler, ctx, -1)
+
+        /// Append one confirmed token's text; true = generation is finished.
+        func emit(_ token: llama_token) -> Bool {
+            if llama_token_is_eog(model, token) { return true }
             let n = llama_token_to_piece(model, token, &pieceBuf, Int32(pieceBuf.count), 0, true)
             if n > 0 {
                 out += String(decoding: pieceBuf[0..<Int(n)].map { UInt8(bitPattern: $0) }, as: UTF8.self)
             }
-            // Backstop if a model emits its end marker as text instead of an EOG token.
+            emitted += 1
             if let marker = Self.stopMarkers.first(where: { out.hasSuffix($0) }) {
                 out.removeLast(marker.count)
-                break
+                return true
             }
-            tokenBuf[0] = token
-            let stepOK = tokenBuf.withUnsafeMutableBufferPointer { buf -> Bool in
-                let batch = llama_batch_get_one(buf.baseAddress, 1)
-                return llama_decode(ctx, batch) == 0
+            return false
+        }
+
+        var accepted = 0, offered = 0
+        decodeLoop: while emitted < maxTokens {
+            if emit(next) { break }
+            let spec = speculate(prev: prevTok, cur: next)
+            offered += spec.count
+            let run = [next] + spec
+            var batch = llama_batch_init(Int32(run.count), 0, 1)
+            for (i, t) in run.enumerated() {
+                batch.token[i] = t
+                batch.pos[i] = llama_pos(nPast + i)
+                batch.n_seq_id[i] = 1
+                batch.seq_id[i]![0] = 0
+                batch.logits[i] = 1              // verify every position
             }
-            guard stepOK else { break }
+            batch.n_tokens = Int32(run.count)
+            let ok = llama_decode(ctx, batch) == 0
+            llama_batch_free(batch)
+            guard ok else { break }
+
+            // Walk the verifications: position i's argmax is the model's token AFTER run[i].
+            var used = 0
+            var follower = argmax(0)
+            while used < spec.count, follower == spec[used] {
+                used += 1
+                follower = argmax(Int32(used))
+            }
+            accepted += used
+            nPast += 1 + used
+            if used < spec.count {
+                // Drop the rejected KV tail so the cache matches what was really accepted.
+                llama_kv_cache_seq_rm(ctx, 0, llama_pos(nPast), -1)
+            }
+            for j in 0..<used {
+                prevTok = j == 0 ? next : spec[j - 1]
+                if emit(spec[j]) { break decodeLoop }
+            }
+            prevTok = used == 0 ? next : spec[used - 1]
+            next = follower
+        }
+        if offered > 0 {
+            yapdiag("llama: speculative accepted \(accepted)/\(offered) draft tokens (\(emitted) emitted)")
         }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -287,7 +371,7 @@ struct LlamaTransformer: TextTransformer {
         let user = FoundationModelsTransformer.cleanupUserPrompt(for: text, mode: mode, context: context)
         let path = modelURL.path
         let raw = try await Task.detached(priority: .userInitiated) {
-            try LlamaEngine.complete(modelPath: path, system: system, user: user, maxTokens: 1400)
+            try LlamaEngine.complete(modelPath: path, system: system, user: user, draft: text, maxTokens: 1400)
         }.value
         return FoundationModelsTransformer.stripEditorialAnnotations(
             FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: appName),

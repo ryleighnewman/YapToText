@@ -72,21 +72,20 @@ do yet. Prices and features change, so check for yourself before you switch.
 
 ![Privacy](Marketing/posters-v4/08-privacy.jpg)
 
-## What's new in 1.2
+## What's new in 1.3.1
 
-- Dramatically faster from stop to text: the AI cleanup reuses its work between dictations, both models warm up at launch, and needless passes were trimmed, so your words appear almost instantly
-- New master switch: turn off post-transcription analysis for the fastest possible raw transcription, or leave it on for modes and formatting
-- Your dictionary now shapes what the app hears, not just what it types, so your names and terms come out right the first time
-- When you fix the same misheard word twice, the app offers to remember it for good
-- A microphone health check in Settings shows how clearly you are being heard, with tips to improve it
-- Better accuracy in noisy rooms and for fast speech
-- Words you finish saying right as you press stop are no longer clipped, and the waveform responds the instant you talk
-- Energy-aware transcription: plugged in uses the full model, on battery it switches to the lighter one to save power, automatically or per mode
-- A new Energy page reads your Mac and recommends the right models for it
-- Long recordings stream out as you go, cut at natural pauses, instead of waiting on a spinner
-- Ending a dictation never starts audio or video that was not already playing; a paused player is only resumed if the app paused it
-- Intelligent insert adapts to the text around your cursor in more apps, including web editors
-- Fixed a freeze that could happen at the start of a dictation while checking Music
+- Dictation is over twice as fast, with a new default speech model
+- The app is about a gigabyte smaller
+- Intelligent insert is faster and now works in far more apps
+- Your clipboard is handed back right after a dictation is pasted
+- Auto mode no longer turns what you say into a list on its own
+- Energy settings now switch the cleanup model with the power source, not just the dictation model
+- The AI Models page shows what each model is for, with accuracy and speed ratings
+- A rewritten in-app Help covering Quick Edit, intelligent insert, and energy
+- Bug fixes, including the menu bar spinner running backwards
+
+1.3 shipped this same work but bundled the wrong speech model, so the speed and size
+gains only actually arrive in 1.3.1.
 
 ## What's new in 1.2
 

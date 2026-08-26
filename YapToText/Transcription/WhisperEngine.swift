@@ -12,6 +12,21 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
 
     private let lock = NSLock()
     private var samples: [Float] = []
+    // INCREMENTAL COMMIT: long dictations are transcribed WHILE the user talks. Once the
+    // uncommitted audio passes ~24s, a background task cuts it at a silence near 18s and
+    // transcribes that piece through the identical per-segment pipeline; endSession then
+    // only pays for the tail. Guarded by `lock`; whisper inference itself is serialized
+    // by `inferenceLock` (the preview, the commits, and the final pass share one context).
+    private var committedPieces: [String] = []
+    private var committedCount: Int = 0
+    private var commitTask: Task<Void, Never>?
+    // Commit ONLY in segmentation territory: measured on real dictations, cutting
+    // normal-length clips into small pieces cost 14% text divergence (whisper loses
+    // cross-piece context), so short and mid clips keep their single pass untouched.
+    // Past the 240s threshold the clip gets cut at 120s boundaries REGARDLESS - doing
+    // those pieces during the recording adds no new seams, it only prepays the wait.
+    private static let commitTriggerSeconds: Double = 140
+    private static let commitCutTarget: Double = 120
     private var converter: AVAudioConverter?
     private var converterInputFormat: AVAudioFormat?
     private var language = "auto"
@@ -163,6 +178,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         lock.lock()
         let logThis = samples.count < 8000   // first ~0.5s of the session only
         samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: frames))
+        maybeStartCommit()
         lock.unlock()
         if logThis {
             var peak: Float = 0
@@ -186,14 +202,68 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         return mono
     }
 
+    /// Called (with `lock` HELD) whenever samples grow: starts one background commit
+    /// when enough uncommitted audio has piled up. The commit itself copies its slice
+    /// under the lock and releases it before inference.
+    private func maybeStartCommit() {
+        guard commitTask == nil, modelIsOnDisk, let modelURL else { return }
+        let uncommitted = samples.count - committedCount
+        guard Double(uncommitted) > WhisperEngine.sampleRate * Self.commitTriggerSeconds else { return }
+        let lang = language
+        commitTask = Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.commitOnePiece(modelURL: modelURL, lang: lang)
+        }
+    }
+
+    private func commitOnePiece(modelURL: URL, lang: String) async {
+        lock.lock()
+        let base = committedCount
+        let region = Array(samples[base...])
+        let stop = cancelled
+        lock.unlock()
+        defer { lock.lock(); commitTask = nil; lock.unlock() }
+        guard !stop else { return }
+        // Cut at a silence near the target; if the region has no usable cut (one
+        // unbroken stretch of speech), skip - the next append re-arms the trigger.
+        let bounds = Self.segmentBounds(region, sampleRate: WhisperEngine.sampleRate,
+                                        target: Self.commitCutTarget)
+        guard bounds.count >= 2, let first = bounds.first else {
+            yapdiag("commit: no silence cut in region; deferring")
+            return
+        }
+        let piece = Array(region[first])
+        do {
+            let text = try await transcribeOneShot(piece, modelURL: modelURL, lang: lang)
+            lock.lock()
+            if !cancelled {
+                if !text.isEmpty { committedPieces.append(text) }
+                committedCount = base + first.upperBound
+            }
+            lock.unlock()
+            yapdiag(String(format: "commit: %.1fs piece -> %d chars (%.1fs committed total)",
+                           Double(piece.count) / WhisperEngine.sampleRate, text.count,
+                           Double(base + first.upperBound) / WhisperEngine.sampleRate))
+        } catch {
+            yapdiag("commit: piece failed (\(error)); tail pass will cover it")
+        }
+    }
+
     func endSession() async throws -> String {
         previewTask?.cancel()
         _ = await previewTask?.value   // wait out any in-flight preview inference
         previewTask = nil
+        // A commit mid-flight finishes first: its piece then counts as committed and the
+        // tail below shrinks accordingly. Serialization with the tail pass is by design -
+        // they never overlap.
+        lock.lock(); let pending = commitTask; lock.unlock()
+        _ = await pending?.value
         lock.lock()
-        var audio = samples
+        var audio = Array(samples[committedCount...])
+        let committed = committedPieces
         let lang = language
         samples.removeAll()
+        committedPieces.removeAll()
+        committedCount = 0
         converter = nil
         converterInputFormat = nil
         lock.unlock()
@@ -202,7 +272,9 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         let peakDiag = Self.peakWindowRMS(audio)
         yapdiag(String(format: "whisper endSession: samples=%d (%.2fs) peak=%.4f gates: min=%.4f",
                        audio.count, Double(audio.count) / Double(WhisperEngine.sampleRate), peakDiag, Self.silenceRMS))
-        guard audio.count > Int(WhisperEngine.sampleRate / 2) else { return "" }   // < 0.5s: nothing said
+        guard audio.count > Int(WhisperEngine.sampleRate / 2) else {
+            return committed.joined(separator: " ")   // < 0.5s tail: whatever was committed IS the dictation
+        }
 
         // LONG SESSIONS ARE SEGMENTED. Every conditioning stage below allocates a full
         // copy of the clip, and whisper's cost climbs with length, so a runaway session
@@ -212,10 +284,13 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // piece runs through the identical pipeline, one at a time, so peak memory is
         // bounded by the segment length no matter how long the recording ran.
         // Below the threshold nothing changes: same single pass, same tuning.
+        let tail: String
         if audio.count > Int(WhisperEngine.sampleRate * Self.segmentThreshold) {
-            return try await transcribeSegmented(audio, modelURL: modelURL, lang: lang)
+            tail = try await transcribeSegmented(audio, modelURL: modelURL, lang: lang)
+        } else {
+            tail = try await transcribeOneShot(audio, modelURL: modelURL, lang: lang)
         }
-        return try await transcribeOneShot(audio, modelURL: modelURL, lang: lang)
+        return (committed + (tail.isEmpty ? [] : [tail])).joined(separator: " ")
     }
 
     /// Longer than this (seconds) and the clip is cut into pieces. Chosen so a normal
@@ -231,7 +306,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         let peakDiag = Self.peakWindowRMS(audio)
         let originalCount = audio.count
         // Speech conditioning: measure where the SPEECH sits vs the room's own floor.
-        let analysis = SpeechEnhancer.analyze(audio, sampleRate: WhisperEngine.sampleRate)
+        var analysis = SpeechEnhancer.analyze(audio, sampleRate: WhisperEngine.sampleRate)
         // Energy gate: if the whole clip never reached speech-level energy, nothing was said -
         // don't even run the model (whisper WILL invent "Thank you." from silence of any length).
         // WHISPER-AWARE: genuinely quiet speech (whispering) can sit below the absolute gate
@@ -240,6 +315,22 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         let quietButReal = analysis.speechLevel >= max(0.003, analysis.noiseFloor * 3)
             && analysis.activeSeconds >= 0.4
         guard peak >= Self.silenceRMS || quietButReal else { return "" }
+        // STATIONARY-NOISE REMOVAL, gated on measured SNR: below 15dB (a machine running
+        // near the mic) the hum's spectral fingerprint is subtracted before anything
+        // else. Clean audio never enters this path, so the healthy case is untouched.
+        let sIn = Double(max(analysis.speechLevel, 1e-6))
+        let fIn = Double(max(analysis.noiseFloor, 1e-6))
+        let snrIn: Double = 20 * log10(sIn / fIn)
+        // 14dB, not 15: at the boundary the subtraction costs whisper its punctuation
+        // cues for no accuracy gain (borderline clips already transcribe correctly).
+        if snrIn < 14 {
+            audio = SpeechEnhancer.denoiseStationary(audio)
+            analysis = SpeechEnhancer.analyze(audio, sampleRate: WhisperEngine.sampleRate)
+            let sOut = Double(max(analysis.speechLevel, 1e-6))
+            let fOut = Double(max(analysis.noiseFloor, 1e-6))
+            let snrOut: Double = 20 * log10(sOut / fOut)
+            yapdiag(String(format: "denoise: stationary subtraction %.1fdB -> %.1fdB", snrIn, snrOut))
+        }
         // Lift quiet speech to the level the model expects (no-op on healthy audio).
         var (conditioned, gain) = SpeechEnhancer.enhance(audio, analysis: analysis)
         // ENDPOINTING: collapse dead-air stretches longer than 3s down to a natural pause.
@@ -275,6 +366,12 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         }
 
         // Inference is CPU/GPU-heavy; keep it off the cooperative pool's main lanes.
+        // NOTE: dual-pass arbitration (decode raw AND denoised, pick by whisper's mean
+        // token probability) was built and MEASURED here on 13 real noisy clips: the
+        // confidence signal chose confidently-wrong raw decodes over correct denoised
+        // ones ("Fasting their" beat the correct reading at p 0.605 vs 0.506), a net
+        // quality LOSS plus a doubled decode. Confidence is not truth in noise. Removed;
+        // transcribeScored remains for future work with a better arbitration signal.
         var text = try await Task.detached(priority: .userInitiated) { [audio] in
             try WhisperEngine.transcribe(modelPath: path, audio: audio, language: lang, initialPrompt: bias, isCancelled: isCancelled)
         }.value
@@ -566,6 +663,8 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         lock.lock()
         cancelled = true
         samples.removeAll()
+        committedPieces.removeAll()
+        committedCount = 0
         converter = nil
         converterInputFormat = nil
         lock.unlock()
@@ -650,6 +749,17 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     private static func transcribe(modelPath: String, audio: [Float], language: String,
                                    allowBeam: Bool = true, initialPrompt: String? = nil,
                                    isCancelled: @escaping () -> Bool) throws -> String {
+        try transcribeScored(modelPath: modelPath, audio: audio, language: language,
+                             allowBeam: allowBeam, initialPrompt: initialPrompt,
+                             isCancelled: isCancelled).text
+    }
+
+    /// Like transcribe, but also reports whisper's OWN mean per-token probability - the
+    /// model's confidence in what it wrote. Used to arbitrate between the raw and the
+    /// denoised decode of a noisy clip: whichever reading the model believed more, wins.
+    private static func transcribeScored(modelPath: String, audio: [Float], language: String,
+                                         allowBeam: Bool = true, initialPrompt: String? = nil,
+                                         isCancelled: @escaping () -> Bool) throws -> (text: String, confidence: Double) {
         inferenceLock.lock()
         defer { inferenceLock.unlock() }
         let context = try sharedContext(for: modelPath)
@@ -677,6 +787,9 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // moves the common noisy case onto beam-5. Beam is a superset search of greedy, so
         // this only ever helps accuracy; the cost is compute, and turbo has headroom to spare.
         let noisy = allowBeam && (snrDB < 18 || clippedFrac > 0.001)
+        // NOTE: beam-3-always for quantized models was tried here and measured on 60 real
+        // dictations: no accuracy gain over adaptive greedy/beam-5 (7.0% vs 6.5% divergence
+        // from the fp16 reference), so it was removed. Adaptive decoding stands.
         var params = whisper_full_default_params(noisy ? WHISPER_SAMPLING_BEAM_SEARCH
                                                        : WHISPER_SAMPLING_GREEDY)
         if noisy { params.beam_search.beam_size = 5 }
@@ -712,14 +825,21 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         guard status == 0 else {
             throw TranscriptionError.unavailable("Transcription failed (whisper error \(status)). Try again or switch models.")
         }
-        if isCancelled() { return "" }
+        if isCancelled() { return ("", 0) }
 
         var text = ""
+        var pSum = 0.0
+        var pCount = 0
         for i in 0..<whisper_full_n_segments(context) {
             if let segment = whisper_full_get_segment_text(context, i) {
                 text += String(cString: segment)
             }
+            for t in 0..<whisper_full_n_tokens(context, i) {
+                pSum += Double(whisper_full_get_token_p(context, i, t))
+                pCount += 1
+            }
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let confidence = pCount > 0 ? pSum / Double(pCount) : 0
+        return (text.trimmingCharacters(in: .whitespacesAndNewlines), confidence)
     }
 }

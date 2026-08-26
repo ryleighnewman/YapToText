@@ -25,6 +25,10 @@ struct DictationRecord: Codable, Identifiable, Equatable, Hashable {
     var processSeconds: Double? = nil
     /// Which cleanup engine actually ran ("Apple Intelligence", the GGUF's display name) - nil if none.
     var cleanupModel: String? = nil
+    /// Per-stage split of processSeconds: where the stop-to-text time actually went.
+    var whisperSeconds: Double? = nil
+    var cleanupSeconds: Double? = nil
+    var deliverySeconds: Double? = nil
     /// Auto mode's detected verdict (email / message / note / code / cleanup) - nil outside Auto.
     var autoVerdict: String? = nil
 
@@ -63,6 +67,63 @@ final class HistoryStore {
             trim()
             save()
         }
+    }
+
+    /// The user's LIVE working vocabulary: distinctive terms from the most recent
+    /// dictations, for whisper's glossary priming. Repeating a phrase across dictations
+    /// is the strongest possible signal it will be said again ("testing the remarkable
+    /// speeds", a project name, a person being discussed). Common words are filtered by
+    /// a small stopword set; capitalized words and repeated bigrams rank first.
+    func recentDistinctiveTerms(limit: Int = 8) -> [String] {
+        let stop: Set<String> = ["the","a","an","and","or","but","of","to","in","on","for","with",
+            "is","are","was","were","be","been","it","its","this","that","these","those","i","im",
+            "you","your","my","me","we","our","they","them","their","so","just","like","really",
+            "can","cant","could","should","would","will","wont","dont","do","does","did","have",
+            "has","had","not","no","yes","okay","ok","please","thanks","thank","going","get","got",
+            "make","made","need","want","one","two","at","as","by","if","when","then","than","now",
+            "also","very","about","from","up","out","all","some","there","here","what","which",
+            "how","why","who","been","being","because","right","well","new","more","still"]
+        var wordRecords: [String: Set<Int>] = [:]
+        var bigramRecords: [String: (recs: Set<Int>, display: String)] = [:]
+        var caseMap: [String: String] = [:]
+        for (ri, r) in records.prefix(12).enumerated() {
+            let words = r.finalText.split { !$0.isLetter && $0 != "'" }.map(String.init)
+            var prevKey: String? = nil
+            var prevWord: String? = nil
+            for w in words {
+                // Apostrophe contractions are function words too ("it's", "i'm", "don't").
+                let k = w.lowercased()
+                let bare = k.replacingOccurrences(of: "'", with: "")
+                let content = !stop.contains(k) && !stop.contains(bare) && !k.contains("'") && k.count >= 3
+                if content {
+                    wordRecords[k, default: []].insert(ri)
+                    if caseMap[k] == nil || (w.first?.isUppercase ?? false) { caseMap[k] = w }
+                }
+                if let pk = prevKey, let pw = prevWord, content {
+                    let bk = pk + " " + k
+                    var entry = bigramRecords[bk] ?? ([], pw + " " + w)
+                    entry.recs.insert(ri)
+                    bigramRecords[bk] = entry
+                }
+                prevKey = content ? k : nil
+                prevWord = content ? w : nil
+            }
+        }
+        var terms: [String] = []
+        // A phrase only counts when it recurs across DISTINCT dictations - one rant
+        // repeating itself is not working vocabulary, a phrase that keeps coming back is.
+        for (_, v) in bigramRecords.sorted(by: { $0.value.recs.count > $1.value.recs.count })
+        where v.recs.count >= 2 {
+            terms.append(v.display)
+            if terms.count >= limit / 2 { break }
+        }
+        let covered = Set(terms.flatMap { $0.lowercased().split(separator: " ").map(String.init) })
+        for (k, recs) in wordRecords.sorted(by: { $0.value.count > $1.value.count }) {
+            guard terms.count < limit else { break }
+            guard !covered.contains(k), recs.count >= 3 else { continue }
+            terms.append(caseMap[k] ?? k)
+        }
+        return terms
     }
 
     func add(_ record: DictationRecord) {
