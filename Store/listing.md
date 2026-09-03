@@ -42,7 +42,7 @@ SPEAK HOWEVER YOU WANT
 
 WHISPER-CLASS ACCURACY, BUILT IN
 - Ships with Whisper Large v3 Turbo for speech and a bundled cleanup model for polish, both inside the app. No downloads, no setup: fully offline from first launch.
-- Cleanup fixes filler words, false starts, and punctuation on every Mac, with no cloud and no account.
+- Cleanup fixes filler words, false starts, and punctuation, on every Mac.
 - Bring your own: any Whisper speech model or GGUF cleanup model drops into the model library.
 
 MODES: YOUR WORDS, FORMATTED
