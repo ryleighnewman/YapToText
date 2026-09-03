@@ -28,50 +28,45 @@ WHY IT'S DIFFERENT
 DICTATION THAT BEHAVES LIKE DICTATION
 - Say "question mark" or "exclamation point" and the mark lands where you said it, with no stray period left behind. Say "dot dot dot" and get an ellipsis. Mention a punctuation name mid-sentence and it stays a word.
 - Intelligent insert: dictate into the middle of a sentence and the first word lowercases, the spacing joins cleanly, and a trailing period is dropped when the sentence continues.
-- Quick Edit: select text in any app, hold a key, and say the change. "Make this shorter." "Fix the spelling." "Turn it into a list."
+- Quick Edit: select text in any app, hold a key, and say the change. "Make this shorter." "Fix the spelling."
 - Voice corrections: "scratch that," "replace X with Y," "add this to my dictionary."
 
 AUTO MODE: IT KNOWS AN EMAIL WHEN IT HEARS ONE
 - Auto reads each dictation and picks the right format by itself: emails get formatted as emails, casual messages stay as spoken, everything else is cleaned up.
 - It listens to context: the app you're dictating into, spoken requests like "make that formal," even the text you have selected.
-- Conservative by design. It fixes what the mic misheard and never rewrites your voice, never drops a sentence, and never adds words you did not say.
+- Conservative by design. It fixes what the mic misheard and never rewrites your voice, drops a sentence, or adds words you did not say.
 
 SPEAK HOWEVER YOU WANT
-- Whisper if you need to: auto-amplify measures your voice against the room, not a fixed level, and lifts a quiet voice to full clarity. If your Mac's input volume is set low, the app tells you and can raise it.
-- Background noise is measured and removed before transcription.
-- Push-to-talk (hold to record) or toggle mode, pause and resume, cancel with Esc.
-- Silence auto-stop ends the recording when you stop talking, hands free.
+- Whisper if you need to: auto-amplify measures your voice against the room, not a fixed level, and lifts a quiet voice to full clarity. If your Mac's input volume is set low, the app tells you and can raise it. Background noise is removed before transcription.
+- Push-to-talk (hold to record) or toggle mode, pause and resume, cancel with Esc. Silence auto-stop ends the recording when you stop talking.
 - One tap of the Right Command key starts everything, or remap it to any shortcut, down to a single bare key.
 
 WHISPER-CLASS ACCURACY, BUILT IN
 - Ships with Whisper Large v3 Turbo and a local AI cleanup model inside the app. No downloads, no setup: it works fully offline from first launch.
 - Or use Apple's on-device speech engine for instant results.
 - AI cleanup fixes filler words, false starts, and punctuation, powered by Apple Intelligence or the bundled model on Macs without it.
-- Learns from you: your dictionary shapes what the app hears, not just what it types.
 
 MODES: YOUR WORDS, FORMATTED
-- Auto, Raw Transcription, Clean Up, Note, Email, Message, and Code modes built in.
-- Press 1-9 while dictating to pick the output style on the fly.
+- Auto, Raw Transcription, Clean Up, Note, Email, Message, and Code modes built in. Press 1-9 while dictating to pick one on the fly.
 - Create your own modes with custom AI instructions, and assign a default mode per app.
 - Regenerate any past dictation, or selected text in any app, as a different mode from the menu bar.
 
 MAKE IT YOURS
-- Dictionaries: auto-correct names and jargon the mic keeps mishearing. Fix the same word twice and the app offers to remember it.
+- Dictionaries shape what the app hears, not just what it types. Fix the same word twice and it offers to remember it.
 - Commands: say "insert phone number" and get your real number; say "smiley face" and get the emoji.
-- Insert your way: instant paste, character-by-character typing, or clipboard only, with a per-app override for apps that prefer one.
-- A floating live panel with a real waveform: expanded or compact, three positions, three sizes, your choice of animation and color.
-- Utility page: the whole pipeline step by step - dictate, transcribe any audio or video file, transform text, run AI actions.
-- Energy settings: the speech and cleanup models follow your power source, full-size plugged in and lighter on battery, with cooldowns that keep them off your battery when idle.
-- Restore Defaults puts every setting back in one click, with undo.
+- Insert your way: instant paste, character-by-character typing, or clipboard only, with per-app overrides.
+- A floating live panel with a real waveform: expanded or compact, three positions, three sizes, your colors.
+- Utility page: dictate, transcribe any audio or video file, transform text, run AI actions.
+- Energy settings: the models follow your power source, full-size plugged in and lighter on battery.
 
 NEVER LOSE A WORD
-- Crash detection and recovery: if anything interrupts a dictation, it's rescued on next launch and waiting in History.
-- Full history with audio playback, search, filters, editing, and export. Keep everything, a limit, or nothing: your call.
-- Statistics: your speaking pace, time saved versus typing, streaks, and a 30-day chart. All computed locally.
+- Crash recovery: if anything interrupts a dictation, it's rescued on next launch and waiting in History.
+- Full history with audio playback, search, editing, and export. Keep everything, a limit, or nothing.
+- Statistics: speaking pace, time saved versus typing, streaks, and a 30-day chart. All computed locally.
 
 PRIVACY
-- No analytics, no tracking, no accounts. The only network use is a model download you start yourself from the model library.
-- Microphone is the one required permission. Accessibility permission lets the app type into other apps and read the text around your cursor; without it, your text is placed on the clipboard instead.
+- No analytics, no tracking, no accounts. The only network use is a model download you start yourself.
+- Microphone is the one required permission. Accessibility lets the app type into other apps and read the text around your cursor; without it, your text goes to the clipboard.
 
 YapToText is open source, made by one person who dictates for a living.
 
