@@ -268,6 +268,10 @@ final class AudioRecorder: @unchecked Sendable {
     /// ±1 clamp - hard digital clipping that turned whole sentences into one-word
     /// transcripts. The gain is capped so the recent peak lands at ~0.85, never the rail.
     private var rawPeakTracker: Float = 0
+    /// Running estimate of the RAW room floor: drops to a quiet buffer at once, climbs
+    /// back slowly. The auto-amplify gate is measured against THIS, not a fixed number,
+    /// so a quiet talker in a quiet room is still lifted (see effectiveGain).
+    private var rawFloorTracker: Float = 0.004
     private var bufferCount = 0   // diagnostic: how many mic buffers the tap actually received
     private var startedAt = Date()   // diagnostic: measures time-to-first-buffer (cold-route dead window)
     /// True once the tap has seen a buffer with REAL signal (not the all-zero buffers a cold or
@@ -315,10 +319,17 @@ final class AudioRecorder: @unchecked Sendable {
         // Track the recent true peak: jump up instantly, bleed off slowly (~2% per buffer,
         // a few seconds at typical buffer rates) so one shout guards the next one.
         rawPeakTracker = max(rawPeak, rawPeakTracker * 0.98)
+        // Room floor: follow a quieter buffer immediately, drift up 1% per buffer otherwise,
+        // and never below the mic's own self-noise.
+        rawFloorTracker = max(0.0004, min(rawRMS, rawFloorTracker * 1.01))
         var gain = inputGain
         if autoAmplify {
             let target: Float = 0.09        // ~ -21 dB, a comfortable speech RMS
-            let noiseFloor: Float = 0.004   // below this it's silence/hiss - don't chase it
+            // RELATIVE gate: chase only when this buffer clearly rises above the room's own
+            // floor. The old fixed 0.004 gate stalled the AGC for a quiet talker whose voice
+            // arrived at 0.004-0.008 raw (input volume 27%): the words were treated as hiss
+            // and never lifted. Silence and steady hiss sit AT the floor and still hold.
+            let noiseFloor: Float = max(rawFloorTracker * 2.0, 0.0012)
             if rawRMS > noiseFloor {
                 // Chase the target from the POST-manual-gain level, not the raw one. The AGC
                 // multiplying blindly on top of a high manual boost drove speech into the ±1

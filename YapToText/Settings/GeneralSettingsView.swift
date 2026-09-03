@@ -155,6 +155,7 @@ struct GeneralSettingsView: View {
                 Text("Live input level").font(.caption).foregroundStyle(.secondary)
                 LiveInputMeter()   // isolated observer - only the bar re-renders
                 MicHealthReadout() // live SNR verdict + guidance, same render isolation
+                InputVolumeNotice()
                 Toggle("Keep the microphone warm", isOn: $settings.keepMicWarm)
                     .toggleStyle(.switch).controlSize(.small)
                 SubOptions {

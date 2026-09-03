@@ -76,6 +76,7 @@ do yet. Prices and features change, so check for yourself before you switch.
 
 - Spoken punctuation follows the standard dictation convention: say “is it working now, question mark” and get “is it working now?” with no stray mark left behind
 - Punctuation names spoken in the middle of a sentence stay as words; they become the mark only at the end of a clause
+- Quiet speech: auto-amplify now measures your voice against the room instead of a fixed level, and the app warns when the Mac’s input volume is low and can raise it for you
 - Cleanup can no longer drop a sentence or add an ellipsis you did not say
 - A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster
 - Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input

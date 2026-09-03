@@ -293,6 +293,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 yapdiag("testBatch: DONE - \(results.count) files")
             }
         }
+        dnc.addObserver(forName: .init("yap.debug.denoiseStrength"), object: nil, queue: .main) { note in
+            // Harness knob: the low-ratio over-subtraction multiplier (object = "1.25").
+            if let v = Float((note.object as? String) ?? "") { WhisperEngine.lowSNRDenoiseStrength = v; yapdiag("denoiseStrength=\(v)") }
+        }
         dnc.addObserver(forName: .init("yap.debug.style"), object: nil, queue: .main) { [weak self] note in
             guard let self, let raw = note.object as? String,
                   let style = PanelStyle(rawValue: raw) else { return }

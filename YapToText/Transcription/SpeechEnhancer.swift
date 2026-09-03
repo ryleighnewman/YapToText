@@ -137,7 +137,9 @@ enum SpeechEnhancer {
     /// frame with a spectral floor so speech texture survives, and the clip is rebuilt
     /// with the original phase. Callers gate this on LOW measured SNR: healthy audio
     /// never passes through it, so the clean case carries zero risk.
-    static func denoiseStationary(_ audio: [Float]) -> [Float] {
+    /// `strength` scales the over-subtraction: 1 is the everyday setting, larger digs
+    /// harder into a noisier floor. The caller picks it from the measured ratio.
+    static func denoiseStationary(_ audio: [Float], strength: Float = 1) -> [Float] {
         let n = 512, hop = 128
         guard audio.count > n * 4 else { return audio }
         let bins = n / 2 + 1
@@ -180,7 +182,7 @@ enum SpeechEnhancer {
         }
 
         // Pass 2: subtract and rebuild by weighted overlap-add.
-        let alpha: Float = 1.2      // measured: 1.6 ate speech onsets on the worst clips
+        let alpha: Float = 1.2 * strength   // measured: 1.6 flat ate speech onsets on the worst clips
         let beta: Float = 0.10      // spectral floor (fraction of the ORIGINAL magnitude)
         var out = [Float](repeating: 0, count: audio.count)
         var wsum = [Float](repeating: 0, count: audio.count)

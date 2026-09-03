@@ -44,6 +44,7 @@ struct DictationPage: View {
                     SubOptions {
                         Caption("Whisper-quiet speech is lifted to full clarity automatically; both run entirely on device.")
                     }
+                    InputVolumeNotice()
                 }
 
                 CardSection("Delivery") {
