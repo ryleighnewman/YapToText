@@ -27,7 +27,7 @@ WHY IT'S DIFFERENT
 
 DICTATION THAT BEHAVES LIKE DICTATION
 - Say "question mark" or "exclamation point" and the mark lands where you said it, with no stray period left behind. Say "dot dot dot" and get an ellipsis. Mention a punctuation name mid-sentence and it stays a word.
-- Intelligent insert: dictate into the middle of a sentence and the first word lowercases, the spacing joins cleanly, and a trailing period is dropped when the sentence continues.
+- Intelligent insert: dictate into the middle of a sentence and the case, spacing, and punctuation adapt to the text around your cursor.
 - Quick Edit: select text in any app, hold a key, and say the change. "Make this shorter." "Fix the spelling."
 - Voice corrections: "scratch that," "replace X with Y," "add this to my dictionary."
 
@@ -38,16 +38,15 @@ AUTO MODE: IT KNOWS AN EMAIL WHEN IT HEARS ONE
 
 SPEAK HOWEVER YOU WANT
 - Whisper if you need to: auto-amplify measures your voice against the room, not a fixed level, and lifts a quiet voice to full clarity. If your Mac's input volume is set low, the app tells you and can raise it. Background noise is removed before transcription.
-- Push-to-talk (hold to record) or toggle mode, pause and resume, cancel with Esc. Silence auto-stop ends the recording when you stop talking.
+- Push-to-talk or toggle, pause and resume, cancel with Esc, silence auto-stop.
 - One tap of the Right Command key starts everything, or remap it to any shortcut, down to a single bare key.
 
 WHISPER-CLASS ACCURACY, BUILT IN
-- Ships with Whisper Large v3 Turbo and a local AI cleanup model inside the app. No downloads, no setup: it works fully offline from first launch.
-- Or use Apple's on-device speech engine for instant results.
+- Ships with Whisper Large v3 Turbo and a local AI cleanup model inside the app. No downloads, no setup: it works fully offline from first launch. Or use Apple's on-device speech engine.
 - AI cleanup fixes filler words, false starts, and punctuation, powered by Apple Intelligence or the bundled model on Macs without it.
 
 MODES: YOUR WORDS, FORMATTED
-- Auto, Raw Transcription, Clean Up, Note, Email, Message, and Code modes built in. Press 1-9 while dictating to pick one on the fly.
+- Auto, Raw Transcription, Clean Up, Note, Email, Message, and Code built in. Press 1-9 while dictating to pick one on the fly.
 - Create your own modes with custom AI instructions, and assign a default mode per app.
 - Regenerate any past dictation, or selected text in any app, as a different mode from the menu bar.
 
@@ -56,13 +55,11 @@ MAKE IT YOURS
 - Commands: say "insert phone number" and get your real number; say "smiley face" and get the emoji.
 - Insert your way: instant paste, character-by-character typing, or clipboard only, with per-app overrides.
 - A floating live panel with a real waveform: expanded or compact, three positions, three sizes, your colors.
-- Utility page: dictate, transcribe any audio or video file, transform text, run AI actions.
 - Energy settings: the models follow your power source, full-size plugged in and lighter on battery.
 
 NEVER LOSE A WORD
 - Crash recovery: if anything interrupts a dictation, it's rescued on next launch and waiting in History.
-- Full history with audio playback, search, editing, and export. Keep everything, a limit, or nothing.
-- Statistics: speaking pace, time saved versus typing, streaks, and a 30-day chart. All computed locally.
+- Full history with audio playback, search, editing, and export. Statistics on pace, time saved, and streaks, all computed locally.
 
 PRIVACY
 - No analytics, no tracking, no accounts. The only network use is a model download you start yourself.
