@@ -326,9 +326,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dnc.addObserver(forName: .init("yap.debug.ctxprobe"), object: nil, queue: .main) { _ in
             // Context-insertion diagnosis: read the surroundings of whatever is focused
             // RIGHT NOW and log what adapt would do with a canned transcript.
+            // Same read the live pipeline runs at stop (patient pre-read), then adapt a
+            // one-word mid-sentence correction - the case that shipped as "Insert.".
             Task { @MainActor in
-                let adapted = await InsertionContext.adapted("Very very much better.")
-                yapdiag("ctxprobe: adapted=\(adapted.debugDescription)")
+                let s = await InsertionContext.readSurroundings(patient: true)
+                let adapted = InsertionContext.adapt("Insert.", before: s.before, after: s.after)
+                yapdiag("ctxprobe: available=\(s.available) before=\(s.before.suffix(30).debugDescription) after=\(s.after.prefix(30).debugDescription) -> \(adapted.debugDescription)")
             }
         }
         dnc.addObserver(forName: .init("yap.debug.waveboost"), object: nil, queue: .main) { note in

@@ -160,7 +160,7 @@ enum InsertionContext {
             // one skipped the whole read in the user's main app twice in an afternoon.
             yapdiag("insertctx: probe returned the old clipboard - no selection")
         } else if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            yapdiag("insertctx: live selection - inserting unadapted")
+            yapdiag("insertctx: live selection (\(probe.prefix(24).debugDescription)) - inserting unadapted")
             // Deliberate abort, not a capability failure - report unanswered so the
             // outcome stays neutral and no strike is recorded.
             return (.none, false)

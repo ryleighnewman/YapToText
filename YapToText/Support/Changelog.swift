@@ -19,12 +19,12 @@ enum Changelog {
 
     static let entries: [Entry] = [
         Entry(version: "1.4 (14)", points: [
-            "Spoken punctuation now follows the convention of every dictation system. Said: “Okay, so I was curious if the system is working now, question mark.” Typed: “Okay, so I was curious if the system is working now?” Said: “Do you know what to do, dot dot dot” Typed: “Do you know what to do…” No stray mark is left behind",
+            "Spoken punctuation follows the standard dictation convention: say “is it working now, question mark” and get “is it working now?” with no stray mark left behind",
             "Punctuation names spoken in the middle of a sentence stay as words; they become the mark only at the end of a clause",
             "Cleanup can no longer drop a sentence or add an ellipsis you did not say",
             "A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster",
             "Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input",
-            "Speaker labels such as “Male speaker:” no longer appear in transcripts and are never learned as vocabulary",
+            "Fixed hallucinated speaker labels such as “Male speaker:” appearing in transcripts and being learned as vocabulary",
             "Intelligent insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps",
             "A notice under Intelligent insert explains the beep and how to silence it in Sound settings",
             "The menu bar spinner is visible on a light menu bar",
