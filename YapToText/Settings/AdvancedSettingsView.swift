@@ -4,6 +4,7 @@ import SwiftUI
 /// plumbing, per-app overrides, history retention, and backups.
 struct AdvancedSettingsView: View {
     @Environment(AppState.self) private var state
+    @State private var confirmRestore = false
 
     var body: some View {
         @Bindable var settings = state.settings
@@ -162,6 +163,26 @@ struct AdvancedSettingsView: View {
                         Button("Import Preset…") { PresetPorter.importPreset() }.buttonStyle(.solidSecondary).controlSize(.small)
                     }
                 }
+            }
+
+            CardSection("Restore defaults") {
+                HStack {
+                    TipRow(icon: "arrow.counterclockwise", title: "Put every setting back to its default",
+                           message: settings.restoreUndo == nil
+                               ? "Modes, dictionaries, commands, AI actions, and history are kept."
+                               : "Defaults restored. Undo brings back exactly what you had, until you quit.")
+                    Spacer()
+                    if settings.restoreUndo != nil {
+                        Button("Undo") { settings.undoRestore() }.buttonStyle(.solidSecondary).controlSize(.small)
+                    }
+                    Button("Restore Defaults\u{2026}") { confirmRestore = true }.buttonStyle(.solidSecondary).controlSize(.small)
+                }
+            }
+            .confirmationDialog("Restore all settings to their defaults?", isPresented: $confirmRestore, titleVisibility: .visible) {
+                Button("Restore Defaults", role: .destructive) { settings.restoreDefaults() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Every setting on every page goes back to how it was on first launch. Modes, dictionaries, commands, AI actions, and history are kept. You can undo until you quit the app.")
             }
 
         }

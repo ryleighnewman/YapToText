@@ -738,7 +738,14 @@ final class AppSettings {
 
     private func save() {
         guard !isLoading else { return }
-        let snapshot = Snapshot(
+        if let data = try? JSONEncoder().encode(snapshot()) {
+            defaults.set(data, forKey: AppSettings.defaultsKey)
+        }
+    }
+
+    /// Every preference as one value: what save() persists, what a restore undoes.
+    func snapshot() -> Snapshot {
+        Snapshot(
             engine: engine, localeIdentifier: localeIdentifier, insertionMethod: insertionMethod,
             hotkey: hotkey, hotkeyBehavior: hotkeyBehavior, pauseHotkey: pauseHotkey, cycleModeHotkey: cycleModeHotkey,
             switcherHotkey: switcherHotkey, aiActionsHotkey: aiActionsHotkey,
@@ -764,8 +771,140 @@ final class AppSettings {
             clearHistoryOnQuit: clearHistoryOnQuit, saveAudio: saveAudio, recordCancelledDictations: recordCancelledDictations, autoDeleteDays: autoDeleteDays,
             launchAtLogin: launchAtLogin, offeredModelDownloads: offeredModelDownloads,
             hasCompletedOnboarding: hasCompletedOnboarding)
-        if let data = try? JSONEncoder().encode(snapshot) {
-            defaults.set(data, forKey: AppSettings.defaultsKey)
-        }
+    }
+
+    // MARK: Restore defaults
+
+    /// The settings as they were just before the last Restore Defaults, kept for the
+    /// session so one click puts everything back. Cleared by undo or by quitting.
+    var restoreUndo: Snapshot?
+
+    /// Put every preference back to its first-launch value. State that is not a
+    /// preference survives: onboarding done, offers already shown, tips dismissed, and
+    /// the login item (a system registration the toggle must keep matching).
+    func restoreDefaults() {
+        let previous = snapshot()
+        let suite = "com.ryleighnewman.YapToText.restore-scratch"
+        let scratch = UserDefaults(suiteName: suite) ?? .standard
+        scratch.removePersistentDomain(forName: suite)
+        var fresh = AppSettings(defaults: scratch).snapshot()
+        fresh.hasCompletedOnboarding = previous.hasCompletedOnboarding
+        fresh.lastSeenWhatsNewVersion = previous.lastSeenWhatsNewVersion
+        fresh.q5SwitchOfferShown = previous.q5SwitchOfferShown
+        fresh.offeredModelDownloads = previous.offeredModelDownloads
+        fresh.hasDismissedHomeNote = previous.hasDismissedHomeNote
+        fresh.hasDismissedDictionaryTip = previous.hasDismissedDictionaryTip
+        fresh.launchAtLogin = previous.launchAtLogin
+        apply(fresh)
+        restoreUndo = previous
+        yapdiag("settings: restored defaults (undo available)")
+    }
+
+    func undoRestore() {
+        guard let previous = restoreUndo else { return }
+        apply(previous)
+        restoreUndo = nil
+        yapdiag("settings: restore undone")
+    }
+
+    /// Assign every preference from a snapshot in one pass, saving once at the end.
+    private func apply(_ s: Snapshot) {
+        isLoading = true
+        engine = s.engine
+        localeIdentifier = s.localeIdentifier
+        insertionMethod = s.insertionMethod
+        hotkey = s.hotkey
+        hotkeyBehavior = s.hotkeyBehavior
+        pauseHotkey = s.pauseHotkey
+        cycleModeHotkey = s.cycleModeHotkey
+        switcherHotkey = s.switcherHotkey
+        aiActionsHotkey = s.aiActionsHotkey
+        historyPaletteHotkey = s.historyPaletteHotkey
+        redoLastHotkey = s.redoLastHotkey
+        if let v = s.rightCommandTrigger { rightCommandTrigger = v }
+        if let v = s.fnKeyTrigger { fnKeyTrigger = v }
+        if let v = s.rightCommandSpaceSwitcher { rightCommandSpaceSwitcher = v }
+        if let v = s.cancelOnDoubleEscape { cancelOnDoubleEscape = v }
+        activeModeID = s.activeModeID
+        perAppModeOverrides = s.perAppModeOverrides
+        if let v = s.userName { userName = v }
+        autoInsert = s.autoInsert
+        if let v = s.liveTyping { liveTyping = v }
+        if let v = s.quickEditDetection { quickEditDetection = v }
+        if let v = s.smartDictionary { smartDictionary = v }
+        if let v = s.quickEditKeyEnabled { quickEditKeyEnabled = v }
+        if let v = s.quickEditTrigger { quickEditTrigger = v }
+        if let v = s.primaryTriggerKey { primaryTriggerKey = v }
+        if let v = s.quickEditTriggerKey { quickEditTriggerKey = v }
+        if let v = s.reviewBeforeInsert { reviewBeforeInsert = v }
+        if let v = s.reviewLongTextOnly { reviewLongTextOnly = v }
+        if let v = s.appInsertionOverrides { appInsertionOverrides = v }
+        if let v = s.pauseMediaDuringDictation { pauseMediaDuringDictation = v }
+        if let v = s.digitModeSwitching { digitModeSwitching = v }
+        if let v = s.panelSnapsBack { panelSnapsBack = v }
+        lastSeenWhatsNewVersion = s.lastSeenWhatsNewVersion
+        visualizerColorHex = s.visualizerColorHex
+        restoreClipboard = s.restoreClipboard
+        if let v = s.adaptToSurroundings { adaptToSurroundings = v }
+        if let v = s.doubleEscapeToCancel { doubleEscapeToCancel = v }
+        quickEditModelID = s.quickEditModelID
+        trimTrailingNewlines = s.trimTrailingNewlines
+        if let v = s.appendSpaceAfterInsert { appendSpaceAfterInsert = v }
+        if let v = s.modelCooldownSeconds { modelCooldownSeconds = v }
+        if let v = s.aiCleanupEnabled { aiCleanupEnabled = v }
+        if let v = s.autoContextMode { autoContextMode = v }
+        if let v = s.inputGain { inputGain = v }
+        if let v = s.autoAmplifyInput { autoAmplifyInput = v }
+        if let v = s.reduceBackgroundNoise { reduceBackgroundNoise = v }
+        if let v = s.keepMicWarm { keepMicWarm = v }
+        if let v = s.micWarmMinutes { micWarmMinutes = v }
+        silenceTimeout = s.silenceTimeout
+        maxRecordingSeconds = s.maxRecordingSeconds
+        selectedSpeechModelID = s.selectedSpeechModelID
+        if let v = s.energyAdaptive { energyAdaptive = v }
+        speechModelPluggedID = s.speechModelPluggedID
+        speechModelBatteryID = s.speechModelBatteryID
+        languageModelPluggedID = s.languageModelPluggedID
+        languageModelBatteryID = s.languageModelBatteryID
+        if let v = s.q5SwitchOfferShown { q5SwitchOfferShown = v }
+        selectedLanguageModelID = s.selectedLanguageModelID
+        if let v = s.showMenuBarIcon { showMenuBarIcon = v }
+        if let v = s.menuBarIconStyle { menuBarIconStyle = v }
+        if let v = s.menuBarColoredStatus { menuBarColoredStatus = v }
+        accentColorHex = s.accentColorHex
+        panelTintHex = s.panelTintHex
+        waveColorHex = s.waveColorHex
+        if let v = s.waveColorStyle { waveColorStyle = v }
+        if let v = s.waveStrength { waveStrength = v }
+        if let v = s.waveRGBSpeed { waveRGBSpeed = v }
+        if let v = s.waveRGBSpread { waveRGBSpread = v }
+        if let v = s.panelRGBSpeed { panelRGBSpeed = v }
+        if let v = s.panelTintStrength { panelTintStrength = v }
+        if let v = s.panelTintStyle { panelTintStyle = v }
+        if let v = s.soundStart { soundStart = v }
+        if let v = s.soundStop { soundStop = v }
+        if let v = s.soundError { soundError = v }
+        if let v = s.showDockIcon { showDockIcon = v }
+        if let v = s.hasDismissedHomeNote { hasDismissedHomeNote = v }
+        if let v = s.hasDismissedDictionaryTip { hasDismissedDictionaryTip = v }
+        inputDeviceUID = s.inputDeviceUID
+        showRecordingPanel = s.showRecordingPanel
+        if let v = s.livePreviewEnabled { livePreviewEnabled = v }
+        if let v = s.panelStyle { panelStyle = v }
+        panelPosition = s.panelPosition
+        if let v = s.panelSize { panelSize = v }
+        panelAnimation = s.panelAnimation
+        playSounds = s.playSounds
+        saveHistory = s.saveHistory
+        historyRetention = s.historyRetention
+        clearHistoryOnQuit = s.clearHistoryOnQuit
+        saveAudio = s.saveAudio
+        if let v = s.recordCancelledDictations { recordCancelledDictations = v }
+        autoDeleteDays = s.autoDeleteDays
+        launchAtLogin = s.launchAtLogin
+        if let v = s.offeredModelDownloads { offeredModelDownloads = v }
+        hasCompletedOnboarding = s.hasCompletedOnboarding
+        isLoading = false
+        save()
     }
 }

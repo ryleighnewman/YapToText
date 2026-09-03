@@ -30,6 +30,7 @@ enum Changelog {
             "The menu bar spinner is visible on a light menu bar",
             "Light mode has a firmer window background and clearer card edges",
             "The first dictation after idle is faster, and the microphone lets go properly after every dictation",
+            "Restore Defaults in Settings > Advanced puts every setting back, with a confirmation and an Undo button",
             "The Homebrew build can use the microphone",
         ]),
         Entry(version: "1.3.1 (12)", points: [
