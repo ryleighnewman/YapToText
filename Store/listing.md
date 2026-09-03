@@ -17,53 +17,86 @@ Talk, and your words land in any app: cleaned up, punctuated, and private. Every
 
 ## Description
 
-YapToText turns your voice into polished text in any app on your Mac, and it does all of it on your Mac. No account, no cloud, no subscription. Press one key, talk, and your words appear where your cursor is.
+YapToText turns your voice into polished text in any app on your Mac, and it does all of it on your Mac. Press one key, talk, and your words appear where your cursor is.
 
 WHY IT'S DIFFERENT
 - 100 percent on-device. Speech recognition and AI cleanup run locally. Your voice and your words never leave your Mac.
-- Free, with no feature gates. A tip jar exists if you want to say thanks, and that's it.
-- Built for accessibility first: dictation that can fully replace typing, with VoiceOver announcements through the whole capture-transcribe-insert cycle.
+- No feature gates. Every feature is available the moment you install it.
+- Built for accessibility first: dictation that can fully replace typing, working with VoiceOver, Voice Control, and your macOS accessibility settings.
+- Open source. Every line of code is public, so the privacy claims can be verified.
 
-DICTATE ANYWHERE
-- One tap of the Right Command key (or your own shortcut) starts dictation in whatever app you're in.
-- Hold-to-talk walkie-talkie mode, toggle mode, pause and resume with the space bar, cancel with Esc.
-- A floating live panel shows your words as you speak, with a real waveform.
-- Your text is typed at the cursor, or copied to the clipboard if you prefer.
+DICTATION THAT BEHAVES LIKE DICTATION
+- Say "question mark" or "exclamation point" and the mark lands where you said it, with no stray period left behind. Say "dot dot dot" and get an ellipsis. Mention a punctuation name mid-sentence and it stays a word.
+- Intelligent insert: dictate into the middle of a sentence and the first word lowercases, the spacing joins cleanly, and a trailing period is dropped when the sentence continues.
+- Quick Edit: select text in any app, hold a key, and say the change. "Make this shorter." "Fix the spelling." "Turn it into a list."
+- Voice corrections: "scratch that," "replace X with Y," "add this to my dictionary."
 
-WHISPER-CLASS ACCURACY
-- Ships with Whisper Large v3 Turbo built in, one of the most accurate open speech models in the world.
+AUTO MODE: IT KNOWS AN EMAIL WHEN IT HEARS ONE
+- Auto reads each dictation and picks the right format by itself: emails get formatted as emails, casual messages stay as spoken, everything else is cleaned up.
+- It listens to context: the app you're dictating into, spoken requests like "make that formal," even the text you have selected.
+- Conservative by design. It fixes what the mic misheard and never rewrites your voice, never drops a sentence, and never adds words you did not say.
+
+SPEAK HOWEVER YOU WANT
+- Whisper if you need to: auto-amplify measures your voice against the room, not a fixed level, and lifts a quiet voice to full clarity. If your Mac's input volume is set low, the app tells you and can raise it.
+- Background noise is measured and removed before transcription.
+- Push-to-talk (hold to record) or toggle mode, pause and resume, cancel with Esc.
+- Silence auto-stop ends the recording when you stop talking, hands free.
+- One tap of the Right Command key starts everything, or remap it to any shortcut, down to a single bare key.
+
+WHISPER-CLASS ACCURACY, BUILT IN
+- Ships with Whisper Large v3 Turbo and a local AI cleanup model inside the app. No downloads, no setup: it works fully offline from first launch.
 - Or use Apple's on-device speech engine for instant results.
-- Optional AI cleanup rewrites filler words, false starts, and punctuation, powered by Apple Intelligence or the bundled Phi model on Macs without it.
+- AI cleanup fixes filler words, false starts, and punctuation, powered by Apple Intelligence or the bundled model on Macs without it.
+- Learns from you: your dictionary shapes what the app hears, not just what it types.
 
 MODES: YOUR WORDS, FORMATTED
-- Raw transcription, Clean Up, Note, Email, Message, and Code modes built in.
+- Auto, Raw Transcription, Clean Up, Note, Email, Message, and Code modes built in.
 - Press 1-9 while dictating to pick the output style on the fly.
-- Create your own modes with custom AI instructions. Assign modes per app.
+- Create your own modes with custom AI instructions, and assign a default mode per app.
 - Regenerate any past dictation, or selected text in any app, as a different mode from the menu bar.
 
 MAKE IT YOURS
-- Dictionaries: auto-correct names and jargon the mic keeps mishearing.
-- Commands: say "smiley face" and get the emoji; build your own spoken shortcuts.
-- Utility page: dictate, transform, and chain text tools inside the app.
-- Transcribe any audio or video file by dropping it on the app.
+- Dictionaries: auto-correct names and jargon the mic keeps mishearing. Fix the same word twice and the app offers to remember it.
+- Commands: say "insert phone number" and get your real number; say "smiley face" and get the emoji.
+- Insert your way: instant paste, character-by-character typing, or clipboard only, with a per-app override for apps that prefer one.
+- A floating live panel with a real waveform: expanded or compact, three positions, three sizes, your choice of animation and color.
+- Utility page: the whole pipeline step by step - dictate, transcribe any audio or video file, transform text, run AI actions.
+- Energy settings: the speech and cleanup models follow your power source, full-size plugged in and lighter on battery, with cooldowns that keep them off your battery when idle.
+- Restore Defaults puts every setting back in one click, with undo.
 
 NEVER LOSE A WORD
-- Every recording is crash-safe: if anything interrupts a dictation, it's rescued on next launch and waiting in History.
-- Full history with audio playback, search, filters, and export.
-- Statistics: your words per minute, time saved versus typing, streaks, and a 30-day chart. All computed locally.
+- Crash detection and recovery: if anything interrupts a dictation, it's rescued on next launch and waiting in History.
+- Full history with audio playback, search, filters, editing, and export. Keep everything, a limit, or nothing: your call.
+- Statistics: your speaking pace, time saved versus typing, streaks, and a 30-day chart. All computed locally.
 
 PRIVACY
-- No analytics, no tracking, no accounts.
-- The only network use is downloading optional models you choose.
-- Microphone is the one required permission.
+- No analytics, no tracking, no accounts. The only network use is a model download you start yourself from the model library.
+- Microphone is the one required permission. Accessibility permission lets the app type into other apps and read the text around your cursor; without it, your text is placed on the clipboard instead.
 
-YapToText is free and open source, made by one person who dictates for a living. If it helps you, the tip jar means the world.
+YapToText is open source, made by one person who dictates for a living.
+
+Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
+Privacy Policy: https://github.com/ryleighnewman/YapToText#privacy
 
 ## Keywords (100 chars max)
 dictation,speech to text,whisper,voice typing,transcribe,transcription,private,offline,voice,speech
 
-## What's New (1.0)
-Initial release.
+## What's New (1.4)
+
+- Spoken punctuation follows the standard dictation convention: say “is it working now, question mark” and get “is it working now?” with no stray mark left behind
+- Punctuation names spoken in the middle of a sentence stay as words; they become the mark only at the end of a clause
+- Quiet speech: auto-amplify now measures your voice against the room instead of a fixed level, and the app warns when the Mac’s input volume is low and can raise it for you
+- Cleanup can no longer drop a sentence or add an ellipsis you did not say
+- A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster
+- Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input
+- Fixed hallucinated speaker labels such as “Male speaker:” appearing in transcripts and being learned as vocabulary
+- Intelligent insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps
+- A notice under Intelligent insert explains the beep and how to silence it in Sound settings
+- The menu bar spinner is visible on a light menu bar
+- Light mode has a firmer window background and clearer card edges
+- The first dictation after idle is faster, and the microphone lets go properly after every dictation
+- Restore Defaults in Settings > Advanced puts every setting back, with a confirmation and an Undo button
+- The Homebrew build can use the microphone
 
 ## URLs
 - Marketing/support: https://ryleighnewman.com
