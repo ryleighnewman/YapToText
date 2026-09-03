@@ -20,7 +20,7 @@ Talk, and your words land in any app: cleaned up, punctuated, and private. Every
 YapToText turns your voice into polished text in any app on your Mac, and it does all of it on your Mac. Press one key, talk, and your words appear where your cursor is.
 
 WHY IT'S DIFFERENT
-- 100 percent on-device. Speech recognition and AI cleanup run locally. Your voice and your words never leave your Mac.
+- 100 percent on-device. Speech recognition and cleanup run locally. Your voice and your words never leave your Mac.
 - No feature gates. Every feature is available the moment you install it.
 - Built for accessibility first: dictation that can fully replace typing, alongside VoiceOver and Voice Control.
 - Open source. Every line of code is public, so the privacy claims can be verified.
@@ -41,12 +41,13 @@ SPEAK HOWEVER YOU WANT
 - One tap of the Right Command key starts everything, or remap it to any shortcut, down to a single bare key.
 
 WHISPER-CLASS ACCURACY, BUILT IN
-- Ships with Whisper Large v3 Turbo and a local AI cleanup model inside the app. No downloads, no setup: it works fully offline from first launch. Or use Apple's on-device speech engine.
-- AI cleanup fixes filler words, false starts, and punctuation, powered by Apple Intelligence or the bundled model on Macs without it.
+- Ships with Whisper Large v3 Turbo for speech and a bundled cleanup model for polish, both inside the app. No downloads, no setup: fully offline from first launch.
+- Cleanup fixes filler words, false starts, and punctuation on every Mac, with no cloud and no account.
+- Bring your own: any Whisper speech model or GGUF cleanup model drops into the model library.
 
 MODES: YOUR WORDS, FORMATTED
 - Auto, Raw Transcription, Clean Up, Note, Email, Message, and Code built in. Press 1-9 while dictating to pick one on the fly.
-- Create your own modes with custom AI instructions; assign a default per app.
+- Create your own modes with custom instructions; assign a default per app.
 - Regenerate any past dictation or selected text as a different mode from the menu bar.
 
 MAKE IT YOURS
