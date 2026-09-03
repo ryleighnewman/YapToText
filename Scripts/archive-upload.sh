@@ -9,7 +9,9 @@
 set -u
 PROJ="/Users/ryleighnewman/Desktop/Apps/YapToText"
 DD="$HOME/Library/Caches/YapToTextDD-Release"
-ARCHIVE="$DD/YapToText-1.3.1-12.xcarchive"
+VER=$(/usr/bin/grep -m1 "MARKETING_VERSION" "$PROJ/YapToText.xcodeproj/project.pbxproj" | sed 's/.*= *//; s/;//')
+BLD=$(/usr/bin/grep -m1 "CURRENT_PROJECT_VERSION" "$PROJ/YapToText.xcodeproj/project.pbxproj" | sed 's/.*= *//; s/;//')
+ARCHIVE="$DD/YapToText-$VER-$BLD.xcarchive"
 ALOG="/tmp/yap-archive7c.log"
 ULOG="/tmp/yap-upload7.log"
 

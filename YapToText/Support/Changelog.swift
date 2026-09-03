@@ -18,7 +18,7 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
-        Entry(version: "1.4 (13)", points: [
+        Entry(version: "1.4 (14)", points: [
             "Spoken punctuation now follows the convention of every dictation system. Said: “Okay, so I was curious if the system is working now, question mark.” Typed: “Okay, so I was curious if the system is working now?” Said: “Do you know what to do, dot dot dot” Typed: “Do you know what to do…” No stray mark is left behind",
             "Punctuation names spoken in the middle of a sentence stay as words; they become the mark only at the end of a clause",
             "Cleanup can no longer drop a sentence or add an ellipsis you did not say",

@@ -151,8 +151,15 @@ enum InsertionContext {
         //    smart insert never engaged inside Reddit. An empty copy is never a selection
         //    worth preserving, so only a non-empty probe aborts the read.
         lastSyntheticKeyAt = Date()   // the probe Cmd+C is posted inside copyChanged
+        let previous = snapshot.string
         let probe = await copyChanged(patient ? 0.15 : 0.1)
-        if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, probe == previous {
+            // The pasteboard changed but holds what it already held: the app re-wrote its
+            // existing contents on an empty-selection copy (Electron editors do this), or
+            // something else bumped the counter. That is NOT a selection - treating it as
+            // one skipped the whole read in the user's main app twice in an afternoon.
+            yapdiag("insertctx: probe returned the old clipboard - no selection")
+        } else if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             yapdiag("insertctx: live selection - inserting unadapted")
             // Deliberate abort, not a capability failure - report unanswered so the
             // outcome stays neutral and no strike is recorded.
@@ -270,15 +277,30 @@ enum InsertionContext {
     private static func blankKey(_ b: String) -> String { "insertctx.blank." + b }
     private static func skipKey(_ b: String) -> String { "insertctx.skips." + b }
 
+    /// Web browsers are never remembered as silent: whether a read answers depends on the
+    /// PAGE, not the app. Eight quiet reads on pages with no text field banned Safari for
+    /// the next 25 dictations, including the ones typed into a real form.
+    private static func isBrowser(_ b: String) -> Bool {
+        b.hasPrefix("com.apple.Safari") || b == "com.google.Chrome" || b.hasPrefix("com.google.Chrome.")
+            || b == "org.mozilla.firefox" || b == "company.thebrowser.Browser" || b == "com.microsoft.edgemac"
+            || b == "com.brave.Browser" || b == "com.vivaldi.Vivaldi" || b == "com.operasoftware.Opera"
+    }
+
     private static func shouldSkipRead(bundleID: String?) -> Bool {
         guard let b = bundleID else { return false }
         let ud = UserDefaults.standard
+        if isBrowser(b) {
+            if ud.integer(forKey: failKey(b)) != 0 { ud.set(0, forKey: failKey(b)); ud.set(0, forKey: blankKey(b)) }
+            return false
+        }
         guard ud.integer(forKey: failKey(b)) >= 5 else { return false }
         let skips = ud.integer(forKey: skipKey(b)) + 1
-        if skips >= 25 {
+        // Re-probe every 10th dictation, not 25th: a wrongly banned app came back far too
+        // slowly, and a re-probe costs one read.
+        if skips >= 10 {
             ud.set(0, forKey: skipKey(b))
             ud.set(4, forKey: failKey(b))   // one strike from re-banning: a single failed re-probe re-skips
-            yapdiag("insertctx: re-probing \(b) after 25 skipped reads")
+            yapdiag("insertctx: re-probing \(b) after 10 skipped reads")
             return false
         }
         ud.set(skips, forKey: skipKey(b))

@@ -207,6 +207,14 @@ enum TextInserter {
 struct PasteboardSnapshot {
     private let items: [NSPasteboardItem]
 
+    /// The plain text the clipboard held when the snapshot was taken, if any.
+    var string: String? {
+        for item in items {
+            if let s = item.string(forType: .string) { return s }
+        }
+        return nil
+    }
+
     static func capture(_ pb: NSPasteboard) -> PasteboardSnapshot {
         var copies: [NSPasteboardItem] = []
         for item in pb.pasteboardItems ?? [] {
