@@ -11,7 +11,7 @@ enum Diagnostics {
         lines.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         lines.append("Mac: \(sysctlString("hw.model") ?? "?") | \(sysctlString("machdep.cpu.brand_string") ?? "Apple Silicon") | \(Int(ProcessInfo.processInfo.physicalMemory / 1_073_741_824)) GB")
         lines.append("")
-        lines.append("Engine: \(state.settings.engine.rawValue)")
+        lines.append("Engine: \(state.controller.usesAppleSpeechEngine ? "appleSpeech" : "whisper") (setting: \(state.settings.engine.rawValue))")
         lines.append("Speech model: \(state.settings.selectedSpeechModelID)")
         lines.append("Language model: \(state.settings.selectedLanguageModelID)")
         lines.append("AI cleanup: \(state.settings.aiCleanupEnabled), Apple Intelligence: \(FoundationModelsTransformer.isAvailable)")

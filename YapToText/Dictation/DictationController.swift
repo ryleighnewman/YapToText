@@ -392,11 +392,19 @@ final class DictationController {
         // recording, so the model is warm by the time transcription finishes. Loading at app
         // launch instead kept ~2GB resident for users who never touch an AI mode.
         if settings.aiCleanupEnabled, mode.usesAI || settings.autoContextMode {
-            let cleanupID = mode.languageModelID ?? settings.selectedLanguageModelID
+            let cleanupID = resolvedLanguageModelID(for: mode)
             if cleanupID != "apple", let cleanupModel = models.model(id: cleanupID),
                cleanupModel.runtime == .llamaCpp,
                let cleanupURL = models.downloads.localURL(for: cleanupModel) {
-                LlamaEngine.prewarm(modelPath: cleanupURL.path)
+                // After a cooldown eviction only the weights were being prewarmed; the
+                // context build, shader compile and guardrail prefill (~1.4s) then landed on
+                // the stop-to-paste path of the first dictation after idle. Do the full warm
+                // whenever the model is not resident - it overlaps the user still talking.
+                if LlamaEngine.isCached(modelPath: cleanupURL.path) {
+                    LlamaEngine.prewarm(modelPath: cleanupURL.path)
+                } else {
+                    LlamaEngine.fullWarm(modelPath: cleanupURL.path)
+                }
             }
         }
         recorder.preferredDeviceUID = settings.inputDeviceUID
@@ -720,7 +728,9 @@ final class DictationController {
             if Self.trailingCaptureSeconds > 0, !isPaused {
                 let talkingLevel = max(0.08, (levelHistory.suffix(40).max() ?? 0.5) * 0.35)
                 let deadline = Date().addingTimeInterval(Self.trailingCaptureSeconds)
-                var quietTicks = 0
+                // Already quiet at the keypress (the common case: the sentence ended a beat
+                // ago) starts one tick in, so the floor is 75ms rather than a flat 100ms.
+                var quietTicks = level < talkingLevel ? 1 : 0
                 while Date() < deadline {
                     try? await Task.sleep(nanoseconds: 25_000_000)   // 25 ms
                     if level < talkingLevel { quietTicks += 1 } else { quietTicks = 0 }
@@ -839,10 +849,14 @@ final class DictationController {
                 }
 
                 var text = vocabulary.apply(to: source, dictionaryIDs: sessionMode.dictionaryIDs)
+                // Spoken punctuation resolves BEFORE cleanup: the model sees "working now?"
+                // rather than the words "question mark", which it treated as filler and
+                // deleted (the "?" then never appeared). Everything else runs after.
+                text = commands.apply(to: text, only: .punctuation)
 
                 if settings.aiCleanupEnabled, sessionMode.usesAI, cleanupAvailable(for: sessionMode), !text.isEmpty {
                     // Cold GGUF load: tell the user what the wait is, so they don't cancel.
-                    let cleanupID = sessionMode.languageModelID ?? settings.selectedLanguageModelID
+                    let cleanupID = resolvedLanguageModelID(for: sessionMode)
                     if cleanupID != "apple", let m = models.model(id: cleanupID), m.runtime == .llamaCpp,
                        let url = models.downloads.localURL(for: m), !LlamaEngine.isCached(modelPath: url.path) {
                         statusDetail = "Loading the AI model (first time only)…"
@@ -1119,6 +1133,24 @@ final class DictationController {
                     sessionSurroundTask = nil
                     if deliveryTargetIsFrontmost() {
                         presurround = await task.value
+                        // DRAIN before pasting. The surround read posts Cmd+C and
+                        // Opt+Shift+arrow events; the read RETURNING only means our own
+                        // timeouts expired, not that the target consumed those keys. A
+                        // slow app can service a queued Cmd+C AFTER delivery has put the
+                        // transcript on the clipboard - the copy overwrites it with the
+                        // app's own selection, and the Cmd+V that follows pastes that
+                        // instead of the dictation. That is the "it pasted something from
+                        // my clipboard" report, and it got far more likely once the
+                        // pre-read started running on every dictation rather than only
+                        // those with an AI cleanup stage. A short settle lets any late
+                        // keys land BEFORE the clipboard is loaded. Only the REMAINDER of
+                        // that window is paid, measured from the last key the read actually
+                        // posted - and nothing when it posted none (skipped app, Secure
+                        // Input, AX answered), which was a flat 140ms tax on every dictation.
+                        if let lastKey = InsertionContext.lastSyntheticKeyAt {
+                            let remaining = 0.14 - Date().timeIntervalSince(lastKey)
+                            if remaining > 0 { try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
+                        }
                     } else { task.cancel() }
                 }
                 await TextInserter.deliver(delivered, target: deliveryTarget,
@@ -1135,7 +1167,7 @@ final class DictationController {
                 if deliveryTarget != .clipboardOnly {
                     // Remember what just landed on screen so a follow-up "scratch that" /
                     // "replace X with Y" can act on it.
-                    lastInsert = (text: liveTypedText + delivered, date: Date(),
+                    lastInsert = (text: liveTypedText + (TextInserter.lastDelivered ?? delivered), date: Date(),
                                   pid: sessionTargetApp?.processIdentifier)
                 }
                 }
@@ -1383,12 +1415,29 @@ final class DictationController {
         scheduleModelCooldown()
     }
 
+    /// THE single answer to "which speech model actually runs", used by both makeEngine and
+    /// everything that needs to know without building an engine. Deliberately ONE function:
+    /// the previous split let a second copy of this rule drift out of step with the first,
+    /// and a stale `settings.engine` then woke Apple's speech services for users running
+    /// Whisper. Nothing may re-derive this from settings independently.
+    func resolvedWhisperModel(for mode: Mode) -> (model: ModelInfo, url: URL)? {
+        let modelID = resolvedSpeechModelID(for: mode)
+        guard modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple,
+              let url = models.downloads.localURL(for: model) else { return nil }
+        return (model, url)
+    }
+
+    /// Whether Apple's speech stack would ACTUALLY transcribe. Anything that would wake
+    /// Apple's speech services must ask this first: those daemons appearing in the privacy
+    /// list is indistinguishable, to a user, from this app listening through them.
+    var usesAppleSpeechEngine: Bool { resolvedWhisperModel(for: activeMode) == nil }
+
     private func makeEngine(for mode: Mode) -> TranscriptionEngine {
         let modelID = resolvedSpeechModelID(for: mode)
-        if modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple {
+        do {
             // Only hand off to whisper when the file is actually on disk; otherwise fall back
             // to Apple Speech so dictation always works while a default model downloads.
-            if let url = models.downloads.localURL(for: model) {
+            if let (model, url) = resolvedWhisperModel(for: mode) {
                 yapdiag("makeEngine: WHISPER \(model.displayName) at \(url.path)")
                 let engine = WhisperEngine(modelURL: url, modelName: model.displayName)
                 engine.livePreview = settings.livePreviewEnabled
@@ -1397,13 +1446,40 @@ final class DictationController {
                 // Dictionary terms plus the LIVE working vocabulary: distinctive words and
                 // repeated phrases from the last few dictations, so a term you just used
                 // is heard correctly the next time you say it.
-                var bias = vocabulary.primingPrompt(dictionaryIDs: mode.dictionaryIDs)
-                let recent = history.recentDistinctiveTerms()
-                if !recent.isEmpty {
-                    let recentPart = recent.joined(separator: ", ")
-                    bias = (bias ?? "Glossary: ").replacingOccurrences(of: ".", with: "") + ", " + recentPart + "."
-                    if bias!.hasPrefix("Glossary: , ") { bias = "Glossary: " + recentPart + "." }
+                // Dictionary terms first (the user asked for those explicitly), recent terms
+                // after, under ONE 200-character budget for the whole prompt. whisper.cpp
+                // keeps the TAIL of an over-long initial_prompt, so an unbudgeted append
+                // could push the user's own dictionary out in favor of last week's chatter.
+                // And only the trailing terminator is stripped: the old whole-string
+                // replacingOccurrences(".") deleted the dots INSIDE terms like "v1.3.1" or
+                // "Dr. Ng" and primed Whisper toward the very misspelling the entry fixes.
+                var terms: [String] = []
+                if let dict = vocabulary.primingPrompt(dictionaryIDs: mode.dictionaryIDs) {
+                    var body = dict.hasPrefix("Glossary:") ? String(dict.dropFirst("Glossary:".count)) : dict
+                    if body.hasSuffix(".") { body.removeLast() }
+                    terms = body.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
                 }
+                let recent = history.recentDistinctiveTerms()
+                var seenTerm = Set(terms.map { $0.lowercased() })
+                for t in recent where seenTerm.insert(t.lowercased()).inserted { terms.append(t) }
+                // Spoken punctuation NAMES last: the decoder must hear "exclamation point"
+                // as those exact words for the command to fire, and in a noisy room it was
+                // hearing "exclusive night". Only multi-word punctuation triggers (the ones
+                // that fire without the insert prefix), only when commands are on.
+                if commands.isEnabled {
+                    let names = commands.commands(in: .punctuation).filter(\.enabled)
+                        .flatMap(\.triggers)
+                        .filter { $0.split(whereSeparator: { $0.isWhitespace }).count >= 2 }
+                    for t in names where seenTerm.insert(t.lowercased()).inserted { terms.append(t) }
+                }
+                var kept: [String] = []
+                var budget = 0
+                for t in terms {
+                    let cost = t.count + 2
+                    if budget + cost > 200 { break }
+                    kept.append(t); budget += cost
+                }
+                let bias: String? = kept.isEmpty ? nil : "Glossary: " + kept.joined(separator: ", ") + "."
                 engine.promptBias = bias
                 if let bias { yapdiag("makeEngine: primed \(bias.count) chars (recent: \(recent.joined(separator: "|")))") }
                 return engine
@@ -1477,6 +1553,11 @@ final class DictationController {
         // Only pre-open the mic when the user opted into keep-warm. With it off (the
         // default), the mic opens when a dictation starts and never before: launch and
         // app-foreground must not flash the recording indicator.
+        // Sync warmth from settings BEFORE the keep-alive can revive anything: the
+        // recorder used to default to warm, so the launch heartbeat re-opened the mic for
+        // users who had keep-warm off - until their first dictation synced the flag.
+        recorder.keepWarm = settings.keepMicWarm
+        recorder.warmSeconds = settings.micWarmMinutes * 60
         if settings.keepMicWarm { recorder.prewarmRoute() }
         recorder.installKeepAlive()   // revive the route after sleep/lock/device changes
     }
@@ -1600,7 +1681,8 @@ final class DictationController {
         Task {
             defer { regeneratingIDs.remove(record.id) }
             do {
-                let cleaned = await runCleanup(record.rawText, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
+                let punctuated = commands.apply(to: record.rawText, only: .punctuation)
+                let cleaned = await runCleanup(punctuated, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
                 var text = cleaned
                 text = vocabulary.apply(to: text, dictionaryIDs: mode.dictionaryIDs)
                 text = commands.apply(to: text)
@@ -1674,6 +1756,7 @@ final class DictationController {
     /// available. Lets the mode editor show what a mode produces before you use it.
     func preview(_ text: String, mode: Mode) async throws -> String {
         var out = vocabulary.apply(to: text, dictionaryIDs: mode.dictionaryIDs)
+        out = commands.apply(to: out, only: .punctuation)
         if mode.usesAI, cleanupAvailable(for: mode), !out.isEmpty {
             let cleaned = await runCleanup(out, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
             if cleaned != out {
@@ -1804,6 +1887,14 @@ final class DictationController {
         return lines.joined(separator: "\n")
     }
 
+#if DEBUG
+    /// Test-harness entry to the REAL cleanup path (model call plus every guard), so the
+    /// bench measures what a live dictation would insert, not the bare model output.
+    func debugRunCleanup(_ text: String, mode: Mode) async -> String {
+        await runCleanup(text, mode: mode, context: TransformContext())
+    }
+#endif
+
     private func runCleanup(_ text: String, mode: Mode, context: TransformContext) async -> String {
         guard let transformer = cleanupTransformer(for: mode) else { return text }
         // THE choke point for the name: whatever context a caller built (the live-session one
@@ -1837,6 +1928,25 @@ final class DictationController {
         // the context, not the dictation - keep the user's own words instead.
         if Self.echoesReference(cleaned, context.selectedText) || Self.echoesReference(cleaned, context.clipboard) {
             yapdiag("cleanup: discarded reference-echo output, using raw transcript")
+            return text
+        }
+        // ELLIPSIS guard (every mode): an ellipsis the speaker never said is the small
+        // model marking where it DELETED something ("I tried... It often adds an ellipsis"
+        // from a 22-word transcript with a whole sentence gone - caught live, and the user
+        // reported it happens often). Whisper writes "..." itself when speech trails off,
+        // so only an ellipsis absent from the raw transcript counts.
+        let rawHasEllipsis = text.contains("...") || text.contains("\u{2026}")
+        if !rawHasEllipsis, cleaned.contains("...") || cleaned.contains("\u{2026}") {
+            yapdiag("cleanup: discarded output that invented an ellipsis, using raw transcript")
+            return text
+        }
+        // SENTENCE-LOSS guard (preserve-style cleanup only: Clean Up, and Auto's
+        // conservative repair). Those modes remove fillers and fix errors; they never
+        // shorten. Losing more than a quarter of the words means content was dropped.
+        let preserving = mode.id == BuiltInModes.clean.id
+            || mode.instructions.contains("repairing a speech-to-text transcript")
+        if preserving, inWords >= 8, Double(outWords) < Double(inWords) * 0.75 {
+            yapdiag("cleanup: discarded output that dropped content (\(inWords)->\(outWords) words), using raw transcript")
             return text
         }
         // PARAPHRASE-DRIFT guard (Clean Up only - other modes rewrite by design): cleanup
@@ -2010,8 +2120,24 @@ final class DictationController {
     /// silent to sighted users (selection capture, AI actions).
     func flashStatus(_ message: String) {
         yapdiag("status: \(message)")
+        // NEVER route a transient status through the error phase while a session is
+        // live. setError() replaces the phase, and .recording is the only state stop()
+        // and cancel() will act on - a flash mid-dictation left the mic open with no
+        // way to end it, and made double-Esc a no-op (the first Esc's own hint flashed).
+        if isRecording || isBusy || startInFlight {
+            statusDetail = message
+            announce(message)
+            statusFlashTask?.cancel()
+            statusFlashTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard let self, self.statusDetail == message else { return }
+                self.statusDetail = nil
+            }
+            return
+        }
         setError(message)
     }
+    private var statusFlashTask: Task<Void, Never>?
 
     // MARK: VoiceOver announcements
 

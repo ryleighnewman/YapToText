@@ -253,6 +253,7 @@ struct HomeView: View {
                 Toggle("Intelligent insert", isOn: $settings.adaptToSurroundings)
                     .toggleStyle(.switch).controlSize(.small)
                 Caption("Dictating into the middle of a sentence adapts automatically: the first word lowercases when it should, spacing joins cleanly, and a trailing period is dropped when the sentence continues.")
+                if settings.adaptToSurroundings { BeepNotice() }
             }
             HStack(spacing: 8) {
                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)

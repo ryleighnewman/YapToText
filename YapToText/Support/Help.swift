@@ -166,7 +166,9 @@ enum HelpContent {
                     "A trailing period is dropped when the sentence continues after the cursor, or when a period is already sitting there.",
                 ]),
                 .paragraph("It is on by default and can be switched off in the Home page's quick controls. Apps that do not expose their text simply get the transcript unchanged, and dictating over a selection always replaces that selection rather than adapting to it."),
-                .tip("Nothing is copied to read your surroundings, and nothing is stored. If an app never answers, YapToText stops asking it and inserts plainly instead, so it never slows a dictation down."),
+                .heading("How it reads, and the beep"),
+                .paragraph("A sandboxed app is not allowed to read another app's text directly, so YapToText briefly selects a few words on each side of your cursor with synthetic keystrokes, copies them, and puts your clipboard straight back. Nothing is stored and nothing leaves your Mac. If an app never answers, YapToText stops asking it and inserts plainly."),
+                .paragraph("Some apps refuse a keystroke they do not expect (a copy with nothing selected, for example) and macOS plays the alert sound for each one. That is the app declining the key, not an error. If it bothers you: open System Settings, choose Sound, and drag the Alert volume slider all the way down. Only alert beeps are silenced; music, video, and dictation sounds are unaffected. You can also switch Intelligent insert off in Quick controls on the Home page."),
             ]),
 
         HelpArticle(
@@ -188,7 +190,7 @@ enum HelpContent {
             title: "Commands",
             summary: "Spoken shortcuts that become symbols and actions.",
             blocks: [
-                .paragraph("Commands turn a spoken phrase into something typed. Say \u{201C}insert smiley face\u{201D} and the emoji appears in your text. The insert prefix is there so ordinary sentences that happen to contain a command name never trigger by accident; you can turn the prefix off per command."),
+                .paragraph("Commands turn a spoken phrase into something typed. Say \u{201C}insert smiley face\u{201D} and the emoji appears in your text. The insert prefix is there so ordinary sentences that happen to contain a command name never trigger by accident. Multi-word punctuation names like \u{201C}exclamation point\u{201D} and \u{201C}question mark\u{201D} never need it, and the prefix can be switched off entirely on the Commands page."),
                 .paragraph("Punctuation commands glue correctly: saying \u{201C}hashtag vibes\u{201D} produces #vibes with no stray space."),
             ]),
 

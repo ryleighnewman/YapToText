@@ -35,6 +35,8 @@ enum TextInserter {
 
     /// Set by the app at launch; read at insert time so the adapt step is user-controlled.
     static var adaptToSurroundings: () -> Bool = { true }
+    /// The exact text the last insert put on screen (post-adaptation). Main-actor only.
+    static private(set) var lastDelivered: String?
 
     private static func insert(_ text: String, method: InsertionMethod, restoreClipboard: Bool, submit: Bool, presurround: InsertionContext.Surround? = nil) async {
         // CONTEXT-AWARE INSERTION: fit the transcript into the sentence it lands in
@@ -42,6 +44,9 @@ enum TextInserter {
         // read of the focused field, no-op when the app exposes no text. Async: the
         // sandbox key-sim read awaits instead of blocking, so the panel keeps animating.
         let text = adaptToSurroundings() ? await InsertionContext.adapted(text, presurround: presurround) : text
+        // What actually landed, AFTER adaptation - the only string a later "scratch that"
+        // can delete by length (adapt can add or drop a space or a period).
+        lastDelivered = text
         switch method {
         case .clipboardOnly:
             setClipboard(text)
@@ -60,65 +65,58 @@ enum TextInserter {
         }
     }
 
-    /// Kept alive while a promised transcript sits on the pasteboard.
-    private static var borrowed: BorrowedClipboard?
-
     private static func paste(_ text: String, restoreClipboard: Bool) {
         let pb = NSPasteboard.general
         // Snapshot the WHOLE clipboard (images, files, RTF, every type) - not just plain text -
         // so restoring can't drop a copied picture or file the way a text-only save does.
         let snapshot = restoreClipboard ? PasteboardSnapshot.capture(pb) : nil
-        guard let snapshot else {
-            pb.clearContents()
-            pb.setString(text, forType: .string)
-            postKey(0x09, flags: .maskCommand)   // Cmd+V
-            return
-        }
-
-        var restored = false
-        var borrowedToken = -1
-        func restore(_ why: String) {
-            guard !restored else { return }
-            restored = true
-            let pb = NSPasteboard.general
-            // Never clobber something the USER copied meanwhile. Anything still holding our
-            // transcript (or untouched since we borrowed it) is ours to hand back.
-            let stillOurs = pb.changeCount == borrowedToken || pb.string(forType: .string) == text
-            if stillOurs { snapshot.write(to: pb) }
-            borrowed = nil
-            yapdiag("clipboard: restored (\(why))")
-        }
-
-        // The transcript goes on as PROMISED data, so macOS tells us the moment the target
-        // reads it - the only precise signal that a paste actually landed.
-        //
-        // THE GRACE PERIOD IS LOAD-BEARING. Apps read the pasteboard MORE THAN ONCE around a
-        // single paste (query the types, then the data, then some re-read while normalizing).
-        // Restoring on the first read handed that second read the user's OLD clipboard, which
-        // is how "it pastes my clipboard history on its own" happened. Wait out the repeat
-        // reads, then hand it back - still ~4x faster than the old blind 1.5s wait.
-        let provider = BorrowedClipboard(text: text) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { restore("paste read + grace") }
-        }
-        let item = NSPasteboardItem()
-        item.setDataProvider(provider, forTypes: [.string])
-        borrowed = provider
         pb.clearContents()
-        pb.writeObjects([item])
-        borrowedToken = pb.changeCount
-        postKey(0x09, flags: .maskCommand)   // Cmd+V
-
-        // Never let paste depend on promised data working: if nothing has read it in 500ms,
-        // put the REAL string down for a slow or unusual consumer and fall back to the old
-        // conservative timing.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            guard !restored, !provider.wasRead else { return }
-            let pb = NSPasteboard.general
-            guard pb.changeCount == borrowedToken else { return }   // user copied: leave it
+        pb.setString(text, forType: .string)
+        // VERIFY before pressing paste. If a stray synthetic Cmd+C from the surround read
+        // lands in this window it silently replaces our transcript with the target's own
+        // selection, and Cmd+V then pastes that. Cheap to re-assert; catastrophic to skip.
+        if pb.string(forType: .string) != text {
             pb.clearContents()
             pb.setString(text, forType: .string)
-            borrowedToken = pb.changeCount
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { restore("fallback timer") }
+            yapdiag("insert: clipboard was clobbered before paste - re-asserted the transcript")
+        }
+        let borrowedToken = pb.changeCount
+        postKey(0x09, flags: .maskCommand)   // Cmd+V
+        if let snapshot {
+            // REAL DATA ON THE PASTEBOARD, ALWAYS. Promised data (NSPasteboardItemDataProvider)
+            // is the only way to learn the exact moment a paste lands, and it was tried twice
+            // for that reason. It costs too much: the pasting app has to call BACK into this
+            // process for the bytes instead of reading what is already there, so every paste
+            // waits on our main thread and the delay is plainly felt. Handing the transcript
+            // over as real bytes keeps pasting instant, which matters far more than shaving a
+            // second off returning the clipboard.
+            //
+            // 1.5s, not 0.3s: a busy target app (Electron, or the CPU still hot from
+            // transcription) can read the pasteboard AFTER a 0.3s restore and paste the OLD
+            // clipboard - the classic "sometimes it just doesn't paste".
+            //
+            // The guard is SMART: a changed changeCount doesn't necessarily mean the user
+            // copied something - many apps rewrite the pasteboard while handling the paste,
+            // which used to permanently cancel the restore and leave the transcript squatting
+            // over a copied picture. If the clipboard still holds OUR text, restoring is safe.
+            func attemptRestore(retry: Bool) {
+                let pb = NSPasteboard.general
+                let stillOurs = pb.changeCount == borrowedToken
+                    || pb.string(forType: .string) == text
+                if stillOurs {
+                    snapshot.write(to: pb)
+                } else if retry {
+                    // One second chance: the target may still be mid-paste-normalization.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        attemptRestore(retry: false)
+                    }
+                }
+                // Neither ours nor retryable: the user genuinely copied something new -
+                // leave it alone.
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                attemptRestore(retry: true)
+            }
         }
     }
 
@@ -229,26 +227,5 @@ struct PasteboardSnapshot {
     func write(to pb: NSPasteboard) {
         pb.clearContents()
         if !items.isEmpty { pb.writeObjects(items) }
-    }
-}
-
-/// Supplies the transcript to whoever pastes it, and reports when that first happens.
-private final class BorrowedClipboard: NSObject, NSPasteboardItemDataProvider {
-    private let text: String
-    private let onFirstRead: () -> Void
-    private(set) var wasRead = false
-
-    init(text: String, onFirstRead: @escaping () -> Void) {
-        self.text = text
-        self.onFirstRead = onFirstRead
-    }
-
-    func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem,
-                    provideDataForType type: NSPasteboard.PasteboardType) {
-        // Serve the text on EVERY request; only the first one starts the restore clock.
-        item.setString(text, forType: type)
-        guard !wasRead else { return }
-        wasRead = true
-        onFirstRead()
     }
 }

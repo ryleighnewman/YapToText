@@ -55,6 +55,7 @@ struct DictationPage: View {
                         .toggleStyle(.switch).controlSize(.small)
                     SubOptions {
                         Caption("Mid-sentence dictation matches the capitalization and spacing around the cursor. Playback resumes at full quality when you finish.")
+                        if settings.adaptToSurroundings { BeepNotice() }
                     }
                 }
 

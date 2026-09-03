@@ -110,17 +110,30 @@ final class HistoryStore {
             }
         }
         var terms: [String] = []
+        // NEVER prime caption vocabulary. Whisper narrates media it was trained on
+        // ("Male speaker:", "[music]"); once such a hallucination reaches history it would
+        // be harvested here and primed back into the decoder, breeding more of itself. A
+        // real feedback loop, caught in the log: "primed 75 chars (recent: male speaker)".
+        let captionWords: Set<String> = ["speaker","speakers","music","applause","laughter","laughs",
+            "silence","inaudible","noise","transcript","transcription","subtitles","subtitle","caption",
+            "captions","narrator","announcer","audience","cheering","crosstalk","background","unintelligible"]
+        func isCaptionish(_ term: String) -> Bool {
+            term.lowercased().split(separator: " ").contains { captionWords.contains(String($0)) }
+        }
         // A phrase only counts when it recurs across DISTINCT dictations - one rant
         // repeating itself is not working vocabulary, a phrase that keeps coming back is.
+        // Three, not two: two recurrences is what casual conversation produces (the log
+        // primed "absolutely massive", "explicitly stated", "broke"), and a wrong prime
+        // costs accuracy on every dictation after it.
         for (_, v) in bigramRecords.sorted(by: { $0.value.recs.count > $1.value.recs.count })
-        where v.recs.count >= 2 {
+        where v.recs.count >= 3 && !isCaptionish(v.display) {
             terms.append(v.display)
             if terms.count >= limit / 2 { break }
         }
         let covered = Set(terms.flatMap { $0.lowercased().split(separator: " ").map(String.init) })
         for (k, recs) in wordRecords.sorted(by: { $0.value.count > $1.value.count }) {
             guard terms.count < limit else { break }
-            guard !covered.contains(k), recs.count >= 3 else { continue }
+            guard !covered.contains(k), recs.count >= 3, !isCaptionish(k) else { continue }
             terms.append(caseMap[k] ?? k)
         }
         return terms

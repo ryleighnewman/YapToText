@@ -9,7 +9,7 @@
 set -u
 PROJ="/Users/ryleighnewman/Desktop/Apps/YapToText"
 DD="$HOME/Library/Caches/YapToTextDD-Release"
-ARCHIVE="$DD/YapToText-1.3.1-11.xcarchive"
+ARCHIVE="$DD/YapToText-1.3.1-12.xcarchive"
 ALOG="/tmp/yap-archive7c.log"
 ULOG="/tmp/yap-upload7.log"
 
@@ -53,4 +53,20 @@ else
   echo "ARCHIVE FAILED, WRONG MODELS, OR EXTENDED ATTRIBUTES PRESENT - upload skipped" >> "$ALOG"
   xattr -r "$ARCHIVE/Products/Applications/YapToText.app" 2>/dev/null | head >> "$ALOG"
   ls -la "$MODELS" >> "$ALOG" 2>&1
+fi
+
+# A successful App Store upload is only step 1 of 3. Say so LOUDLY here, at the exact
+# moment the release feels finished, because this is where Homebrew gets forgotten.
+if grep -q "UPLOAD-EXIT=0" "$ULOG" 2>/dev/null; then
+  VER=$(/usr/bin/grep -m1 "MARKETING_VERSION" "$PROJ/YapToText.xcodeproj/project.pbxproj" | sed 's/.*= *//; s/;//')
+  BLD=$(/usr/bin/grep -m1 "CURRENT_PROJECT_VERSION" "$PROJ/YapToText.xcodeproj/project.pbxproj" | sed 's/.*= *//; s/;//')
+  echo ""
+  echo "=============================================================="
+  echo " App Store upload done: $VER ($BLD).  TWO STEPS REMAIN."
+  echo ""
+  echo "   2. GitHub    git tag v$VER-$BLD, push, gh release create"
+  echo "   3. Homebrew  ./Scripts/release-homebrew.sh, then push the tap"
+  echo ""
+  echo " Full procedure: Scripts/RELEASE.md"
+  echo "=============================================================="
 fi

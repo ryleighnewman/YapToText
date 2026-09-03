@@ -40,22 +40,33 @@ final class CommandStore {
 
     // MARK: Apply
 
-    func apply(to text: String) -> String {
+    /// `only` restricts the pass to one category: the punctuation pass runs BEFORE AI
+    /// cleanup (so the model sees "working now?" instead of the words "question mark",
+    /// which it deleted), and the full pass runs after it for everything else.
+    func apply(to text: String, only: CommandCategory? = nil) -> String {
         guard isEnabled else { return text }
         // Apply longer trigger phrases first so "exclamation point" wins before "exclamation"
         // can match the word inside it, regardless of authoring order.
         let pairs = commands
-            .filter(\.enabled)
+            .filter { $0.enabled && (only == nil || $0.category == only) }
             .flatMap { command in
                 command.triggers
                     .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                    .map { (trigger: $0, output: command.output) }
+                    .map { (trigger: $0, output: command.output, category: command.category) }
             }
             .sorted { $0.trigger.count > $1.trigger.count }
         var result = text
         for pair in pairs {
+            // The "insert" prefix exists so ORDINARY words never fire ("that period of time",
+            // "a dash of salt"). A multi-word punctuation NAME has no such ambiguity: nobody
+            // says "exclamation point" or "question mark" in prose except to dictate the
+            // symbol - so those fire without the prefix even when it is required elsewhere.
+            // (A user dictated "exclamation point" seven times in a row and got the words.)
+            let words = pair.trigger.split(whereSeparator: { $0.isWhitespace }).count
+            let exempt = pair.category == .punctuation && words >= 2
             result = CommandStore.replace(trigger: pair.trigger, with: CommandStore.expandTokens(pair.output),
-                                          requirePrefix: requireInsertPrefix, in: result)
+                                          requirePrefix: requireInsertPrefix && !exempt,
+                                          clauseEndOnly: exempt, in: result)
         }
         return result
     }
@@ -99,22 +110,44 @@ final class CommandStore {
         return compiled
     }
 
-    static func replace(trigger: String, with output: String, requirePrefix: Bool, in text: String) -> String {
+    static func replace(trigger: String, with output: String, requirePrefix: Bool,
+                        clauseEndOnly: Bool = false, in text: String) -> String {
         let words = trigger.split(whereSeparator: { $0.isWhitespace })
             .map { NSRegularExpression.escapedPattern(for: String($0)) }
         guard !words.isEmpty else { return text }
-        let phrase = words.joined(separator: "\\s+")
+        // A trigger made of one repeated word ("dot dot dot") absorbs EXTRA repeats: whisper
+        // heard "dot dot dot" as five dots and the match left "dot dot …" behind.
+        let phrase: String
+        if words.count >= 2, Set(words).count == 1 {
+            phrase = words[0] + "(?:\\s+" + words[0] + "){\(words.count - 1),}"
+        } else {
+            phrase = words.joined(separator: "\\s+")
+        }
         let lead = (trigger.first?.isLetter ?? false) || (trigger.first?.isNumber ?? false) ? "\\b" : ""
         let trail = (trigger.last?.isLetter ?? false) || (trigger.last?.isNumber ?? false) ? "\\b" : ""
         let isNewline = !output.isEmpty && output.allSatisfy { $0 == "\n" }
-        let attaches = output.first.map { ".,!?;:".contains($0) } ?? false
+        let attaches = output.first.map { ".,!?;:\u{2026}".contains($0) } ?? false
         // Outputs that END in a joining symbol (hashtag, at-sign, openers) glue to the NEXT word:
         // "hashtag vibes" becomes "#vibes", not "# vibes". Mirrors the leading-attach rule above.
         let attachesNext = output.last.map { "#@([{$\u{201C}\u{2018}".contains($0) } ?? false
-        let eatLead = (attaches || isNewline) ? "[ \\t]*" : ""
-        let eatTrail = (isNewline || attachesNext) ? "[ \\t]*" : ""
+        // Whisper often sets the spoken name off with a comma ("working now, question
+        // mark."); that comma belongs to the words, not the sentence, so it goes too.
+        let eatLead = attaches ? "[ \\t]*(?:,[ \\t]*)?" : (isNewline ? "[ \\t]*" : "")
+        var eatTrail = (isNewline || attachesNext) ? "[ \\t]*" : ""
+        // Whisper punctuates on its own, so a spoken mark usually arrives with the
+        // decoder's mark right behind it: "how about an exclamation point?" became
+        // "how about an!?" and "testing the exclamation point." became "testing the!.".
+        // The spoken mark is the one the user chose - swallow one decoder mark that
+        // directly follows it. Quotes and brackets after it are left alone.
+        let endsWithMark = output.last.map { ".,!?;:\u{2026}".contains($0) } ?? false
+        if attaches, endsWithMark { eatTrail += "(?:[ \\t]*[.,!?;:])?" }
         let prefix = requirePrefix ? "\\binsert\\s+" : ""
-        let pattern = eatLead + prefix + lead + phrase + trail + eatTrail
+        // A prefix-free punctuation name is a command only at the END of a clause. Followed
+        // by a lowercase word it is the user talking ABOUT the mark ("I said question mark
+        // in the dictation", "it put a question mark in the middle"), which turned into
+        // "said? in". (?-i: keeps the class case-sensitive inside a case-insensitive regex.
+        let clauseEnd = clauseEndOnly ? "(?-i:(?![ \\t]*[a-z]))" : ""
+        let pattern = eatLead + prefix + lead + phrase + trail + eatTrail + clauseEnd
         guard let regex = cachedRegex(pattern) else { return text }
         let range = NSRange(text.startIndex..., in: text)
         let template = NSRegularExpression.escapedTemplate(for: output)

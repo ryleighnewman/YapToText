@@ -311,8 +311,10 @@ enum MenuBarIcon {
         tinted.draw(in: dst, from: .zero, operation: .sourceOver, fraction: 1)
     }
 
-    /// A white activity spinner centered exactly on the speech bubble: eight clock-position spokes,
-    /// each fading behind the one leading the rotation (not a cohesive arc).
+    /// An activity spinner centered exactly on the speech bubble: eight clock-position spokes,
+    /// each fading behind the one leading the rotation (not a cohesive arc). Drawn in the
+    /// label color of the menu bar it sits in, so it is white over a dark bar and black
+    /// over a light one - it used to be hard-coded white and vanished on light wallpapers.
     private static func drawSpinner(in dst: NSRect, spin: Double) {
         let cx = dst.minX + bubbleFX * dst.width
         let cy = dst.minY + (1 - bubbleFY) * dst.height   // art measured top-down; canvas is bottom-up
@@ -337,7 +339,7 @@ enum MenuBarIcon {
             path.line(to: NSPoint(x: cx + ci * rOuter, y: cy + si * rOuter))
             path.lineWidth = max(0.9, rOuter * 0.34)
             path.lineCapStyle = .round
-            NSColor.white.withAlphaComponent(opacity).setStroke()
+            NSColor.labelColor.withAlphaComponent(opacity).setStroke()
             path.stroke()
         }
     }

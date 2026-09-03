@@ -146,6 +146,11 @@ struct GeneralSettingsView: View {
                         Text(device.name).tag(Optional(device.uid))
                     }
                 }
+                .onChange(of: settings.inputDeviceUID) {
+                    // The meter below must follow the pick, or the page looks like it never updated.
+                    InputLevelMonitor.shared.deviceUID = settings.inputDeviceUID
+                    InputLevelMonitor.shared.restart()
+                }
                 Caption("Which microphone YapToText listens to. If the chosen one is unplugged, it falls back to the system default.")
                 Text("Live input level").font(.caption).foregroundStyle(.secondary)
                 LiveInputMeter()   // isolated observer - only the bar re-renders
@@ -191,6 +196,7 @@ struct GeneralSettingsView: View {
             .onAppear {
                 InputLevelMonitor.shared.gain = Float(settings.inputGain)
                 InputLevelMonitor.shared.autoAmplify = settings.autoAmplifyInput
+                InputLevelMonitor.shared.deviceUID = settings.inputDeviceUID
                 InputLevelMonitor.shared.start()
             }
             .onDisappear { InputLevelMonitor.shared.stop() }

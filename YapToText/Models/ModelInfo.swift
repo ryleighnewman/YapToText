@@ -36,6 +36,39 @@ struct ModelInfo: Codable, Identifiable, Hashable {
 
     var isBuiltIn: Bool { runtime == .apple }
 
+    // Explicit decoding so fields added AFTER a user's models file was written decode as
+    // their defaults. Swift's synthesized Decodable ignores default values and throws
+    // keyNotFound - which made every user-models.json written before 1.3.1 (no speed or
+    // recommended keys) fail to load, and the store then overwrote it with an empty list.
+    // House rule for every persisted struct: new stored properties use decodeIfPresent.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        displayName = try c.decode(String.self, forKey: .displayName)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? ""
+        kind = try c.decode(ModelKind.self, forKey: .kind)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        languages = try c.decodeIfPresent(String.self, forKey: .languages) ?? ""
+        sizeMB = try c.decodeIfPresent(Double.self, forKey: .sizeMB) ?? 0
+        quality = try c.decodeIfPresent(Int.self, forKey: .quality) ?? 3
+        speed = try c.decodeIfPresent(Int.self, forKey: .speed) ?? 3
+        recommended = try c.decodeIfPresent(Bool.self, forKey: .recommended) ?? false
+        downloadURL = try c.decodeIfPresent(URL.self, forKey: .downloadURL)
+        fileName = try c.decodeIfPresent(String.self, forKey: .fileName)
+        runtime = try c.decode(ModelRuntime.self, forKey: .runtime)
+        license = try c.decodeIfPresent(String.self, forKey: .license) ?? ""
+        sha256 = try c.decodeIfPresent(String.self, forKey: .sha256)
+    }
+
+    init(id: String, displayName: String, provider: String, kind: ModelKind, summary: String,
+         languages: String, sizeMB: Double, quality: Int, speed: Int = 3, recommended: Bool = false,
+         downloadURL: URL?, fileName: String?, runtime: ModelRuntime, license: String, sha256: String? = nil) {
+        self.id = id; self.displayName = displayName; self.provider = provider; self.kind = kind
+        self.summary = summary; self.languages = languages; self.sizeMB = sizeMB; self.quality = quality
+        self.speed = speed; self.recommended = recommended; self.downloadURL = downloadURL
+        self.fileName = fileName; self.runtime = runtime; self.license = license; self.sha256 = sha256
+    }
+
     /// Plain-language ratings shown as chips next to the stars.
     enum Rating { case high, balanced, low
         var accuracyLabel: String {

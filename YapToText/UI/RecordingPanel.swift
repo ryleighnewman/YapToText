@@ -92,6 +92,7 @@ final class RecordingPanel {
                                                           tintStrength: self.settings.panelTintStrength)
             }
         }
+        timer.tolerance = 0.04   // let the system coalesce the wakeups; the hue integrates measured dt, so jitter is invisible
         RunLoop.main.add(timer, forMode: .common)
         rgbTimer = timer
     }

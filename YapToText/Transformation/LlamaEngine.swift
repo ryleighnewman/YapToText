@@ -370,8 +370,13 @@ struct LlamaTransformer: TextTransformer {
         let system = FoundationModelsTransformer.systemPrompt()
         let user = FoundationModelsTransformer.cleanupUserPrompt(for: text, mode: mode, context: context)
         let path = modelURL.path
+        // A cleanup never legitimately needs more than about 1.5x the input: the guards
+        // in runCleanup discard anything past 3x anyway, so generating the rest was pure
+        // waste - a 278-word transcript ran 12.7 s while the model wrote 1085 words that
+        // were then thrown away. Cap the generation to what could possibly be kept.
+        let cap = Int32(min(1400, max(220, Double(text.count) / 3.0 * 1.6 + 80)))
         let raw = try await Task.detached(priority: .userInitiated) {
-            try LlamaEngine.complete(modelPath: path, system: system, user: user, draft: text, maxTokens: 1400)
+            try LlamaEngine.complete(modelPath: path, system: system, user: user, draft: text, maxTokens: cap)
         }.value
         return FoundationModelsTransformer.stripEditorialAnnotations(
             FoundationModelsTransformer.stripLeakedAppName(FoundationModelsTransformer.sanitize(raw), appName: appName),

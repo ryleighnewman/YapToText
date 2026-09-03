@@ -42,9 +42,13 @@ extension LinearGradient {
 /// The app window's frosted backdrop: the behind-window blur plus a whisper of darkening so
 /// content keeps contrast on bright wallpapers (the raw blur washed out on light desktops).
 struct AppWindowBackground: View {
+    @Environment(\.colorScheme) private var scheme
     var body: some View {
+        // Light mode needs a firmer ground: over a bright desktop the material went nearly
+        // white and the white glass cards dissolved into it. A stronger shade keeps the
+        // window a clear step darker than its cards; dark mode keeps its lighter veil.
         VisualEffectBackground()
-            .overlay(Color.black.opacity(0.13))
+            .overlay(Color.black.opacity(scheme == .light ? 0.20 : 0.13))
             .ignoresSafeArea()
     }
 }
@@ -518,7 +522,17 @@ enum CompatPreview {
     #endif
 }
 
+/// Shows its content only in light mode; renders nothing in dark mode.
+private struct LightModeOnly: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    func body(content: Content) -> some View {
+        if scheme == .light { content } else { EmptyView() }
+    }
+}
+
 extension View {
+    func lightModeOnly() -> some View { modifier(LightModeOnly()) }
+
     /// Thin-material window background where the placement API exists (macOS 15+); older
     /// systems keep the default popover chrome, which is already a material.
     @ViewBuilder
@@ -536,6 +550,9 @@ extension View {
     func yapGlass<S: Shape>(in shape: S) -> some View {
         if #available(macOS 26.0, *), !CompatPreview.legacy {
             self.glassEffect(.regular, in: shape)
+                // A hairline edge that only shows in light mode, where a white card on a
+                // pale ground had no visible boundary at all.
+                .overlay(shape.stroke(Color.primary.opacity(0.10), lineWidth: 0.5).lightModeOnly())
         } else {
             self.background(.ultraThinMaterial, in: shape)
                 .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 0.8))

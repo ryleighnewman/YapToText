@@ -66,6 +66,7 @@ struct AdvancedSettingsView: View {
                         Caption(settings.adaptToSurroundings
                                 ? "Inserting mid-sentence lowercases the first word, fixes spacing, and drops a closing period when the sentence continues."
                                 : "Text is inserted exactly as transcribed, regardless of what surrounds the cursor.")
+                        if settings.adaptToSurroundings { BeepNotice() }
                     } else {
                         Caption("Each dictation is copied to the clipboard instead of being typed.")
                     }

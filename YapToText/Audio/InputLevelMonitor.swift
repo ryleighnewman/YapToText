@@ -24,7 +24,13 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
     /// Preview auto-gain on the meter too, so it matches what dictation will actually hear.
     var autoAmplify: Bool = false
 
-    private let engine = AVAudioEngine()
+    /// Rebuilt on every start: an engine that survives an input-device change reports a
+    /// STALE cached format, and installing a tap with it raises an uncatchable NSException.
+    /// A fresh engine re-queries the hardware, so its format is right by construction.
+    private var engine = AVAudioEngine()
+    /// The user's Input source pick (nil = system default), so the meter measures the SAME
+    /// microphone dictation will use instead of always showing the system default.
+    var deviceUID: String?
     private var running = false        // the tap/engine is actually live
     private var wantsRunning = false   // the meter is wanted (settings card visible)
     private var agcGain: Float = 1.0
@@ -42,12 +48,22 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
     /// remember we want it back when the app returns.
     func suspend() { stopEngine() }
     func resume() { if wantsRunning { startEngine() } }
+    /// The Input source changed: rebuild on the new device if the meter is on screen.
+    func restart() { stopEngine(); if wantsRunning { startEngine() } }
 
     private func startEngine() {
         guard !running else { return }
+        engine = AVAudioEngine()   // fresh: never trust a node that outlived a route change
         let input = engine.inputNode
+        // Route to the chosen device BEFORE reading the format (engine is not running yet).
+        if let uid = deviceUID, let device = AudioInputDevices.device(forUID: uid), let unit = input.audioUnit {
+            var deviceID = device.id
+            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                 &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
+        }
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else { return }
+        input.removeTap(onBus: 0)   // a bus can hold exactly one tap; double-install aborts the app
         agcGain = 1.0
         lastPublish = 0
         noiseFloorRMS = 0; speechPeakRMS = 0; snrFrames = 0
@@ -87,7 +103,13 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
             }
         }
         engine.prepare()
-        do { try engine.start(); running = true } catch { running = false }
+        do { try engine.start(); running = true }
+        catch {
+            // The tap was installed above; leaving it on a stopped engine meant the next
+            // start() double-installed on the same bus and the app aborted.
+            input.removeTap(onBus: 0)
+            running = false
+        }
     }
 
     private func stopEngine() {

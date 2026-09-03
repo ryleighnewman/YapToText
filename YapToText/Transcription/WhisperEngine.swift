@@ -99,6 +99,10 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // ("running very slow when I hit transcribe"). No-op when already cached.
         if let warmPath = modelURL?.path {
             Task.detached(priority: .userInitiated) {
+                // inferenceLock, not just contextLock: sharedContext frees a stale cached
+                // context, and without the inference lock that free can land while another
+                // whisper_full is decoding on it.
+                WhisperEngine.inferenceLock.lock(); defer { WhisperEngine.inferenceLock.unlock() }
                 _ = try? WhisperEngine.sharedContext(for: warmPath)
             }
         }
@@ -440,10 +444,27 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // Inline audio captions INSIDE otherwise-real speech ("take notes *sad music* on
         // this") survive the whole-output check above, so they are excised span by span.
         text = Self.stripInlineAudioCaptions(text)
+        // Whisper was trained on captioned media, so on noisy or thin audio it narrates the
+        // SPEAKER as well as the sound ("Male speaker: ...", "[Speaker 1]"). Nobody dictates
+        // their own gender tag; a label at a line start is never the user's words.
+        text = Self.stripSpeakerLabels(text)
+        // REPETITION LOOP: on a long clip that ends in silence the decoder can lock onto
+        // one sentence and print it until the window runs out ("I don't know what we
+        // could do to fix it" seventeen times, from an 85-second dictation). Nobody says
+        // the same sentence three times in a row; the run collapses to its first copy.
+        text = Self.collapseRepetitions(text)
+        if text.isEmpty { return "" }
         // A LOUD room with no clear speech activity is as hallucination-prone as
         // silence: the pleasantry filter applies there too, not just to quiet clips.
         let lowConfidence = (peak < Self.confidentSpeechRMS || analysis.activeSeconds < 0.4)
             && !(quietButReal && analysis.activeSeconds >= 1.0)
+        // GLOSSARY ECHO: the vocabulary prime is an initial_prompt, and on audio with no
+        // real speech the decoder simply reads the prompt back. Output that consists of
+        // nothing but glossary terms, on a low-confidence clip, is the prime echoing.
+        if lowConfidence, let bias, Self.isGlossaryEcho(text, prompt: bias) {
+            yapdiag("silence guard: glossary echo discarded (\(text.prefix(40)))")
+            return ""
+        }
         if originalCount < Int(WhisperEngine.sampleRate * 1.2) || lowConfidence,
            Self.isSilenceHallucination(text) {
             return ""
@@ -569,6 +590,35 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     }
 
     /// Stock phrases whisper invents from silence/noise (well documented upstream).
+    /// Remove caption-style speaker labels: "Male speaker:", "Female Speaker -", "[Speaker 1]",
+    /// "SPEAKER 2:" at the start of the text or of any line. Only label SHAPES are touched, so a
+    /// dictated sentence that merely contains the word speaker is left alone.
+    static func stripSpeakerLabels(_ text: String) -> String {
+        // Dash class covers hyphen, en dash, em dash.
+        let pattern = #"(?im)^[ \t]*\[?[ \t]*(?:male|female|unknown|first|second)?[ \t]*speaker(?:[ \t]*(?:\d+|one|two|three|[a-d]))?[ \t]*\]?[ \t]*[:\-\x{2013}\x{2014}][ \t]*"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { assertionFailure("speaker-label regex failed to compile"); return text }
+        var out = re.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
+        // A bare bracketed tag anywhere ("[male speaker]") is a caption too.
+        if let re2 = try? NSRegularExpression(pattern: #"(?i)\[[ \t]*(?:male|female|unknown)?[ \t]*speaker(?:[ \t]*\d+)?[ \t]*\]"#) {
+            out = re2.stringByReplacingMatches(in: out, range: NSRange(location: 0, length: (out as NSString).length), withTemplate: "")
+        }
+        while out.contains("  ") { out = out.replacingOccurrences(of: "  ", with: " ") }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// True when a short output is made ENTIRELY of words from the priming glossary: the
+    /// decoder reading its initial_prompt back at noise rather than hearing speech.
+    static func isGlossaryEcho(_ text: String, prompt: String) -> Bool {
+        func words(_ s: String) -> [String] {
+            s.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init)
+        }
+        let body = prompt.hasPrefix("Glossary:") ? String(prompt.dropFirst("Glossary:".count)) : prompt
+        let glossary = Set(words(body))
+        let spoken = words(text)
+        guard !spoken.isEmpty, spoken.count <= 8, !glossary.isEmpty else { return false }
+        return spoken.allSatisfy { glossary.contains($0) }
+    }
+
     static func isSilenceHallucination(_ text: String) -> Bool {
         let normalized = text.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -611,6 +661,57 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// Remove bracketed audio captions embedded inside real speech. Only short spans
     /// (<= 4 words) containing a caption word are removed - "(see the attached file)"
     /// style genuine asides survive untouched.
+    /// Collapse a run of three or more consecutive near-identical sentences to the first
+    /// one. Sentences compare on their words alone (case and punctuation ignored), and two
+    /// sentences of five or more words that differ in a single word count as the same -
+    /// a decoder loop drifts ("fix that" / "fix it") without ever leaving the sentence.
+    /// A run of two is left alone: "No. No." is real speech.
+    static func collapseRepetitions(_ text: String) -> String {
+        guard text.count >= 40 else { return text }
+        // Split keeping the terminator with its sentence, so the join is lossless.
+        var sentences: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if ".!?".contains(ch) || ch == "\n" {
+                sentences.append(current); current = ""
+            }
+        }
+        if !current.isEmpty { sentences.append(current) }
+        guard sentences.count >= 3 else { return text }
+        func words(_ s: String) -> [String] {
+            s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        }
+        func same(_ a: [String], _ b: [String]) -> Bool {
+            if a == b { return !a.isEmpty }
+            guard a.count == b.count, a.count >= 5 else { return false }
+            var diff = 0
+            for (x, y) in zip(a, b) where x != y { diff += 1; if diff > 1 { return false } }
+            return true
+        }
+        var out: [String] = []
+        var runStart = 0
+        var removed = 0
+        var i = 0
+        while i < sentences.count {
+            let w = words(sentences[i])
+            var j = i + 1
+            while j < sentences.count, same(w, words(sentences[j])) { j += 1 }
+            if j - i >= 3 {
+                out.append(sentences[i]); removed += j - i - 1
+            } else {
+                out.append(contentsOf: sentences[i..<j])
+            }
+            runStart = j; i = j
+        }
+        _ = runStart
+        if removed > 0 {
+            yapdiag("whisper: collapsed a repetition loop (\(removed) repeated sentences removed)")
+            return out.joined().trimmingCharacters(in: .whitespaces)
+        }
+        return text
+    }
+
     static func stripInlineAudioCaptions(_ text: String) -> String {
         var out = text
         for (open, close) in [("(", ")"), ("[", "]"), ("*", "*"), ("\u{266A}", "\u{266A}")] {
@@ -685,12 +786,28 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// the Metal kernels (a large slice of the cold cost), so warming only the context still
     /// left the first REAL dictation paying the shader compile. This makes the first dictation
     /// fully warm - model loaded AND kernels built.
+    /// Paths whose Metal kernels have already been compiled by a throwaway decode. Guarded
+    /// by contextLock; cleared on eviction. Without this memo the activity monitor's
+    /// warmSpeechModel() ran a full silent decode every few seconds of typing, holding
+    /// the inference lock and burning GPU for nothing.
+    nonisolated(unsafe) private static var kernelsWarmedFor: Set<String> = []
+
     static func warmContext(at path: String) {
         Task.detached(priority: .utility) {
-            guard (try? WhisperEngine.sharedContext(for: path)) != nil else { return }
+            let loaded: Bool = {
+                WhisperEngine.inferenceLock.lock(); defer { WhisperEngine.inferenceLock.unlock() }
+                return (try? WhisperEngine.sharedContext(for: path)) != nil
+            }()
+            guard loaded else { return }
+            let alreadyWarm: Bool = {
+                contextLock.lock(); defer { contextLock.unlock() }
+                return kernelsWarmedFor.contains(path)
+            }()
+            if alreadyWarm { return }
             let silence = [Float](repeating: 0, count: Int(sampleRate * 1.2))
             _ = try? WhisperEngine.transcribe(modelPath: path, audio: silence, language: "en",
                                               allowBeam: false, isCancelled: { false })
+            contextLock.lock(); kernelsWarmedFor.insert(path); contextLock.unlock()
         }
     }
 
@@ -702,6 +819,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         if let context = cachedContext { whisper_free(context) }
         cachedContext = nil
         cachedPath = nil
+        kernelsWarmedFor.removeAll()   // a fresh context recompiles its kernels
     }
 
     private static func sharedContext(for modelPath: String) throws -> OpaquePointer {

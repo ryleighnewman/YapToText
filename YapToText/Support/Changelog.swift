@@ -18,7 +18,21 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
-        Entry(version: "1.3.1 (11)", points: [
+        Entry(version: "1.4 (13)", points: [
+            "Spoken punctuation now follows the convention of every dictation system. Said: “Okay, so I was curious if the system is working now, question mark.” Typed: “Okay, so I was curious if the system is working now?” Said: “Do you know what to do, dot dot dot” Typed: “Do you know what to do…” No stray mark is left behind",
+            "Punctuation names spoken in the middle of a sentence stay as words; they become the mark only at the end of a clause",
+            "Cleanup can no longer drop a sentence or add an ellipsis you did not say",
+            "A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster",
+            "Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input",
+            "Speaker labels such as “Male speaker:” no longer appear in transcripts and are never learned as vocabulary",
+            "Intelligent insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps",
+            "A notice under Intelligent insert explains the beep and how to silence it in Sound settings",
+            "The menu bar spinner is visible on a light menu bar",
+            "Light mode has a firmer window background and clearer card edges",
+            "The first dictation after idle is faster, and the microphone lets go properly after every dictation",
+            "The Homebrew build can use the microphone",
+        ]),
+        Entry(version: "1.3.1 (12)", points: [
             "Dictation is over twice as fast, with a new default speech model",
             "The app is about a gigabyte smaller",
             "Intelligent insert is faster and now works in far more apps",
@@ -27,6 +41,9 @@ enum Changelog {
             "Energy settings now switch the cleanup model with the power source, not just the dictation model",
             "The AI Models page shows what each model is for, with accuracy and speed ratings",
             "A rewritten in-app Help covering Quick Edit, intelligent insert, and energy",
+            "Apple's speech services are no longer started when you dictate with Whisper",
+            "Fewer system beeps in apps that do not support reading the text around your cursor",
+            "Now installable with Homebrew",
             "Bug fixes, including the menu bar spinner running backwards",
         ]),
         Entry(version: "1.3 (9)", points: [

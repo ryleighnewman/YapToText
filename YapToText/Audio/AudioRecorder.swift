@@ -62,8 +62,10 @@ final class AudioRecorder: @unchecked Sendable {
     /// continues seamlessly. A gap of ~1s of audio (the transition) is the only loss.
     private func rebuildRouteMidSession() {
         guard isRunning, !armInFlight else { return }
+        engine.inputNode.removeTap(onBus: 0)
         if engine.isRunning { engine.stop() }
         invalidateResidentTap()
+        routedDeviceUID = nil
         // ALWAYS a fresh engine. Reusing the old engine's input node after a route change
         // crashed in the field (1.2 (7), SIGABRT in installTap): the node reports a STALE
         // cached format that passes the >0 guards while the hardware underneath already
@@ -98,9 +100,14 @@ final class AudioRecorder: @unchecked Sendable {
             try engine.start()
             yapdiag("recorder: revived cold route (\(why)) - instant capture restored")
         } catch {
-            // A wedged graph never recovers by restarting - rebuild fresh, exactly like start()'s fallback.
+            // A wedged graph never recovers by restarting - rebuild fresh, exactly like start()'s
+            // fallback, and in retireEngine's order: the tap comes off BEFORE the old engine is
+            // dropped (releasing an engine with a live tap is a documented SIGABRT).
+            engine.inputNode.removeTap(onBus: 0)
             engine.stop()
             engine = AVAudioEngine()
+            invalidateResidentTap()
+            routedDeviceUID = nil
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
             if format.sampleRate > 0, format.channelCount > 0 { ensureResidentTap(format, on: input) }
@@ -293,6 +300,12 @@ final class AudioRecorder: @unchecked Sendable {
     /// UID of the input device to capture from (the user's Input source pick). nil = system
     /// default. Set before start(); applied to the engine's input unit each session.
     var preferredDeviceUID: String?
+    /// The device the CURRENT engine was last routed to. When the user's pick differs, the
+    /// next session must start on a FRESH engine: re-routing a warm engine's input unit
+    /// leaves the node reporting a stale cached format, and installing the tap with that
+    /// format raises an NSException Swift cannot catch (four SIGABRTs in one day, all in
+    /// installTapOnBus, all right after the Input source was changed in Settings).
+    private var routedDeviceUID: String?
     private let analyzer = SpectrumAnalyzer()
 
     /// Gain to apply to this buffer: the manual boost, times an AGC factor that eases quiet
@@ -516,7 +529,9 @@ final class AudioRecorder: @unchecked Sendable {
         // do we recreate: a brand-new engine sidesteps a stale CoreAudio graph.
         warmShutdown?.cancel()   // a new session claims the standby engine
         var lastError: Error?
-        let fresh = forceFreshEngine || startFreshNextSession
+        let deviceChanged = preferredDeviceUID != routedDeviceUID
+        if deviceChanged { yapdiag("recorder: input device changed (\(routedDeviceUID ?? "default") -> \(preferredDeviceUID ?? "default")) - fresh engine") }
+        let fresh = forceFreshEngine || startFreshNextSession || deviceChanged
         startFreshNextSession = false
         for attempt in 1...2 {
             if attempt == 2 || fresh {
@@ -545,6 +560,8 @@ final class AudioRecorder: @unchecked Sendable {
         old.stop()
         old.reset()
         engine = AVAudioEngine()
+        invalidateResidentTap()
+        routedDeviceUID = nil   // a brand-new engine sits on the system default until arm() routes it
         // Give the old engine's teardown a beat off the hot path before its final release.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { _ = old }
     }
@@ -576,6 +593,12 @@ final class AudioRecorder: @unchecked Sendable {
         // Route to the user's chosen input device BEFORE reading the format, so the tap and the
         // saved file use the selected mic's native format. Falls back silently to the system
         // default if the device went away (unplugged headset).
+        if preferredDeviceUID != routedDeviceUID {
+            // Belt and braces: start() already hands us a fresh engine on a device change,
+            // but a route must never be changed underneath a running input unit.
+            if engine.isRunning { engine.stop() }
+            invalidateResidentTap()
+        }
         if let uid = preferredDeviceUID, let device = AudioInputDevices.device(forUID: uid),
            let unit = input.audioUnit {
             var deviceID = device.id
@@ -583,6 +606,7 @@ final class AudioRecorder: @unchecked Sendable {
                                  kAudioUnitScope_Global, 0,
                                  &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
+        routedDeviceUID = preferredDeviceUID
         armMark("device routing")
         let format = input.outputFormat(forBus: 0)
         armMark("format read")
@@ -638,7 +662,7 @@ final class AudioRecorder: @unchecked Sendable {
     /// 1-2s of the next session - exactly the "it skips my first words" complaint - and the
     /// only real cure is to never let it go cold. The route is released after 5 idle minutes
     /// so the mic indicator doesn't stay on forever.
-    var keepWarm = true
+    var keepWarm = false   // opt-in (matches settings.keepMicWarm's default); synced from settings at launch and start
     /// User-tunable standby duration (Settings > Microphone slider).
     var warmSeconds: Double = 300
     private var warmShutdown: DispatchWorkItem?
@@ -673,9 +697,12 @@ final class AudioRecorder: @unchecked Sendable {
     func releaseVoiceProcessingNow() {
         guard !isRunning else { return }
         vpPrewarmSuppressed = true
-        idlePowerDown?.cancel()
         let input = engine.inputNode
+        // The early return must leave the pending idle power-down INTACT: cancelling it
+        // first and then returning (voice processing is permanently off in this build, so
+        // this guard fails every time) left the route open indefinitely after a dictation.
         guard input.isVoiceProcessingEnabled || prewarmActive else { return }
+        idlePowerDown?.cancel()
         prewarmActive = false
         input.removeTap(onBus: 0)
         let wantWarm = (keepWarm && !warmStandbyExpired) || activityHoldActive   // keep-warm off/expired = the mic actually lets go
