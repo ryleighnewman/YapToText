@@ -11,6 +11,8 @@ machine.
 
 [<img src=".github/assets/mac-app-store-badge.svg" alt="Download on the Mac App Store" height="48">](https://apps.apple.com/us/app/yaptotext/id6786382289?mt=12)
 
+Website: [yaptotext.com](https://yaptotext.com) (help, install, release notes)
+
 ![YapToText](Marketing/posters-v4/01-hero.jpg)
 
 ## Why it exists
