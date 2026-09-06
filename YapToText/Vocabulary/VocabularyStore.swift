@@ -46,6 +46,8 @@ final class VocabularyStore {
         /// One-shot migration marker: v2 added the multi-word "mac os" fixes to EXISTING
         /// installs (starters only seed brand-new ones).
         var migratedMacOSFix: Bool? = nil
+        /// v3 added the app's own name: the recognizers hear "YapToText" as "yep to text".
+        var migratedYapFix: Bool? = nil
         var learned: [LearnedCorrection]? = nil
     }
     private struct LegacySnapshot: Codable { var replacements: [Replacement]; var vocabularyHints: [String]? }
@@ -63,7 +65,32 @@ final class VocabularyStore {
         Replacement(from: "mac o s", to: "macOS"),
         Replacement(from: "youtube", to: "YouTube"),
         Replacement(from: "wifi", to: "Wi-Fi"),
+    ] + yapToTextFixes
+
+    /// The app's own name, as the speech models actually hear it. Visible in the dictionary
+    /// so it can be edited; `brandNormalizer` below catches the long tail of spellings.
+    static let yapToTextFixes: [Replacement] = [
+        Replacement(from: "yap to text", to: "YapToText"),
+        Replacement(from: "yep to text", to: "YapToText"),
+        Replacement(from: "yep, to text", to: "YapToText"),
+        Replacement(from: "yup to text", to: "YapToText"),
+        Replacement(from: "yap two text", to: "YapToText"),
+        Replacement(from: "yep two texts", to: "YapToText"),
+        Replacement(from: "yep, two texts", to: "YapToText"),
+        Replacement(from: "bit to text", to: "YapToText"),
+        Replacement(from: "yap the text", to: "YapToText"),
+        Replacement(from: "yaptotext", to: "YapToText"),
+        Replacement(from: "yap-to-text", to: "YapToText"),
     ]
+
+    /// Every remaining way to mishear the name, in one pass: a yap-like first word, a
+    /// to-like middle (which the middle is REQUIRED, so "yep, text me later" is safe), a
+    /// text-like ending, with or without spaces ("yapToText", "Yep, ToText", "Yeah, P2Text",
+    /// "yeah, put to text"). "yet to text" and "app to text" are real phrases ("I have yet to
+    /// text him", "tell the app to text me") and stay out on purpose; so does "yeah to text".
+    static let brandNormalizer: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"\b(?:yap|yapp|yep|yup|imp|yip),?\s*(?:to|two|2|the|ta|put\s+to|p\s*2)\s*(?:texts?|tex|tax|test|tech|txt)\b|\bbit,?\s+(?:to|two|2|ta)\s+(?:texts?|tex|tax|txt)\b|\byeah,?\s*(?:p\s*2\s*(?:texts?|tex)|put\s+to\s+(?:texts?|tex)|totext)\b|\byap-to-text\b"#,
+        options: [.caseInsensitive])
 
     init() {
         if let snap = Persistence.load(Snapshot.self, from: VocabularyStore.fileName), !snap.dictionaries.isEmpty {
@@ -92,6 +119,16 @@ final class VocabularyStore {
             let covered = Set(dictionaries.flatMap { $0.replacements.map { $0.from.lowercased() } })
             for fix in [Replacement(from: "mac os", to: "macOS"), Replacement(from: "mac o s", to: "macOS")]
             where !covered.contains(fix.from) {
+                dictionaries[0].replacements.append(fix)
+            }
+            save()
+        }
+        // v3 migration for EXISTING installs: the app's own name, once, skipping anything the
+        // user already covers; a deliberate delete stays deleted after this stamp.
+        let yapMigrated = Persistence.load(Snapshot.self, from: VocabularyStore.fileName)?.migratedYapFix ?? false
+        if !yapMigrated, !dictionaries.isEmpty {
+            let covered = Set(dictionaries.flatMap { $0.replacements.map { $0.from.lowercased() } })
+            for fix in VocabularyStore.yapToTextFixes where !covered.contains(fix.from.lowercased()) {
                 dictionaries[0].replacements.append(fix)
             }
             save()
@@ -155,7 +192,13 @@ final class VocabularyStore {
                 result = VocabularyStore.applyReplacement(r, to: result)
             }
         }
-        return result
+        return VocabularyStore.normalizeBrand(in: result)
+    }
+
+    /// The app's own name, however it was heard.
+    static func normalizeBrand(in text: String) -> String {
+        guard let re = brandNormalizer else { return text }
+        return re.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "YapToText")
     }
 
     static func applyReplacement(_ r: Replacement, to text: String) -> String {
@@ -289,7 +332,7 @@ final class VocabularyStore {
     private func save() {
         // The migration marker is stamped on EVERY save, so the mac-os fix runs exactly once
         // per install and a deliberate user delete stays deleted.
-        Persistence.save(Snapshot(dictionaries: dictionaries, migratedMacOSFix: true, learned: learned),
+        Persistence.save(Snapshot(dictionaries: dictionaries, migratedMacOSFix: true, migratedYapFix: true, learned: learned),
                          to: VocabularyStore.fileName)
     }
 

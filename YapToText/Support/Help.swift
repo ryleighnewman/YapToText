@@ -111,7 +111,7 @@ enum HelpContent {
             blocks: [
                 .paragraph("While you dictate, a small panel floats above your work. The waveform moves with your actual voice, and the text underneath is the transcription forming in real time."),
                 .paragraph("The circular buttons are the same everywhere in the app: pause and resume, stop and insert, and cancel. Drag the panel anywhere; it remembers its place."),
-                .tip("Prefer no panel at all? Turn it off in Settings. Dictation still works exactly the same."),
+                .tip("Prefer no panel at all? Turn it off on the Dictation page. Dictation still works exactly the same."),
             ]),
 
         HelpArticle(
@@ -347,6 +347,15 @@ struct HelpView: View {
                 }
                 .padding(.bottom, 12)
             }
+            Divider()
+            Link(destination: SupportLinks.siteHelp) {
+                HStack(spacing: 4) {
+                    Text("Full guide at yaptotext.com")
+                    Image(systemName: "arrow.up.forward").imageScale(.small)
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 8)
         }
     }
 

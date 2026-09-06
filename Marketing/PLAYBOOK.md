@@ -235,3 +235,31 @@ constantly), center it on a dark 2880x1800 canvas, upload the same image for all
 - [ ] real data files restored byte-for-byte
 - [ ] test documents/dictations discarded, volume re-muted if it was
 - [ ] the app relaunched from the normal build
+
+## 9. v5 rig notes (Sep 2026, shoot_v5.py)
+
+- **Never edit the preferences plist while the app is quit.** cfprefsd hands the relaunched
+  app its cached copy and the edit is silently lost (the shots came out in the user's own
+  colors). The marketing look is applied IN MEMORY by the `yap.debug.marketing on|off` hook
+  (AppSettings.stageMarketingLook): writes are suspended while staged, so nothing staged ever
+  reaches disk even if the rig dies; `off` restores the user's snapshot. stage_end() proves the
+  whole plist (settings blob + window frames) is identical to the pre-shoot copy.
+- **Stage Manager parks the window.** When YapToText is not the active app its main window is
+  a thumbnail in the left strip and CG reports it ~96x121 at a negative x, so "no main window"
+  is usually this, not a crash. `ensure_main()` activates the app and re-navigates.
+- **The window is shot exactly as the user sized it** (1143 x 812 for the 1.5 set). The hook
+  never resizes it; the user sets the size before the run.
+- The seed check retries up to three times (quit, re-seed, relaunch) before aborting.
+- **Panel shots: three looks, boosted.** `yap.debug.panellook "tint|hex|strength|wave|hex"` gives
+  each layout its own colors (expanded = accent blue, compact = pink #FF375F, mini = rainbow
+  tint + RGB wave). The stage feed runs `stagepanel "style|text|1.7"` (saturated synthetic
+  speech) under `yap.debug.waveboost` 2.3 for expanded (its band is 26pt; 2.8 clips) and 1.6
+  for compact/mini. Both reset at stage_end.
+- **Copy voice (Sep 2026 review):** bigger type (titles ~170px, subs ~66px, auto-shrink to fit),
+  human phrasing with ellipses and an exclamation point where it earns one. No em dashes.
+- **Quick Edit cards (Sep 2026):** no synthetic backdrop compositing (it read as a see-through
+  card). Region-capture the real material card over a FLAT deep-violet desktop (52,28,92) set
+  just for that step, mask = window shape (alpha > 8, eroded 1px, softened), Mac Purple back
+  afterwards. The "Done" card hugs its label in the app now, so scale every card by the same
+  factor (2.8x) instead of a fixed target width.
+- **Feature lists are dashed bullets, not capsules** (black dash, blue label, same positions).

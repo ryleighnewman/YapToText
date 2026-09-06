@@ -65,6 +65,12 @@ enum TextInserter {
         }
     }
 
+    /// changeCount of the last pasteboard write THIS app made (a transcript going out, or
+    /// the user's clipboard being restored 1.5 s later). Selection capture ignores a
+    /// change that is merely one of ours, so a delayed restore can never pass for a copy.
+    nonisolated(unsafe) static var ownWriteChangeCount: Int = -1
+    nonisolated static func noteOwnWrite(_ pb: NSPasteboard) { ownWriteChangeCount = pb.changeCount }
+
     private static func paste(_ text: String, restoreClipboard: Bool) {
         let pb = NSPasteboard.general
         // Snapshot the WHOLE clipboard (images, files, RTF, every type) - not just plain text -
@@ -81,6 +87,7 @@ enum TextInserter {
             yapdiag("insert: clipboard was clobbered before paste - re-asserted the transcript")
         }
         let borrowedToken = pb.changeCount
+        noteOwnWrite(pb)
         postKey(0x09, flags: .maskCommand)   // Cmd+V
         if let snapshot {
             // REAL DATA ON THE PASTEBOARD, ALWAYS. Promised data (NSPasteboardItemDataProvider)
@@ -235,5 +242,6 @@ struct PasteboardSnapshot {
     func write(to pb: NSPasteboard) {
         pb.clearContents()
         if !items.isEmpty { pb.writeObjects(items) }
+        TextInserter.noteOwnWrite(pb)
     }
 }

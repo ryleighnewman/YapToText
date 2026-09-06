@@ -13,24 +13,9 @@ struct GeneralSettingsView: View {
             set: { if let combo = $0 { settings.hotkey = combo } })   // never cleared (allowsEmpty: false)
         SettingsPage {
             CardSection("Shortcuts") {
-                // GROUP 1 - starting and stopping. Every field: click to record, right-click
-                // for Clear / Reset. One visual grammar for every shortcut on this page.
-                HStack {
-                    Text("Dictation key")
-                    Spacer()
-                    ModifierKeyRecorderField(key: $settings.primaryTriggerKey, onTurnOff: {
-                        settings.rightCommandTrigger = .off
-                        AppDelegate.shared?.reloadRightCommandTrigger()
-                    })
-                        .frame(width: 110, height: 24)
-                        .onChange(of: settings.primaryTriggerKey) { AppDelegate.shared?.reloadRightCommandTrigger() }
-                }
-                SubOptions {
-                    Picker("It responds to", selection: $settings.rightCommandTrigger) {
-                        ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
-                    }
-                    .onChange(of: settings.rightCommandTrigger) { AppDelegate.shared?.reloadRightCommandTrigger() }
-                }
+                // The dictation key and the Quick Edit key live on their own pages, where their
+                // behavior is explained; this card holds everything else, one visual grammar.
+                LinkCaption("The dictation key is on the [Dictation page](yap://dictation) and the Quick Edit key on the [Quick Edit page](yap://quickEdit).")
                 hotkeyRow("Backup shortcut", combo: startStop, allowsEmpty: false,
                           defaultCombo: .default,
                           onChange: { AppDelegate.shared?.reloadHotkey() })
@@ -46,27 +31,9 @@ struct GeneralSettingsView: View {
                 if settings.rightCommandTrigger != .off, !state.permissions.accessibilityGranted {
                     Caption("The dictation key needs Accessibility. Grant it on the Home screen; the backup works without it.")
                 }
-                Toggle("Require pressing Escape twice to cancel", isOn: $settings.doubleEscapeToCancel)
-                    .toggleStyle(.switch).controlSize(.small)
-
                 Divider().opacity(0.25).padding(.vertical, 6)
 
                 // GROUP 2 - editing by voice.
-                HStack {
-                    Text("Quick Edit key")
-                    Spacer()
-                    Picker("", selection: $settings.quickEditTrigger) {
-                        ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
-                    }
-                    .labelsHidden().fixedSize()
-                    .onChange(of: settings.quickEditTrigger) { AppDelegate.shared?.reloadQuickEditKey() }
-                    ModifierKeyRecorderField(key: $settings.quickEditTriggerKey, role: .quickEdit, onTurnOff: {
-                        settings.quickEditTrigger = .off
-                        AppDelegate.shared?.reloadQuickEditKey()
-                    })
-                        .frame(width: 110, height: 24)
-                        .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
-                }
                 hotkeyRow("Redo last dictation", combo: $settings.redoLastHotkey, allowsEmpty: true,
                           onChange: { AppDelegate.shared?.reloadRedoHotkey() })
 
@@ -126,19 +93,6 @@ struct GeneralSettingsView: View {
                 .buttonStyle(.link).font(.caption)
             }
 
-            CardSection("Recording") {
-                slider("Auto-stop after silence", value: $settings.silenceTimeout, range: 0...5, step: 0.5,
-                       display: settings.silenceTimeout == 0 ? "Off" : String(format: "%.1fs", settings.silenceTimeout))
-                slider("Maximum length", value: $settings.maxRecordingSeconds, range: 0...300, step: 15,
-                       display: settings.maxRecordingSeconds == 0 ? "Off" : "\(Int(settings.maxRecordingSeconds))s")
-                Caption("These are the app-wide defaults. Any mode can override them in its editor.")
-                Toggle("Pause music and video while dictating", isOn: $settings.pauseMediaDuringDictation)
-                    .toggleStyle(.switch).controlSize(.small)
-                SubOptions {
-                    Caption("Playback pauses when dictation starts and resumes when it ends.")
-                }
-            }
-
             CardSection("Microphone") {
                 Picker("Input source", selection: $settings.inputDeviceUID) {
                     Text("System default").tag(String?.none)
@@ -171,19 +125,7 @@ struct GeneralSettingsView: View {
                         Caption("The mic shuts off after each dictation; the next one may miss the first second.")
                     }
                 }
-                Toggle("Reduce background noise", isOn: $settings.reduceBackgroundNoise)
-                    .toggleStyle(.switch).controlSize(.small)
-                if settings.reduceBackgroundNoise {
-                    SubOptions {
-                        Caption("Noisy recordings are conditioned before transcription: speech is measured against the room, lifted to a clean level, and decoded with a deeper search. Runs entirely in the app, so other apps' audio is never touched.")
-                    }
-                }
-                Toggle("Auto-amplify quiet speech", isOn: $settings.autoAmplifyInput)
-                    .toggleStyle(.switch).controlSize(.small)
-                    .onChange(of: settings.autoAmplifyInput) { InputLevelMonitor.shared.autoAmplify = settings.autoAmplifyInput }
-                SubOptions {
-                    Caption("Automatically raises the gain when you speak softly, so even whispering gets picked up, and eases off when you're loud.")
-                }
+                LinkCaption("Noise reduction and auto-amplify are on the [Dictation page](yap://dictation).")
                 HStack(spacing: Space.m) {
                     Text("Input boost").frame(width: 84, alignment: .leading)
                     Slider(value: $settings.inputGain, in: 1...12)
@@ -202,26 +144,7 @@ struct GeneralSettingsView: View {
             }
             .onDisappear { InputLevelMonitor.shared.stop() }
 
-            CardSection("Pop-up") {
-                Toggle("Show the floating recording panel", isOn: $settings.showRecordingPanel).toggleStyle(.switch).controlSize(.small)
-                    .onChange(of: settings.showRecordingPanel) { AppDelegate.shared?.reloadPanelVisibility() }
-                if settings.showRecordingPanel {
-                    SubOptions {
-                        Picker("Layout", selection: $settings.panelStyle) {
-                            ForEach(PanelStyle.allCases) { Text($0.label).tag($0) }
-                        }
-                        .onChange(of: settings.panelStyle) { AppDelegate.shared?.refreshPanelSize() }
-                        Picker("Position", selection: $settings.panelPosition) {
-                            ForEach(PanelPosition.allCases) { Text($0.label).tag($0) }
-                        }
-                        Toggle("Snap back to this position", isOn: $settings.panelSnapsBack)
-                            .toggleStyle(.switch).controlSize(.small)
-                        Caption(settings.panelSnapsBack
-                                ? "The pop-up returns here for every dictation, even after you drag it."
-                                : "The pop-up stays wherever you drag it.")
-                        Caption("The panel has pause, stop, and cancel buttons while you dictate.")
-                    }
-                }
+            CardSection("Sounds") {
                 Toggle("Play start and stop sounds", isOn: $settings.playSounds).toggleStyle(.switch).controlSize(.small)
                 if settings.playSounds {
                     SubOptions {
@@ -258,83 +181,7 @@ struct GeneralSettingsView: View {
                         Button("Use the system accent") { settings.accentColorHex = nil }
                             .buttonStyle(.solidSecondary).controlSize(.small)
                     }
-                }
-                // Live miniature of the pop-up: animates freely (fake audio, no listening) and
-                // reflects every tint change the moment it's made.
-                PanelTintPreview(settings: settings)
-                Picker("Pop-up background color", selection: $settings.panelTintStyle) {
-                    ForEach(PanelTintStyle.allCases) { Text($0.label).tag($0) }
-                }
-                if settings.panelTintStyle != .off {
-                    SubOptions {
-                        if settings.panelTintStyle == .custom {
-                            HStack {
-                                Text("Color").font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                ColorPicker("", selection: panelTintBinding, supportsOpacity: false)
-                                    .labelsHidden().controlSize(.small)
-                            }
-                        }
-                        HStack {
-                            Text("Strength").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.panelTintStrength, in: 0.05...1)
-                        }
-                        if settings.panelTintStyle == .rainbow {
-                            HStack {
-                                Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                                Slider(value: $settings.panelRGBSpeed, in: 0.2...3)
-                            }
-                        }
-                        if settings.panelTintStyle != .rainbow {
-                            Caption(settings.panelTintStyle == .accent
-                                    ? "The panel's glass is washed with your accent color."
-                                    : "Washes the floating recording panel's glass with this color. The next time the panel appears, it uses the new tint.")
-                        }
-                    }
-                }
-                // THIRD colour: the wave itself, independent of both the app accent and the
-                // glass behind it - so the ribbons can sing against their own background.
-                Picker("Pop-up waveform color", selection: $settings.waveColorStyle) {
-                    ForEach(WaveColorStyle.allCases) { Text($0.label).tag($0) }
-                }
-                SubOptions {
-                    if settings.waveColorStyle == .custom {
-                        HStack {
-                            Text("Color").font(.caption).foregroundStyle(.secondary)
-                            Spacer()
-                            ForEach(GeneralSettingsView.accentPresets, id: \.hex) { preset in
-                                Button {
-                                    settings.waveColorHex = preset.hex
-                                } label: {
-                                    Circle().fill(preset.color).frame(width: 16, height: 16)
-                                        .overlay(Circle().strokeBorder(.primary.opacity(
-                                            settings.waveColorHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
-                                }
-                                .buttonStyle(.plain).help(preset.name)
-                            }
-                            ColorPicker("", selection: waveColorBinding, supportsOpacity: false)
-                                .labelsHidden().controlSize(.small).help("Pick any color")
-                        }
-                    }
-                    HStack {
-                        Text("Strength").font(.caption).foregroundStyle(.secondary)
-                        Slider(value: $settings.waveStrength, in: 0.15...1)
-                    }
-                    if settings.waveColorStyle == .rgb {
-                        HStack {
-                            Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.waveRGBSpeed, in: 0.2...3)
-                        }
-                        HStack {
-                            Text("RGB spread").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.waveRGBSpread, in: 0...0.33)
-                        }
-                    }
-                    Caption(settings.waveColorStyle == .rgb
-                            ? "The ribbons ride the spectrum. Speed sets the cycle rate; spread fans the ribbons apart in hue - all the way down pulses the whole wave as one colour."
-                            : settings.waveColorStyle == .accent
-                            ? "The wave follows your app accent color. Strength sets how vivid the ribbons are."
-                            : "The wave uses this color and its neighbouring shades. Strength sets how vivid the ribbons are.")
+                    LinkCaption("The pop-up's layout, position, and colors are on the [Dictation page](yap://dictation).")
                 }
             }
 
@@ -403,15 +250,6 @@ struct GeneralSettingsView: View {
         )
     }
 
-    private var waveColorBinding: Binding<Color> {
-        Binding(
-            get: {
-                if let c = state.settings.waveTint { return c }
-                return state.settings.customAccent ?? .accentColor
-            },
-            set: { state.settings.waveColorHex = $0.hexString }
-        )
-    }
 
     private var visualizerColorBinding: Binding<Color> {
         Binding(
@@ -426,68 +264,6 @@ struct GeneralSettingsView: View {
         )
     }
 
-    private var panelTintBinding: Binding<Color> {
-        Binding(
-            get: { state.settings.panelTint ?? .blue },
-            set: { state.settings.panelTintHex = $0.hexString }
-        )
-    }
-
-    /// The Appearance card's living thumbnail of the recording pop-up: a real WaveformView fed
-    /// synthesized "speech" (nothing is recorded), on a material card washed with the chosen tint.
-    struct PanelTintPreview: View {
-        let settings: AppSettings
-        @State private var fake = AudioVisualData(bands: 26)
-        @State private var driver: Task<Void, Never>?
-
-        var body: some View {
-            WaveformView(data: fake, isActive: true, scale: 0.8,
-                         style: settings.waveStyle)
-                .frame(height: 40)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.ultraThinMaterial)
-                        if let tint = settings.panelTint {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(tint.opacity(0.12 + 0.38 * min(max(settings.panelTintStrength, 0), 1)))
-                        }
-                    }
-                }
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.8))
-                .onAppear {
-                    driver?.cancel()
-                    driver = Task { @MainActor in
-                        // Lively synthetic speech at 30fps, only while this card is visible.
-                        // The old rhythm sat at ZERO for half of a ~7s cycle (it read as a
-                        // static line); this one always breathes - a constant floor with
-                        // overlapping fast bursts, so the preview visibly dances the whole time.
-                        var t = 0.0
-                        while !Task.isCancelled {
-                            let pulse: Double = 0.5 + 0.5 * sin(t * 2.3)
-                            let chatter: Double = 0.5 + 0.5 * sin(t * 6.1 + 1.3)
-                            let burst: Double = 0.25 + 0.75 * pulse * chatter
-                            fake.level = Float(0.2 + 0.6 * burst)
-                            var bands = [Float](repeating: 0, count: 26)
-                            for i in 0..<26 {
-                                let u: Double = Double(i) / 25.0
-                                let shape: Double = sin(u * .pi)
-                                let ripple: Double = 0.55 + 0.45 * sin(t * 7.0 + u * 11.0)
-                                let floorGlow: Double = 0.12 * shape
-                                bands[i] = Float(max(0.0, floorGlow + burst * shape * ripple))
-                            }
-                            fake.spectrum = bands
-                            try? await Task.sleep(nanoseconds: 33_000_000)
-                            t += 0.033
-                        }
-                    }
-                }
-                .onDisappear { driver?.cancel(); driver = nil }
-                .accessibilityHidden(true)
-        }
-    }
 
     private func soundPicker(_ label: String, _ selection: Binding<String>) -> some View {
         Picker(label, selection: Binding(
@@ -514,18 +290,6 @@ struct GeneralSettingsView: View {
         }
     }
 
-    private func slider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, display: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(display).foregroundStyle(.secondary).monospacedDigit()
-            }
-            Slider(value: value, in: range, step: step)
-                .accessibilityLabel(title)
-                .accessibilityValue(display)
-        }
-    }
 
     private func permissionPill(granted: Bool, on: String, off: String, optional: Bool = false) -> some View {
         HStack(spacing: 5) {

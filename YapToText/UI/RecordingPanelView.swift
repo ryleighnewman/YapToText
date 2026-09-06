@@ -532,6 +532,9 @@ struct RecordingPanelView: View {
                 // The durations here MUST match the .animation(value:) modifiers above
                 // (which win): flatten 0.14s, pull-in spring 0.5/0.8, fade 0.28s.
                 else if !controller.isBusy {
+                    // One clock for the wave AND the glass (RecordingPanel's cancel collapse
+                    // reads it): a stamp from the last few hundred ms is the panel's, reuse it.
+                    if let stamp = CondenseClock.start, Date().timeIntervalSince(stamp) < 1 {} else { CondenseClock.start = Date() }
                     withAnimation(.easeOut(duration: 0.14)) { waveFlat = true }
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 110_000_000)

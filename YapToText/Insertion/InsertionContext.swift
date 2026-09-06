@@ -76,7 +76,30 @@ enum InsertionContext {
             || ".!?".contains(prevChar!)
             || before.hasSuffix("\n") || before.hasSuffix("\n ")
 
-        if !atSentenceStart, let first = t.first, first.isUppercase {
+        // Caret parked just BEFORE the mark that closes the previous sentence ("...condition|. ")
+        // and a whole sentence dictated there: the user means a new sentence, not a clause
+        // tacked onto the old one. Close the old sentence first and keep the capital; the
+        // dictation's own period is dropped below because the existing mark closes it.
+        // A short phrase (three words or fewer) is still treated as a continuation.
+        let afterVisible = after.drop(while: { $0 == " " })
+        let afterMark = afterVisible.first
+        let afterMarkRest = afterVisible.dropFirst().first
+        let beforeClosingMark = !atSentenceStart
+            && afterMark.map({ ".!?".contains($0) }) == true
+            && (afterMarkRest == nil || afterMarkRest!.isWhitespace || afterMarkRest!.isNewline)
+            && t.split(whereSeparator: { $0.isWhitespace }).count >= 4
+        // ...unless the dictation opens with a joining word ("which includes...", "and then...",
+        // "because..."): that is a clause extending the old sentence, so it joins with a
+        // comma and a lowercase start instead of closing the sentence first.
+        let firstWordRaw = t.prefix(while: { $0.isLetter || $0 == "'" })
+        let firstWordLower = firstWordRaw.lowercased()
+        // An acronym ("WHO reported...") is not the word "who", and a question or exclamation
+        // is a sentence of its own, never a clause.
+        let isAcronym = firstWordRaw.count >= 2 && firstWordRaw.allSatisfy { $0.isUppercase }
+        let isQuestionOrShout = t.hasSuffix("?") || t.hasSuffix("!")
+        let extendsPrevious = beforeClosingMark && !isAcronym && !isQuestionOrShout && Self.clauseOpeners.contains(firstWordLower)
+        let closesPrevious = beforeClosingMark && !extendsPrevious
+        if !atSentenceStart, !closesPrevious, let first = t.first, first.isUppercase {
             let firstWord = t.prefix(while: { $0.isLetter || $0 == "'" })
             let secondIsUpper = t.dropFirst().first?.isUppercase ?? false
             let isI = firstWord == "I" || firstWord.hasPrefix("I'")
@@ -96,18 +119,36 @@ enum InsertionContext {
         }
 
         // Spacing against the neighbors: one space where words would otherwise collide.
-        if let lastRaw = before.last, !lastRaw.isWhitespace,
+        if closesPrevious {
+            t = ". " + t   // "...condition. And dictation tools..." with the old mark closing the new sentence
+        } else if extendsPrevious {
+            // "...beautiful app, which includes..."; a subordinate "because" takes no comma.
+            t = (Self.noCommaOpeners.contains(firstWordLower) ? " " : ", ") + t
+        } else if let lastRaw = before.last, !lastRaw.isWhitespace,
            !"([{\u{201C}\u{2018}\"'/-".contains(lastRaw) {
             t = " " + t
         }
         if let firstAfter = after.first, firstAfter.isLetter || firstAfter.isNumber {
             t += " "
         }
-        if hadTrailingSpace, !t.hasSuffix(" "), !(after.first?.isWhitespace ?? false) {
+        // The trailing-space setting separates the insertion from the NEXT WORD; a mark
+        // that closes or continues the sentence hugs the last word ("quick edit." never
+        // "quick edit .").
+        let nextHugs = after.first.map({ ".,!?;:)]}\u{2026}".contains($0) }) ?? false
+        if hadTrailingSpace, !t.hasSuffix(" "), !(after.first?.isWhitespace ?? false), !nextHugs {
             t += " "
         }
+        if nextHugs, t.hasSuffix(" ") { t = String(t.dropLast()) }
         return t
     }
+
+    /// Words that open a clause rather than a sentence when dictated just before the mark
+    /// that closes the previous sentence. Deliberately short: "so", "since", "while",
+    /// "although", "plus", "that", "when", and "where" start real sentences far too often.
+    private static let clauseOpeners: Set<String> = [
+        "which", "who", "whom", "whose", "and", "but", "or", "nor", "because",
+    ]
+    private static let noCommaOpeners: Set<String> = ["because"]
 
     /// SANDBOX-SAFE fallback: the App Sandbox rejects the AX read above with
     /// kAXErrorCannotComplete (-25204) - a sandboxed process may post events but never
@@ -287,6 +328,7 @@ enum InsertionContext {
     }
 
     private static func shouldSkipRead(bundleID: String?) -> Bool {
+        migrateBansOnce()
         guard let b = bundleID else { return false }
         let ud = UserDefaults.standard
         if isBrowser(b) {
@@ -333,14 +375,32 @@ enum InsertionContext {
             // occasional empty field never reaches it, a never-answering app reaches it in
             // a handful of dictations and is then left alone (the every-25th re-probe
             // still rediscovers it if that ever changes).
+            // Counted for the diagnostics only. It used to BAN the app at eight in a row,
+            // and eight in a row is exactly what a chat app produces: every new message
+            // starts in an empty composer, the read finds nothing on either side, and
+            // eight messages later smart insert silently stopped working there. That
+            // banned the user's main app twice and Safari once. An app that never
+            // answers still costs its keystrokes; a working app that goes dark is worse.
             let blanks = ud.integer(forKey: blankKey(b)) + 1
             ud.set(blanks, forKey: blankKey(b))
-            if blanks >= 8 {
-                ud.set(0, forKey: blankKey(b))
-                ud.set(5, forKey: failKey(b))   // the skip threshold
-                yapdiag("insertctx: \(b) never answers a read - skipping it from now on")
-            }
         }
+    }
+
+    /// One-time: clear every ban the old blank-strike rule handed out, so an app that
+    /// was silenced under 1.3.1 or 1.4 comes back on the first launch of this build.
+    private static var migrated = false
+    private static func migrateBansOnce() {
+        guard !migrated else { return }
+        migrated = true
+        let ud = UserDefaults.standard
+        let flag = "insertctx.migrated.blankban"
+        guard !ud.bool(forKey: flag) else { return }
+        var cleared = 0
+        for key in ud.dictionaryRepresentation().keys where key.hasPrefix("insertctx.") {
+            ud.removeObject(forKey: key); cleared += 1
+        }
+        ud.set(true, forKey: flag)
+        if cleared > 0 { yapdiag("insertctx: cleared \(cleared) inherited capability entries") }
     }
 
     /// When keyRead last posted a synthetic key event, so delivery can drain exactly the

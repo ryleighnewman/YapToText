@@ -14,6 +14,23 @@ enum TranscriptionEngineKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// What happens right after a dictation lands in a particular app. Chat apps and AI
+/// assistants want the message SENT as soon as it is typed; the user picks the key that
+/// sends there (Return in most, Command-Return in some), and the app presses it.
+enum AfterInsertAction: String, Codable, CaseIterable, Identifiable {
+    case none
+    case returnKey
+    case commandReturn
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .none: return "Nothing"
+        case .returnKey: return "Press Return"
+        case .commandReturn: return "Press \u{2318}Return"
+        }
+    }
+}
+
 enum InsertionMethod: String, Codable, CaseIterable, Identifiable {
     case paste
     case type
@@ -111,6 +128,12 @@ enum PanelTintStyle: String, Codable, CaseIterable, Identifiable {
         case .rainbow: return "RGB"
         }
     }
+}
+
+extension AppSettings {
+    /// The Quick Edit card's stock color (the app's purple preset): different from the
+    /// dictation pop-up's accent-matched look on purpose.
+    static let quickEditDefaultHex = "#BF5AF2"
 }
 
 /// How the pop-up WAVE is coloured - independent of the glass behind it.
@@ -398,14 +421,27 @@ final class AppSettings {
     /// Per-app insertion method pins for apps that hate simulated paste (or typing).
     /// Keyed by bundle identifier; wins over the mode's and the global method.
     var appInsertionOverrides: [String: InsertionMethod] { didSet { save() } }
+    /// Per-app key pressed after a dictation is inserted (send the message). Empty = never.
+    var appAfterInsert: [String: AfterInsertAction] { didSet { save() } }
     /// Pause whatever's playing (music, video) when dictation starts, resume when it ends.
     var pauseMediaDuringDictation: Bool { didSet { save() } }
     /// Digit mode-switching while dictating (press 1-9 to pick the post-processing mode).
     /// Off = number keys type normally during dictation.
     var digitModeSwitching: Bool { didSet { save() } }
-    /// On: the pop-up returns to its chosen Position for every dictation. Off: it stays
-    /// wherever you dragged it.
+    /// On: the pop-up returns to its chosen Position for every dictation. Off (the default):
+    /// it stays wherever you dragged it, across dictations and launches.
     var panelSnapsBack: Bool { didSet { save() } }
+    /// Where the pop-up was last dragged to (screen points, window origin). nil = never moved.
+    var panelDraggedX: Double? { didSet { save() } }
+    var panelDraggedY: Double? { didSet { save() } }
+    /// Where the Quick Edit pop-up opens, and where it was last dragged to (stays there).
+    var quickEditPosition: PanelPosition { didSet { save() } }
+    var quickEditSnapsBack: Bool { didSet { save() } }
+    /// The last non-off Quick Edit trigger, so the on/off switch brings back Hold to talk
+    /// instead of silently resetting to tap.
+    var quickEditPreferredTrigger: ModifierTrigger { didSet { save() } }
+    var quickEditDraggedX: Double? { didSet { save() } }
+    var quickEditDraggedY: Double? { didSet { save() } }
     /// The last app version whose What's New sheet was shown (nil = never). Existing users see
     /// the sheet once per version; fresh installs get stamped at onboarding so they never do.
     var lastSeenWhatsNewVersion: String? { didSet { save() } }
@@ -479,6 +515,17 @@ final class AppSettings {
     var panelTintStrength: Double { didSet { save() } }   // 0 = off ... 1 = strong
     /// Pop-up tint style: on by default, mapped to the accent color; custom and rainbow for fun.
     var panelTintStyle: PanelTintStyle { didSet { save() } }
+    /// The Quick Edit card's OWN colors, independent of the dictation pop-up so the two
+    /// read as different things at a glance. Purple out of the box.
+    var quickEditTintStyle: PanelTintStyle { didSet { save() } }
+    var quickEditTintHex: String? { didSet { save() } }
+    var quickEditTintStrength: Double { didSet { save() } }
+    var quickEditRGBSpeed: Double { didSet { save() } }
+    var quickEditWaveColorStyle: WaveColorStyle { didSet { save() } }
+    var quickEditWaveColorHex: String? { didSet { save() } }
+    var quickEditWaveStrength: Double { didSet { save() } }
+    var quickEditWaveRGBSpeed: Double { didSet { save() } }
+    var quickEditWaveRGBSpread: Double { didSet { save() } }
     /// Selectable sound cues (system sound names). Sounds themselves are on by default.
     var soundStart: String { didSet { save(); Sound.startName = soundStart } }
     var soundStop: String { didSet { save(); Sound.stopName = soundStop } }
@@ -544,9 +591,17 @@ final class AppSettings {
         var reviewBeforeInsert: Bool?
         var reviewLongTextOnly: Bool?
         var appInsertionOverrides: [String: InsertionMethod]?
+        var appAfterInsert: [String: AfterInsertAction]?
         var pauseMediaDuringDictation: Bool?
         var digitModeSwitching: Bool?
         var panelSnapsBack: Bool?
+        var panelDraggedX: Double?
+        var panelDraggedY: Double?
+        var quickEditPosition: PanelPosition?
+        var quickEditSnapsBack: Bool?
+        var quickEditPreferredTrigger: ModifierTrigger?
+        var quickEditDraggedX: Double?
+        var quickEditDraggedY: Double?
         var lastSeenWhatsNewVersion: String?
         var visualizerColorHex: String?
         var restoreClipboard: Bool
@@ -586,6 +641,15 @@ final class AppSettings {
         var panelRGBSpeed: Double?
         var panelTintStrength: Double?
         var panelTintStyle: PanelTintStyle?
+        var quickEditTintStyle: PanelTintStyle?
+        var quickEditTintHex: String?
+        var quickEditTintStrength: Double?
+        var quickEditRGBSpeed: Double?
+        var quickEditWaveColorStyle: WaveColorStyle?
+        var quickEditWaveColorHex: String?
+        var quickEditWaveStrength: Double?
+        var quickEditWaveRGBSpeed: Double?
+        var quickEditWaveRGBSpread: Double?
         var soundStart: String?
         var soundStop: String?
         var soundError: String?
@@ -643,15 +707,23 @@ final class AppSettings {
         smartDictionary = loaded?.smartDictionary ?? true
         quickEditKeyEnabled = loaded?.quickEditKeyEnabled ?? true   // on by default
         // Migrate the old on/off toggle: enabled -> hold-to-talk (its historic behavior).
-        quickEditTrigger = loaded?.quickEditTrigger ?? ((loaded?.quickEditKeyEnabled ?? true) ? .pushToTalk : .off)
+        quickEditTrigger = loaded?.quickEditTrigger ?? ((loaded?.quickEditKeyEnabled ?? true) ? .toggle : .off)
         quickEditTriggerKey = loaded?.quickEditTriggerKey ?? .rightOption
         primaryTriggerKey = loaded?.primaryTriggerKey ?? .rightCommand
         reviewBeforeInsert = loaded?.reviewBeforeInsert ?? false
         reviewLongTextOnly = loaded?.reviewLongTextOnly ?? true
         appInsertionOverrides = loaded?.appInsertionOverrides ?? [:]
+        appAfterInsert = loaded?.appAfterInsert ?? [:]
         pauseMediaDuringDictation = loaded?.pauseMediaDuringDictation ?? true
         digitModeSwitching = loaded?.digitModeSwitching ?? true
-        panelSnapsBack = loaded?.panelSnapsBack ?? true
+        panelSnapsBack = loaded?.panelSnapsBack ?? false
+        panelDraggedX = loaded?.panelDraggedX
+        panelDraggedY = loaded?.panelDraggedY
+        quickEditPosition = loaded?.quickEditPosition ?? .bottomCenter
+        quickEditSnapsBack = loaded?.quickEditSnapsBack ?? false
+        quickEditPreferredTrigger = loaded?.quickEditPreferredTrigger ?? (loaded?.quickEditTrigger.flatMap { $0 == .off ? nil : $0 } ?? .toggle)
+        quickEditDraggedX = loaded?.quickEditDraggedX
+        quickEditDraggedY = loaded?.quickEditDraggedY
         lastSeenWhatsNewVersion = loaded?.lastSeenWhatsNewVersion
         visualizerColorHex = loaded?.visualizerColorHex
         restoreClipboard = loaded?.restoreClipboard ?? true
@@ -698,6 +770,18 @@ final class AppSettings {
             ?? ((loaded?.panelTintHex != nil && (loaded?.panelTintStrength ?? 0) > 0) ? .custom : .accent)
         let loadedStrength = loaded?.panelTintStrength ?? 0
         panelTintStrength = loadedStrength > 0.01 ? loadedStrength : 0.35
+        // A file that already knows about the card's colors may legitimately hold no hex
+        // (Custom with no color picked, or matched to an untinted dictation pop-up); only a
+        // file from before the feature gets the purple default.
+        quickEditTintStyle = loaded?.quickEditTintStyle ?? .custom
+        quickEditTintHex = loaded?.quickEditTintStyle == nil ? AppSettings.quickEditDefaultHex : loaded?.quickEditTintHex
+        quickEditTintStrength = loaded?.quickEditTintStrength ?? 0.35
+        quickEditRGBSpeed = loaded?.quickEditRGBSpeed ?? 1.0
+        quickEditWaveColorStyle = loaded?.quickEditWaveColorStyle ?? .custom
+        quickEditWaveColorHex = loaded?.quickEditWaveColorStyle == nil ? AppSettings.quickEditDefaultHex : loaded?.quickEditWaveColorHex
+        quickEditWaveStrength = loaded?.quickEditWaveStrength ?? 1.0
+        quickEditWaveRGBSpeed = loaded?.quickEditWaveRGBSpeed ?? 1.0
+        quickEditWaveRGBSpread = loaded?.quickEditWaveRGBSpread ?? 0.12
         let sStart = loaded?.soundStart ?? "Purr"
         let sStop = loaded?.soundStop ?? "Bottle"
         let sError = loaded?.soundError ?? "Blow"
@@ -734,10 +818,26 @@ final class AppSettings {
         offeredModelDownloads = loaded?.offeredModelDownloads ?? false
         hasCompletedOnboarding = loaded?.hasCompletedOnboarding ?? false
         isLoading = false
+        // The pop-up used to snap back to its preset position by default. Staying where it
+        // was dragged is the behavior people expect, so existing installs move to the new
+        // default once; anyone who wants snap-back turns it on again in Settings.
+        if !defaults.bool(forKey: "panel.stayMigrated") {
+            defaults.set(true, forKey: "panel.stayMigrated")
+            if panelSnapsBack { panelSnapsBack = false }
+        }
+        // Quick Edit's key used to default to hold-to-talk; tap to start and stop matches the
+        // dictation key and is easier on hands that cannot hold a key down. Once.
+        if !defaults.bool(forKey: "quickedit.tapMigrated") {
+            defaults.set(true, forKey: "quickedit.tapMigrated")
+            if quickEditTrigger == .pushToTalk { quickEditTrigger = .toggle }
+        }
     }
 
+    /// See Persistence.writesSuspended: after an erase, no setting may write itself back.
+    nonisolated(unsafe) static var writesSuspended = false
+
     private func save() {
-        guard !isLoading else { return }
+        guard !isLoading, !AppSettings.writesSuspended else { return }
         if let data = try? JSONEncoder().encode(snapshot()) {
             defaults.set(data, forKey: AppSettings.defaultsKey)
         }
@@ -752,7 +852,7 @@ final class AppSettings {
             historyPaletteHotkey: historyPaletteHotkey, redoLastHotkey: redoLastHotkey, rightCommandTrigger: rightCommandTrigger, fnKeyTrigger: fnKeyTrigger, rightCommandSpaceSwitcher: rightCommandSpaceSwitcher,
             cancelOnDoubleEscape: cancelOnDoubleEscape,
             activeModeID: activeModeID, perAppModeOverrides: perAppModeOverrides, userName: userName,
-            autoInsert: autoInsert, liveTyping: liveTyping, quickEditDetection: quickEditDetection, smartDictionary: smartDictionary, quickEditKeyEnabled: quickEditKeyEnabled, quickEditTrigger: quickEditTrigger, primaryTriggerKey: primaryTriggerKey, quickEditTriggerKey: quickEditTriggerKey, reviewBeforeInsert: reviewBeforeInsert, reviewLongTextOnly: reviewLongTextOnly, appInsertionOverrides: appInsertionOverrides, pauseMediaDuringDictation: pauseMediaDuringDictation, digitModeSwitching: digitModeSwitching, panelSnapsBack: panelSnapsBack, lastSeenWhatsNewVersion: lastSeenWhatsNewVersion, visualizerColorHex: visualizerColorHex, restoreClipboard: restoreClipboard, adaptToSurroundings: adaptToSurroundings, doubleEscapeToCancel: doubleEscapeToCancel, quickEditModelID: quickEditModelID, trimTrailingNewlines: trimTrailingNewlines,
+            autoInsert: autoInsert, liveTyping: liveTyping, quickEditDetection: quickEditDetection, smartDictionary: smartDictionary, quickEditKeyEnabled: quickEditKeyEnabled, quickEditTrigger: quickEditTrigger, primaryTriggerKey: primaryTriggerKey, quickEditTriggerKey: quickEditTriggerKey, reviewBeforeInsert: reviewBeforeInsert, reviewLongTextOnly: reviewLongTextOnly, appInsertionOverrides: appInsertionOverrides, appAfterInsert: appAfterInsert, pauseMediaDuringDictation: pauseMediaDuringDictation, digitModeSwitching: digitModeSwitching, panelSnapsBack: panelSnapsBack, panelDraggedX: panelDraggedX, panelDraggedY: panelDraggedY, quickEditPosition: quickEditPosition, quickEditSnapsBack: quickEditSnapsBack, quickEditPreferredTrigger: quickEditPreferredTrigger, quickEditDraggedX: quickEditDraggedX, quickEditDraggedY: quickEditDraggedY, lastSeenWhatsNewVersion: lastSeenWhatsNewVersion, visualizerColorHex: visualizerColorHex, restoreClipboard: restoreClipboard, adaptToSurroundings: adaptToSurroundings, doubleEscapeToCancel: doubleEscapeToCancel, quickEditModelID: quickEditModelID, trimTrailingNewlines: trimTrailingNewlines,
             appendSpaceAfterInsert: appendSpaceAfterInsert, modelCooldownSeconds: modelCooldownSeconds, aiCleanupEnabled: aiCleanupEnabled, autoContextMode: autoContextMode,
             inputGain: inputGain, autoAmplifyInput: autoAmplifyInput, reduceBackgroundNoise: reduceBackgroundNoise, keepMicWarm: keepMicWarm, micWarmMinutes: micWarmMinutes,
             silenceTimeout: silenceTimeout, maxRecordingSeconds: maxRecordingSeconds,
@@ -764,7 +864,7 @@ final class AppSettings {
             languageModelBatteryID: languageModelBatteryID,
             q5SwitchOfferShown: q5SwitchOfferShown,
             selectedLanguageModelID: selectedLanguageModelID,
-            showMenuBarIcon: showMenuBarIcon, menuBarIconStyle: menuBarIconStyle, menuBarColoredStatus: menuBarColoredStatus, accentColorHex: accentColorHex, panelTintHex: panelTintHex, waveColorHex: waveColorHex, waveColorStyle: waveColorStyle, waveStrength: waveStrength, waveRGBSpeed: waveRGBSpeed, waveRGBSpread: waveRGBSpread, panelRGBSpeed: panelRGBSpeed, panelTintStrength: panelTintStrength, panelTintStyle: panelTintStyle, soundStart: soundStart, soundStop: soundStop, soundError: soundError, showDockIcon: showDockIcon,
+            showMenuBarIcon: showMenuBarIcon, menuBarIconStyle: menuBarIconStyle, menuBarColoredStatus: menuBarColoredStatus, accentColorHex: accentColorHex, panelTintHex: panelTintHex, waveColorHex: waveColorHex, waveColorStyle: waveColorStyle, waveStrength: waveStrength, waveRGBSpeed: waveRGBSpeed, waveRGBSpread: waveRGBSpread, panelRGBSpeed: panelRGBSpeed, panelTintStrength: panelTintStrength, panelTintStyle: panelTintStyle, quickEditTintStyle: quickEditTintStyle, quickEditTintHex: quickEditTintHex, quickEditTintStrength: quickEditTintStrength, quickEditRGBSpeed: quickEditRGBSpeed, quickEditWaveColorStyle: quickEditWaveColorStyle, quickEditWaveColorHex: quickEditWaveColorHex, quickEditWaveStrength: quickEditWaveStrength, quickEditWaveRGBSpeed: quickEditWaveRGBSpeed, quickEditWaveRGBSpread: quickEditWaveRGBSpread, soundStart: soundStart, soundStop: soundStop, soundError: soundError, showDockIcon: showDockIcon,
             hasDismissedHomeNote: hasDismissedHomeNote, hasDismissedDictionaryTip: hasDismissedDictionaryTip, dictionaryTipV2Reset: true, inputDeviceUID: inputDeviceUID,
             showRecordingPanel: showRecordingPanel, livePreviewEnabled: livePreviewEnabled, panelStyle: panelStyle, panelPosition: panelPosition, panelSize: panelSize, panelAnimation: panelAnimation,
             playSounds: playSounds, saveHistory: saveHistory, historyRetention: historyRetention,
@@ -839,9 +939,17 @@ final class AppSettings {
         if let v = s.reviewBeforeInsert { reviewBeforeInsert = v }
         if let v = s.reviewLongTextOnly { reviewLongTextOnly = v }
         if let v = s.appInsertionOverrides { appInsertionOverrides = v }
+        if let v = s.appAfterInsert { appAfterInsert = v }
         if let v = s.pauseMediaDuringDictation { pauseMediaDuringDictation = v }
         if let v = s.digitModeSwitching { digitModeSwitching = v }
         if let v = s.panelSnapsBack { panelSnapsBack = v }
+        panelDraggedX = s.panelDraggedX
+        panelDraggedY = s.panelDraggedY
+        if let v = s.quickEditPosition { quickEditPosition = v }
+        if let v = s.quickEditSnapsBack { quickEditSnapsBack = v }
+        if let v = s.quickEditPreferredTrigger { quickEditPreferredTrigger = v }
+        quickEditDraggedX = s.quickEditDraggedX
+        quickEditDraggedY = s.quickEditDraggedY
         lastSeenWhatsNewVersion = s.lastSeenWhatsNewVersion
         visualizerColorHex = s.visualizerColorHex
         restoreClipboard = s.restoreClipboard
@@ -880,6 +988,13 @@ final class AppSettings {
         if let v = s.waveRGBSpread { waveRGBSpread = v }
         if let v = s.panelRGBSpeed { panelRGBSpeed = v }
         if let v = s.panelTintStrength { panelTintStrength = v }
+        if let v = s.quickEditTintStyle { quickEditTintStyle = v; quickEditTintHex = s.quickEditTintHex }
+        if let v = s.quickEditTintStrength { quickEditTintStrength = v }
+        if let v = s.quickEditRGBSpeed { quickEditRGBSpeed = v }
+        if let v = s.quickEditWaveColorStyle { quickEditWaveColorStyle = v; quickEditWaveColorHex = s.quickEditWaveColorHex }
+        if let v = s.quickEditWaveStrength { quickEditWaveStrength = v }
+        if let v = s.quickEditWaveRGBSpeed { quickEditWaveRGBSpeed = v }
+        if let v = s.quickEditWaveRGBSpread { quickEditWaveRGBSpread = v }
         if let v = s.panelTintStyle { panelTintStyle = v }
         if let v = s.soundStart { soundStart = v }
         if let v = s.soundStop { soundStop = v }
@@ -907,4 +1022,39 @@ final class AppSettings {
         isLoading = false
         save()
     }
+
+#if DEBUG
+    /// Marketing rig (Marketing/tools/shoot_v5.py): swap in the look every shot shares, in memory
+    /// only, then put the user's own values back. Writes stay suspended while staged, so nothing
+    /// staged ever reaches the preferences file, even if the rig dies mid-shoot.
+    private var stagedLook: Snapshot?
+    func stageMarketingLook(_ on: Bool) {
+        if on {
+            guard stagedLook == nil else { return }
+            stagedLook = snapshot()
+            AppSettings.writesSuspended = true
+            var s = snapshot()
+            s.accentColorHex = "#0A84FF"
+            s.panelTintStyle = .accent; s.panelTintHex = nil; s.panelTintStrength = 0.35
+            s.waveColorStyle = .accent; s.waveColorHex = nil; s.waveStrength = 1
+            s.panelStyle = .expanded; s.panelPosition = .bottomCenter; s.panelSnapsBack = true
+            s.panelDraggedX = nil; s.panelDraggedY = nil
+            s.quickEditTintStyle = .custom; s.quickEditTintHex = "#BF5AF2"; s.quickEditTintStrength = 0.35
+            s.quickEditWaveColorStyle = .custom; s.quickEditWaveColorHex = "#BF5AF2"; s.quickEditWaveStrength = 1
+            s.quickEditPosition = .bottomCenter; s.quickEditSnapsBack = true
+            s.quickEditDraggedX = nil; s.quickEditDraggedY = nil
+            s.showRecordingPanel = true; s.hasCompletedOnboarding = true
+            s.lastSeenWhatsNewVersion = Changelog.whatsNewKey
+            s.userName = ""; s.menuBarIconStyle = .capybara; s.showMenuBarIcon = true; s.showDockIcon = true
+            apply(s)
+            yapdiag("settings: marketing look staged")
+        } else {
+            guard let s = stagedLook else { return }
+            stagedLook = nil
+            AppSettings.writesSuspended = false
+            apply(s)
+            yapdiag("settings: marketing look removed, user values restored")
+        }
+    }
+#endif
 }

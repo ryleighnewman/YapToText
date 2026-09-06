@@ -47,6 +47,27 @@ final class DictationController {
     private(set) var phase: Phase = .idle {
         didSet { announceTransition(from: oldValue, to: phase) }
     }
+
+    /// A second controller built only to drive the in-app pop-up previews (Dictation and
+    /// Quick Edit pages): it looks like a live recording to the panel views, never arms
+    /// audio, never inserts, makes no announcements, and its transport is inert.
+    private(set) var isPreviewInstance = false
+    func configureForPreview(liveText: String) {
+        isPreviewInstance = true
+        panelIsPresented = true
+        self.liveText = liveText
+        phase = .recording
+    }
+    func setPreviewLiveText(_ text: String) {
+        guard isPreviewInstance else { return }
+        liveText = text
+    }
+    /// The onboarding demo walks the real panel through its stages: recording (live wave),
+    /// transcribing (the wave winds into the ring), and back.
+    func setPreviewPhase(_ newPhase: Phase) {
+        guard isPreviewInstance, phase != newPhase else { return }
+        phase = newPhase
+    }
     private(set) var liveText: String = ""
     private(set) var level: Float = 0
     /// Rolling window of real microphone levels (one entry per audio buffer), oldest first.
@@ -274,6 +295,7 @@ final class DictationController {
     /// adopts the new mode's AI cleanup, dictionaries, and output. (The transcription model
     /// and language can't change mid-session; they apply from the next dictation.)
     func switchMode(_ mode: Mode) {
+        guard !isPreviewInstance else { return }   // preview panels are inert
         // Mid-dictation, with Auto on, a digit pick is a ONE-OFF override: this session uses the
         // chosen mode, Auto stays on for the next dictation. Digit 1 (Auto) restores routing.
         if isBusy, settings.autoContextMode {
@@ -305,6 +327,7 @@ final class DictationController {
     /// up, or inserting it CANCELS the in-flight work (pressing the key mid-process means "never
     /// mind"); otherwise it starts a new dictation.
     func toggle() {
+        guard !isPreviewInstance else { return }   // preview panels are inert
         yapdiag("toggle: isRecording=\(isRecording) phase=\(phase.userFacingLabel) isFinishing=\(isFinishing)")
         if isRecording {
             stop()
@@ -322,6 +345,7 @@ final class DictationController {
     }
 
     func start() {
+        guard !isPreviewInstance else { return }   // preview panels are inert
         modelCooldownTask?.cancel()
         yapdiag("start: phase=\(phase.userFacingLabel)")
         guard phase == .idle || isErrorPhase else { yapdiag("start: BAILED (phase not idle)"); return }
@@ -690,6 +714,7 @@ final class DictationController {
     private static let trailingCaptureSeconds: Double = 0.4
 
     func stop() {
+        guard !isPreviewInstance else { return }   // preview panels are inert
         yapdiag("stop: phase=\(phase.userFacingLabel) startInFlight=\(startInFlight) isFinishing=\(isFinishing) engine=\(engine != nil)")
         yapdiag("stop: levelHistory n=\(levelHistory.count) max=\(String(format: "%.2f", levelHistory.max() ?? 0)) min=\(String(format: "%.2f", levelHistory.min() ?? 0))")
         // Key released before recording is FULLY armed: remember it and bail. This must be
@@ -880,7 +905,8 @@ final class DictationController {
                 if sessionMode.trimTrailingNewlines ?? settings.trimTrailingNewlines {
                     text = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
-                yapdiag("stop: final.len=\(text.count) -> finish")
+                yapdiag("stop: raw=\(raw.prefix(90).debugDescription)")
+        yapdiag("stop: final.len=\(text.count) -> finish")
                 await finish(sid: sid, raw: raw, final: text)
             } catch {
                 yapdiag("stop: THREW \(error)")
@@ -1014,6 +1040,10 @@ final class DictationController {
     }
 
     private func finish(sid: Int, raw: String, final text: String) async {
+        // The user's own name, spelled the way they gave it, wins over the recognizer's guess
+        // in a sign-off - in every mode, including raw transcription.
+        let text = settings.userName.trimmingCharacters(in: .whitespaces).isEmpty
+            ? text : Self.fixSignOffName(in: text, userName: settings.userName)
         yapdiag("finish: text.len=\(text.count) autoInsert=\(settings.autoInsert)")
         guard sid == sessionID else { return }   // cancelled: do not insert or record
         setPhase(.inserting)
@@ -1133,6 +1163,20 @@ final class DictationController {
                     sessionSurroundTask = nil
                     if deliveryTargetIsFrontmost() {
                         presurround = await task.value
+                    } else { task.cancel() }
+                }
+                // No usable pre-read: the user switched apps mid-dictation (the read never
+                // started, or ran in the wrong app). Read the app that is in front NOW, before
+                // the clipboard is loaded, so a switched-to app still gets its spacing and
+                // capitalization instead of "matey.Is this" (caught live).
+                if presurround == nil, settings.adaptToSurroundings, deliveryTarget != .clipboardOnly,
+                   let front = NSWorkspace.shared.frontmostApplication,
+                   front.bundleIdentifier != Bundle.main.bundleIdentifier {
+                    yapdiag("insertctx: late read in \(front.localizedName ?? "?") (no pre-read for this app)")
+                    presurround = await InsertionContext.readSurroundings(patient: true)
+                }
+                if presurround != nil {
+                    do {
                         // DRAIN before pasting. The surround read posts Cmd+C and
                         // Opt+Shift+arrow events; the read RETURNING only means our own
                         // timeouts expired, not that the target consumed those keys. A
@@ -1151,7 +1195,7 @@ final class DictationController {
                             let remaining = 0.14 - Date().timeIntervalSince(lastKey)
                             if remaining > 0 { try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
                         }
-                    } else { task.cancel() }
+                    }
                 }
                 await TextInserter.deliver(delivered, target: deliveryTarget,
                                      method: method,
@@ -1169,6 +1213,21 @@ final class DictationController {
                     // "replace X with Y" can act on it.
                     lastInsert = (text: liveTypedText + (TextInserter.lastDelivered ?? delivered), date: Date(),
                                   pid: sessionTargetApp?.processIdentifier)
+                    // AFTER-INSERT ACTION: the per-app "send it" key. Only when real text
+                    // landed, and only while the app it was meant for is still in front - a
+                    // Return posted into some other window would submit whatever is there.
+                    if let bundle = sessionBundleID,
+                       let action = settings.appAfterInsert[bundle], action != .none,
+                       !delivered.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       deliveryTargetIsFrontmost() {
+                        // Let the paste land before the key: a Return that arrives ahead of
+                        // the pasted text sends an empty message.
+                        try? await Task.sleep(nanoseconds: 180_000_000)
+                        if deliveryTargetIsFrontmost() {
+                            TextInserter.postKey(0x24, flags: action == .commandReturn ? .maskCommand : [])
+                            yapdiag("after-insert: pressed \(action.rawValue) in \(bundle)")
+                        }
+                    }
                 }
                 }
                 if liveAlreadyDelivered || (liveRemainder != nil && delivered.isEmpty) {
@@ -1242,6 +1301,7 @@ final class DictationController {
     }
 
     func cancel() {
+        guard !isPreviewInstance else { return }   // preview panels are inert
         guard isBusy || startInFlight else { return }
         // "Record cancelled dictations": instead of throwing the recording away, transcribe it and
         // quietly file the raw transcript in History (never inserted anywhere, never AI-processed -
@@ -1341,6 +1401,7 @@ final class DictationController {
     }
 
     func togglePause() {
+        guard !isPreviewInstance else { return }   // preview panels are inert
         guard phase == .recording else { return }
         isPaused ? resume() : pause()
     }
@@ -1790,6 +1851,44 @@ final class DictationController {
     /// So the prompt only ever CONTAINS the name when the mode's job includes a sign-off:
     /// the Email mode, or custom instructions that mention signing. Everywhere else the
     /// no-name prompt branch applies, which explicitly forbids invented signatures.
+    /// The name as it should be written: a name typed all in lowercase ("ryleigh") is
+    /// capitalized; anything with its own casing ("McKay", "deVries") is kept exactly.
+    static func displayName(_ raw: String) -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name == name.lowercased() else { return name }
+        return name.split(separator: " ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+    }
+
+    /// Consonant skeleton for "sounds like the user's name": vowels, h, y, and a silent gh
+    /// dropped, doubles collapsed. Riley, Rylee, Reilly, and Ryleigh all become "rl".
+    static func nameSkeleton(_ word: String) -> String {
+        var s = word.lowercased().replacingOccurrences(of: "gh", with: "")
+        s.removeAll { "aeiouyh".contains($0) || !$0.isLetter }
+        var out = ""
+        for c in s where out.last != c { out.append(c) }
+        return out
+    }
+
+    /// A sign-off the recognizer misspelled ("Thank you, Riley.") becomes the name the user
+    /// gave the app. Only the final word counts, only when it sits in sign-off position (after
+    /// a comma or on its own line), only when it is capitalized like a name, and only when it
+    /// sounds like the configured name. "Thanks, really." stays as spoken.
+    static func fixSignOffName(in text: String, userName: String) -> String {
+        let name = displayName(userName)
+        guard name.count >= 3, !name.contains(" ") else { return text }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let re = try? NSRegularExpression(pattern: #"(?:,[ \t]*|\n[ \t]*)([A-Z][a-z]+)([.!]?)\s*$"#),
+              let m = re.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+              let wordRange = Range(m.range(at: 1), in: trimmed) else { return text }
+        let word = String(trimmed[wordRange])
+        guard word != name, word.lowercased() != name.lowercased(),
+              nameSkeleton(word) == nameSkeleton(name), !nameSkeleton(word).isEmpty else { return text }
+        yapdiag("finish: sign-off \(word) -> \(name)")
+        let lead = text.prefix(while: { $0.isWhitespace })
+        let trail = String(text.reversed().prefix(while: { $0.isWhitespace }).reversed())
+        return lead + trimmed.replacingCharacters(in: wordRange, with: name) + trail
+    }
+
     private func promptUserName(for mode: Mode) -> String? {
         // Match explicit signing LANGUAGE only. Loose words backfire: Clean Up's instructions
         // mention "email addresses", and matching on "email" handed the name to Phi, which
@@ -1797,7 +1896,7 @@ final class DictationController {
         let signingWords = ["sign-off", "signoff", "signature", "sign as", "sign the", "sign it"]
         let wantsSignature = mode.id == BuiltInModes.email.id
             || signingWords.contains { mode.instructions.localizedCaseInsensitiveContains($0) }
-        return wantsSignature ? settings.userName : nil
+        return wantsSignature ? Self.displayName(settings.userName) : nil
     }
 
     private func cleanupTransformer(for mode: Mode) -> (any TextTransformer)? {
@@ -1895,6 +1994,39 @@ final class DictationController {
     }
 #endif
 
+    static func restoreCensoredWords(in cleaned: String, from raw: String) -> String {
+        guard cleaned.contains("*"), !raw.contains("*") else { return cleaned }
+        let rawWords = raw.split { !$0.isLetter && $0 != "'" }.map(String.init)
+        guard let re = try? NSRegularExpression(pattern: #"\b([A-Za-z])\*+([A-Za-z]*)\b"#) else { return cleaned }
+        // A bleeped word may also have been re-inflected ("fucking" -> "f**kings"), so the
+        // match is by first letter, a length within two, and the visible ending compared
+        // with common inflections peeled off both sides. The word the user SAID wins.
+        func stem(_ w: String) -> String {
+            for suffix in ["ing", "ed", "es", "s"] where w.count > suffix.count + 2 && w.hasSuffix(suffix) {
+                return String(w.dropLast(suffix.count))
+            }
+            return w
+        }
+        let ns = cleaned as NSString
+        var out = cleaned
+        for m in re.matches(in: cleaned, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let token = ns.substring(with: m.range)
+            let first = ns.substring(with: m.range(at: 1)).lowercased()
+            let tail = ns.substring(with: m.range(at: 2)).lowercased()
+            let candidates = rawWords.filter { w in
+                let lw = w.lowercased()
+                guard lw.hasPrefix(first), abs(lw.count - token.count) <= 2 else { return false }
+                if tail.isEmpty { return true }
+                return lw.hasSuffix(tail) || stem(lw).hasSuffix(stem(tail)) || stem(lw).hasSuffix(tail) || lw.hasSuffix(stem(tail))
+            }
+            if let word = candidates.min(by: { abs($0.count - token.count) < abs($1.count - token.count) }) {
+                yapdiag("cleanup: restored censored word \(token) -> \(word)")
+                out = (out as NSString).replacingCharacters(in: m.range, with: word)
+            }
+        }
+        return out
+    }
+
     private func runCleanup(_ text: String, mode: Mode, context: TransformContext) async -> String {
         guard let transformer = cleanupTransformer(for: mode) else { return text }
         // THE choke point for the name: whatever context a caller built (the live-session one
@@ -1907,8 +2039,12 @@ final class DictationController {
             sessionCleanupSeconds = Date().timeIntervalSince(stageClock)
             yapdiag(String(format: "stage: cleanup %.2fs (\(sessionCleanupModel ?? "?"))", Date().timeIntervalSince(stageClock)))
         }
-        guard let cleaned = try? await transformer.transform(text, mode: mode, context: context),
-              !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        guard let modelOutput = try? await transformer.transform(text, mode: mode, context: context),
+              !modelOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return text }
+        // CENSOR guard (every mode): a model that bleeps a word the speaker said ("f**ked")
+        // gets the spoken word back. Only tokens with asterisks that the raw transcript does
+        // not contain are touched, matched by first letter, length, and visible ending.
+        let cleaned = Self.restoreCensoredWords(in: modelOutput, from: text)
         // If the model answered/refused instead of cleaning, DISCARD it and keep the raw words -
         // never insert an assistant reply into the user's document.
         if FoundationModelsTransformer.looksLikeAssistantResponse(cleaned) {
@@ -2065,11 +2201,25 @@ final class DictationController {
     // MARK: AI actions (on selected text)
 
     /// Run a one-shot AI action's instructions over arbitrary text (e.g. the current selection).
+    enum AIActionError: Error { case notAnEdit, declined }
+
     func applyAIAction(instructions: String, to text: String, modelID: String? = nil) async throws -> String {
         var action = Mode(name: "Action", usesAI: true, instructions: instructions)
+        action.isEditAction = true
         if let modelID { action.languageModelID = modelID }
         guard let transformer = cleanupTransformer(for: action) else { return text }
-        let out = try await transformer.transform(text, mode: action, context: TransformContext(userName: promptUserName(for: action)))
+        let out = FoundationModelsTransformer.stripEditScaffolding(
+            try await transformer.transform(text, mode: action, context: TransformContext(userName: promptUserName(for: action))),
+            selection: text)
+        yapdiag("aiAction: instruction=\(instructions.prefix(80).debugDescription) in=\(text.prefix(80).debugDescription) out=\(out.prefix(120).debugDescription)")
+        if FoundationModelsTransformer.echoesInstruction(out, instruction: instructions, selection: text) {
+            yapdiag("aiAction: output echoes the instruction - not an edit")
+            throw AIActionError.notAnEdit
+        }
+        if FoundationModelsTransformer.looksLikeEditCommentary(out, selection: text) {
+            yapdiag("aiAction: output talks about the instruction instead of applying it")
+            throw AIActionError.declined
+        }
         // Same guards as the dictation pipeline: never deliver an assistant-style reply or a
         // runaway expansion as if it were the transformed text.
         if FoundationModelsTransformer.looksLikeAssistantResponse(out) {
@@ -2191,7 +2341,7 @@ final class DictationController {
     }
 
     private func announceTransition(from old: Phase, to new: Phase) {
-        guard old != new else { return }
+        guard old != new, !isPreviewInstance else { return }
         updateMenuAnimation(for: new)
         if new == .idle { onDidBecomeIdle?() }
         switch new {

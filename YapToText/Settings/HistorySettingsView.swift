@@ -10,6 +10,8 @@ struct HistorySettingsView: View {
     @State private var aiOnly = false
     @State private var showStats = false
     @State private var rawExpanded: Set<UUID> = []
+    /// Debug-only: open the newest record's pipeline details (marketing captures).
+    private let debugExpand = NotificationCenter.default.publisher(for: .init("yapDebugHistoryExpand"))
 
     enum DateFilter: String, CaseIterable, Identifiable {
         case all = "All", today = "Today", week = "7 days", month = "30 days"
@@ -37,6 +39,9 @@ struct HistorySettingsView: View {
             actionBar(results: results)
         }
         .navigationTitle("History")
+        .onReceive(debugExpand) { _ in
+            if let first = state.history.records.first { rawExpanded.insert(first.id) }
+        }
         .sheet(isPresented: $showStats) { StatsView().environment(state) }
     }
 

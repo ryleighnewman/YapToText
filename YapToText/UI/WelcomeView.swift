@@ -12,11 +12,13 @@ struct WelcomeView: View {
     @Binding var isPresented: Bool
 
     enum Step: Int, CaseIterable, Identifiable {
-        case welcome, permissions, controls, demo, modes, quickEdit, appearance, privacy, ready
+        case welcome, permissions, controls, demo, quickEdit, appearance, privacy, ready
         var id: Int { rawValue }
     }
 
     @State private var step: Step = .welcome
+    /// Debug-only: jump to a step by name (yap.debug.welcome <step>) for screenshots.
+    private let debugStep = NotificationCenter.default.publisher(for: .init("yapDebugWelcomeStep"))
     @State private var forward = true
 
     // Choices made during setup.
@@ -26,6 +28,14 @@ struct WelcomeView: View {
     @State private var escCancel = true
 
     var body: some View {
+        bodyContent
+            .onReceive(debugStep) { note in
+                if let raw = note.object as? String,
+                   let target = Step.allCases.first(where: { String(describing: $0) == raw }) { step = target }
+            }
+    }
+
+    private var bodyContent: some View {
         ZStack {
             AuroraBackground(reduceMotion: reduceMotion)
 
@@ -116,7 +126,6 @@ struct WelcomeView: View {
         case .welcome: welcomeStep
         case .permissions: permissionsStep
         case .demo: demoStep
-        case .modes: modesStep
         case .quickEdit: quickEditStep
         case .appearance: appearanceStep
         case .controls: controlsStep
@@ -170,32 +179,17 @@ struct WelcomeView: View {
 
     // Page 3 - the live demo, in one cohesive glass card.
     private var demoStep: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             VStack(spacing: 8) {
                 Text("Watch it work").font(.title.weight(.bold))
-                Text("Speak, tap a number to pick a post-processor, and the AI formats your words. Try 1, 2, or 3.")
-                    .font(.body).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 460)
-            }
-            PipelineDemoView().frame(maxWidth: 440)
-        }
-    }
-
-    // Page after "Watch it work": the SAME sentence run through two different modes at once, side by
-    // side, so the value of modes/workflows is obvious - one voice, different formats.
-    private var modesStep: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 8) {
-                Text("One voice, any format").font(.title.weight(.bold))
-                Text("A mode is a recipe for your words. Say something once and each mode formats it its own way: an email, a quick note, a message. Make your own for any workflow.")
+                Text("Speak once; a mode is the recipe that formats your words as an email, a note, a message, or your own. Tap 1, 2, or 3 to switch the recipe mid-demo.")
                     .font(.body).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 470)
             }
-            analysisChoiceRow.frame(maxWidth: 460)
-            ModesDemoView().frame(maxWidth: 460)
+            PipelineDemoView().frame(maxWidth: 460)
                 .opacity(state.settings.aiCleanupEnabled ? 1 : 0.4)
+            analysisChoiceRow.frame(maxWidth: 460)
             autoModeRow.frame(maxWidth: 460)
                 .opacity(state.settings.aiCleanupEnabled ? 1 : 0.4)
                 .disabled(!state.settings.aiCleanupEnabled)
@@ -270,28 +264,41 @@ struct WelcomeView: View {
         VStack(spacing: 14) {
             VStack(spacing: 6) {
                 Text("Your controls").font(.title.weight(.bold))
-                Text("Pick how the Right \u{2318} key works. The demo below plays back your choice.")
+                Text("Pick the key that starts a dictation and how it responds. The demo below plays back your choice.")
                     .font(.body).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 460)
             }
-            // One unit: the two options joined at the top, the live demo letterboxed beneath them.
+            // One unit: the real dictation-key row (the same control the Dictation page uses)
+            // with the live demo letterboxed beneath it.
             VStack(spacing: 12) {
-                HStack(spacing: 10) {
-                    triggerCard(icon: "hand.tap.fill", title: "Tap to toggle",
-                                detail: "Tap Right \u{2318} to start, tap again to stop.",
-                                selected: !pushToTalk && !useCustomDictation) {
-                        pushToTalk = false; useCustomDictation = false
+                HStack(spacing: 8) {
+                    Image(systemName: "mic.fill").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                    Text("Dictation key").font(.callout.weight(.medium))
+                    Picker("", selection: Binding(
+                        get: { pushToTalk ? ModifierTrigger.pushToTalk : .toggle },
+                        set: { pushToTalk = $0 == .pushToTalk; useCustomDictation = false })) {
+                        ForEach(ModifierTrigger.allCases.filter { $0 != .off }) { Text($0.label).tag($0) }
                     }
-                    triggerCard(icon: "hand.raised.fill", title: "Hold to talk",
-                                detail: "Hold Right \u{2318} while you speak, release to stop.",
-                                selected: pushToTalk && !useCustomDictation) {
-                        pushToTalk = true; useCustomDictation = false
-                    }
+                    .labelsHidden().fixedSize()
+                    .disabled(useCustomDictation)
+                    Spacer(minLength: 8)
+                    ModifierKeyRecorderField(key: Binding(
+                        get: { state.settings.primaryTriggerKey },
+                        set: { state.settings.primaryTriggerKey = $0 }), onTurnOff: {})
+                        .frame(width: 110, height: 24)
+                        .disabled(useCustomDictation)
                 }
+                Text(useCustomDictation
+                     ? "Your custom shortcut below starts and stops each dictation."
+                     : pushToTalk
+                     ? "Hold \(state.settings.primaryTriggerKey.label) while you speak; release to stop."
+                     : "Tap \(state.settings.primaryTriggerKey.label) to start, tap again to stop.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 ControlsPopupDemo(pushToTalk: pushToTalk)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 128)
+                    .frame(height: 250)
                     .background(Color.secondary.opacity(0.05),
                                 in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous)
@@ -343,7 +350,7 @@ struct WelcomeView: View {
     // glass) so the slide reads clean and stays light on the glass renderer.
     private var quickEditStep: some View {
         stepScaffold(icon: nil, title: "The Quick Edit key",
-                     subtitle: "Fix text after it lands - by talking, not typing.") {
+                     subtitle: "Fix text after it lands, by talking instead of typing.") {
             QuickEditTutorial()
                 .frame(maxWidth: 520)
         }
@@ -351,7 +358,7 @@ struct WelcomeView: View {
 
     private var appearanceStep: some View {
         stepScaffold(icon: "paintpalette.fill", title: "Make it yours",
-                     subtitle: "Pick your colors - everything applies instantly.") {
+                     subtitle: "The dictation pop-up and the Quick Edit card, live: pick their layout, position, and colors. Everything applies instantly.") {
             AppearanceQuickPicker()
                 .frame(maxWidth: 520)
         }
@@ -372,7 +379,7 @@ struct WelcomeView: View {
             }
             VStack(spacing: 10) {
                 privacyRow("cpu", "On-device AI",
-                           "The speech model and AI cleanup run locally with Apple Intelligence and on-device models. Your voice is turned into text right here.")
+                           "Speech recognition and AI cleanup run entirely on this Mac, with models that ship inside the app. Your voice is turned into text right here.")
                 privacyRow("internaldrive", "Your data stays put",
                            "Transcripts, history, and audio live only on this Mac, in the app's own storage, and you can delete any of it anytime.")
                 privacyRow("wifi.slash", "Works offline",
@@ -484,32 +491,6 @@ struct WelcomeView: View {
     /// A selectable glass option card (radio-style) for the start-dictation behavior. Stretches to
     /// the tallest sibling (maxHeight: .infinity) so the two options are always equal height even
     /// when their detail text wraps to different line counts.
-    private func triggerCard(icon: String, title: String, detail: String,
-                             selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Image(systemName: icon).font(.title3)
-                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                    Spacer()
-                    Image(systemName: selected ? "circle.inset.filled" : "circle")
-                        .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.4))
-                }
-                Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(13)
-            .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous)
-                .stroke(selected ? Color.accentColor.opacity(0.7) : Color.clear, lineWidth: 1.5))
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(duration: 0.3), value: selected)
-    }
-
     /// Optional name captured up front so AI modes (like Email) can sign off with it instead of a
     /// "[Your Name]" placeholder.
     private var nameField: some View {
@@ -590,7 +571,7 @@ struct WelcomeView: View {
         s.hasCompletedOnboarding = true
         // Fresh installs just saw everything, including Quick Edit - never show them the
         // What's New sheet for this version.
-        s.lastSeenWhatsNewVersion = Changelog.currentVersion
+        s.lastSeenWhatsNewVersion = Changelog.whatsNewKey
 
         AppDelegate.shared?.reloadHotkey()
         AppDelegate.shared?.reloadRightCommandTrigger()
@@ -608,25 +589,25 @@ struct WelcomeView: View {
 private struct ControlsPopupDemo: View {
     @Environment(AppState.self) private var state
     let pushToTalk: Bool
-    private enum Phase { case idle, listening, processing }
-    @State private var phase: Phase = .idle
+    @State private var phase: DictationPopupPreview.DemoPhase = .idle
     @State private var keyPressed = false
-    @State private var demoData = AudioVisualData(bands: 26)
 
     var body: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 6) {
             keycap
             Image(systemName: "arrow.down").font(.caption2).foregroundStyle(.tertiary).opacity(0.55)
-            panel
+            // THE panel, not a stand-in: the genuine recording pop-up in the user's layout and
+            // colors, walked through listening and transcribing by the key above.
+            DictationPopupPreview(settings: state.settings, demoPhase: phase)
         }
-        .frame(maxWidth: 300)
+        .frame(maxWidth: 420)
         // Restart the playback whenever the chosen style changes, so the animation always matches.
         .task(id: pushToTalk) { await runLoop() }
         .accessibilityHidden(true)
     }
 
     private var keycap: some View {
-        Text("Right \u{2318}")
+        Text(state.settings.primaryTriggerKey.label)
             .font(.system(size: 13, weight: .semibold, design: .rounded))
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(Color.secondary.opacity(keyPressed ? 0.28 : 0.12),
@@ -635,28 +616,6 @@ private struct ControlsPopupDemo: View {
             .scaleEffect(keyPressed ? 0.93 : 1)
             .shadow(color: keyPressed ? Color.accentColor.opacity(0.4) : .clear, radius: 6)
             .animation(.easeOut(duration: 0.12), value: keyPressed)
-    }
-
-    /// The real panel look: our glass surface with the live WaveformView, or the processing state.
-    private var panel: some View {
-        HStack(spacing: 10) {
-            // The demo wave condenses into the spinner exactly like the real panel -
-            // no structural swap, the wave IS the processing indicator.
-            WaveformView(data: demoData, isActive: phase == .listening, scale: 0.78,
-                         style: state.settings.waveStyle,
-                         freeze: phase == .processing, sucking: phase == .processing,
-                         usesSharedClock: false)
-                .frame(maxWidth: .infinity)
-            Text(phase == .processing ? "Transcribing\u{2026}" : "Listening\u{2026}")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(height: 30)
-        .padding(.horizontal, 14).padding(.vertical, 9)
-        .frame(width: 264)
-        .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
-        .opacity(phase == .idle ? 0 : 1)
-        .scaleEffect(phase == .idle ? 0.94 : 1, anchor: .top)
-        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: phase)
     }
 
     @MainActor
@@ -670,37 +629,20 @@ private struct ControlsPopupDemo: View {
                 keyPressed = true                                       // press and HOLD
                 await nap(0.28)
                 phase = .listening
-                let wave = Task { await animateWave() }
-                await nap(2.2)                                          // stays held while listening
-                wave.cancel()
+                await nap(3.2)                                          // stays held while listening
                 keyPressed = false                                      // release -> stop
             } else {
                 keyPressed = true; await nap(0.16); keyPressed = false  // tap 1 -> start
                 phase = .listening
-                let wave = Task { await animateWave() }
-                await nap(2.2)
-                wave.cancel()
+                await nap(3.2)
                 keyPressed = true; await nap(0.16); keyPressed = false  // tap 2 -> stop
             }
             phase = .processing
-            await nap(1.5)
+            await nap(1.6)
+            phase = .closing                                            // the real farewell
+            await nap(0.55)
             phase = .idle
-            await nap(0.4)
-        }
-    }
-
-    @MainActor
-    private func animateWave() async {
-        var f = 0.0
-        while !Task.isCancelled {
-            f += 0.12
-            demoData.spectrum = (0..<26).map { b in
-                let u = Double(b) / 25.0
-                let hump = exp(-pow((u - 0.5) * 2.4, 2))
-                return Float(max(0, hump * (0.5 + 0.5 * sin(f * 2 + u * 6))))
-            }
-            demoData.level = Float(0.5 + 0.35 * abs(sin(f * 1.6)))
-            try? await Task.sleep(nanoseconds: 90_000_000)
+            await nap(0.5)
         }
     }
 }
@@ -790,6 +732,7 @@ private struct PipelineDemoView: View {
         .animation(.easeInOut(duration: 0.3), value: phase)
         .task(id: selected) { await runLoop() }
         .focusable()
+        .focusEffectDisabled()   // keyboard focus for the number keys, without the blue ring
         .onKeyPress(characters: CharacterSet(charactersIn: "123")) { press in
             if let d = Int(String(press.characters.first ?? " ")), d >= 1, d <= 3 { selected = d - 1 }
             return .handled
@@ -894,119 +837,6 @@ private struct PipelineDemoView: View {
 }
 
 // MARK: - Modes comparison demo
-
-/// One spoken sentence formatted by TWO different modes at once, side by side, so the value of
-/// modes is obvious: same input, different output. Uses quiet recessed surfaces (not stacked glass)
-/// and the framerate-capped TypewriterText, so the looping animation stays light on the glass
-/// renderer.
-private struct ModesDemoView: View {
-    private struct ModeResult: Identifiable {
-        let id = UUID(); let icon: String; let name: String; let output: String
-    }
-    private static let spoken = "hey can you send me the q3 numbers before friday thanks"
-    private static let results: [ModeResult] = [
-        ModeResult(icon: "envelope.fill", name: "Email",
-                   output: "Hi,\n\nCould you send the Q3 numbers by Friday?\n\nThanks!"),
-        ModeResult(icon: "text.badge.checkmark", name: "Note",
-                   output: "\u{2022} Q3 numbers\n\u{2022} Due Friday"),
-    ]
-
-    @State private var rawTyped = ""
-    @State private var showOutputs = false
-    @State private var cycle = 0
-    @State private var demoData = AudioVisualData(bands: 26)
-    @Environment(AppState.self) private var state
-
-    var body: some View {
-        VStack(spacing: 10) {
-            // The spoken sentence - with the real wave above it, listening while the words
-            // stream in and condensing into the ring the moment they land (the same
-            // choreography as the live panel, homogeneous across every demo).
-            VStack(alignment: .leading, spacing: 3) {
-                WaveformView(data: demoData, isActive: rawTyped.isEmpty, scale: 0.7,
-                             style: state.settings.waveStyle,
-                             freeze: !rawTyped.isEmpty, sucking: !rawTyped.isEmpty,
-                             usesSharedClock: false)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 26)
-                Group {
-                    if rawTyped.isEmpty {
-                        Text("Listening\u{2026}").foregroundStyle(.secondary)
-                    } else {
-                        TypewriterText(target: rawTyped, fontSize: 13).id("raw-\(cycle)")
-                    }
-                }
-                .font(.system(size: 13))
-                .frame(maxWidth: .infinity, minHeight: 34, alignment: .topLeading)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .innerWell(radius: Metrics.panelRadius)
-
-            Image(systemName: "arrow.down").font(.caption).foregroundStyle(.tertiary)
-                .opacity(showOutputs ? 1 : 0.3)
-
-            // Same input, two modes, two outputs.
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(Self.results) { modeColumn($0) }
-            }
-        }
-        .task { await loop() }
-        .accessibilityHidden(true)
-    }
-
-    private func modeColumn(_ r: ModeResult) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: r.icon).iconTint(.accentColor).font(.system(size: 12))
-                Text(r.name).font(.caption.weight(.semibold))
-            }
-            Group {
-                if showOutputs {
-                    TypewriterText(target: r.output, fontSize: 12).id("\(r.name)-\(cycle)")
-                } else {
-                    Text(" ").font(.system(size: 12))
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .innerWell(radius: Metrics.panelRadius)
-    }
-
-    @MainActor
-    private func loop() async {
-        func nap(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000)) }
-        while !Task.isCancelled {
-            cycle += 1
-            rawTyped = ""
-            showOutputs = false
-            // Animate the demo wave while "listening" (1.6s of synthetic speech).
-            let waveTask = Task { @MainActor in
-                var f = 0.0
-                while !Task.isCancelled {
-                    f += 0.12
-                    demoData.spectrum = (0..<26).map { b in
-                        let u = Double(b) / 25.0
-                        let hump = exp(-pow((u - 0.5) * 2.4, 2))
-                        return Float(max(0, hump * (0.5 + 0.5 * sin(f * 2 + u * 6))))
-                    }
-                    demoData.level = 0.5
-                    try? await Task.sleep(nanoseconds: 33_000_000)
-                }
-            }
-            await nap(1.6)
-            waveTask.cancel()
-            guard !Task.isCancelled else { return }
-            rawTyped = Self.spoken                                        // types the raw words
-            await nap(2.2)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.3)) { showOutputs = true } // both outputs type at once
-            await nap(4.8)                                                // hold so it's readable
-        }
-    }
-}
 
 // MARK: - Decorative background
 

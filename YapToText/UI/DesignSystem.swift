@@ -232,6 +232,29 @@ struct Caption: View {
     }
 }
 
+/// A caption with links that wrap WITH the sentence, not beside it. Markdown links whose
+/// URL is `yap://<destination>` jump to that sidebar page ("dictation", "quickEdit",
+/// "models", ...). A long caption next to a separate link Button put the link on its own,
+/// vertically centred beside a wrapped block, which read as a stray right-aligned button.
+struct LinkCaption: View {
+    let markdown: String
+    init(_ markdown: String) { self.markdown = markdown }
+    var body: some View {
+        Text(attributed)
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .environment(\.openURL, OpenURLAction { url in
+                guard url.scheme == "yap", let page = url.host, !page.isEmpty else { return .systemAction }
+                NotificationCenter.default.post(name: .yapShowDestination, object: page)
+                return .handled
+            })
+    }
+    private var attributed: AttributedString {
+        (try? AttributedString(markdown: markdown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(markdown)
+    }
+}
+
 /// Uppercase tracked status pill (the CubeAura badge) - color + word, no icons.
 struct StatusPill: View {
     let text: String
@@ -494,6 +517,28 @@ extension AppSettings {
     var waveStyle: WaveStyle {
         WaveStyle(tint: waveTint, rainbow: waveIsRGB, strength: waveStrength,
                   rgbSpeed: waveRGBSpeed, rgbSpread: waveRGBSpread)
+    }
+    /// The Quick Edit card's wave and glass, resolved the same way as the dictation pop-up's
+    /// but from its own settings.
+    var quickEditWaveStyle: WaveStyle {
+        let tint: Color?
+        switch quickEditWaveColorStyle {
+        case .accent, .rgb: tint = nil
+        case .custom: tint = quickEditWaveColorHex.flatMap { Color(hexString: $0) }
+        }
+        return WaveStyle(tint: tint, rainbow: quickEditWaveColorStyle == .rgb, strength: quickEditWaveStrength,
+                         rgbSpeed: quickEditWaveRGBSpeed, rgbSpread: quickEditWaveRGBSpread)
+    }
+    var quickEditTint: Color? {
+        guard quickEditTintStrength > 0.01 else { return nil }
+        switch quickEditTintStyle {
+        case .off: return nil
+        case .accent: return customAccent ?? .accentColor
+        case .custom: return quickEditTintHex.flatMap { Color(hexString: $0) }
+        case .rainbow:
+            let hue = (Date().timeIntervalSinceReferenceDate * quickEditRGBSpeed / 12).truncatingRemainder(dividingBy: 1)
+            return Color(hue: hue < 0 ? hue + 1 : hue, saturation: 0.85, brightness: 1)
+        }
     }
     var panelTint: Color? {
         guard panelTintStrength > 0.01 else { return nil }

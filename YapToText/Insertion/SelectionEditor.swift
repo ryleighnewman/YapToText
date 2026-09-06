@@ -11,15 +11,33 @@ enum SelectionEditor {
         guard !TextInserter.isSecureInputActive else { return nil }
         let pb = NSPasteboard.general
         let saved = PasteboardSnapshot.capture(pb)
-        let before = pb.changeCount
+        var before = pb.changeCount
         TextInserter.postCopy()
 
         var changed = false
         for _ in 0..<16 {                       // up to ~400ms for the app to respond
             try? await Task.sleep(nanoseconds: 25_000_000)
-            if pb.changeCount != before { changed = true; break }
+            let now = pb.changeCount
+            guard now != before else { continue }
+            // A write of OUR OWN landing mid-poll (the clipboard restore that follows every
+            // paste) is not the target app answering Cmd-C. Skip it and keep waiting.
+            if now == TextInserter.ownWriteChangeCount {
+                yapdiag("quickEdit: capture ignored our own clipboard write (changeCount \(now))")
+                before = now
+                continue
+            }
+            changed = true; break
         }
-        let selection = changed ? pb.string(forType: .string) : nil
+        var selection = changed ? pb.string(forType: .string) : nil
+        // Editors that copy the whole line when nothing is selected say so (VS Code and
+        // its relatives tag the pasteboard); that line is not a selection.
+        if selection != nil,
+           let meta = pb.string(forType: NSPasteboard.PasteboardType("vscode-editor-data")),
+           meta.contains("\"isFromEmptySelection\":true") {
+            yapdiag("quickEdit: capture was a whole-line copy from an empty selection - ignoring")
+            selection = nil
+        }
+        yapdiag("quickEdit: capture changed=\(changed) text=\((selection ?? "").prefix(60).debugDescription)")
         // Only restore if we actually captured something usable; an empty snapshot (e.g. the
         // clipboard held only promised/lazy data we couldn't copy) would otherwise wipe it.
         if !saved.isEmpty { saved.write(to: pb) }

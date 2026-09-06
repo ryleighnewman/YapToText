@@ -14,3 +14,7 @@ Marketing/posters-v3/
 Marketing/shots-v2/
 Marketing/README-v2.md
 Marketing/outreach/
+Marketing/.staging-backup/
+
+# Python bytecode from the marketing tools
+__pycache__/

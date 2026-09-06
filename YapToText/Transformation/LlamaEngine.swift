@@ -367,7 +367,7 @@ struct LlamaTransformer: TextTransformer {
     }
 
     private func transformChunk(_ text: String, mode: Mode, context: TransformContext, appName: String?) async throws -> String {
-        let system = FoundationModelsTransformer.systemPrompt()
+        let system = FoundationModelsTransformer.systemPrompt(for: mode)
         let user = FoundationModelsTransformer.cleanupUserPrompt(for: text, mode: mode, context: context)
         let path = modelURL.path
         // A cleanup never legitimately needs more than about 1.5x the input: the guards

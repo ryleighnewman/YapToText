@@ -5,6 +5,7 @@ import SwiftUI
 struct AdvancedSettingsView: View {
     @Environment(AppState.self) private var state
     @State private var confirmRestore = false
+    @State private var confirmErase = false
 
     var body: some View {
         @Bindable var settings = state.settings
@@ -14,7 +15,6 @@ struct AdvancedSettingsView: View {
                 SubOptions {
                     Caption("Shows your words while you speak. Costs extra battery with Whisper models.")
                 }
-                Toggle("Insert text automatically", isOn: $settings.autoInsert).toggleStyle(.switch).controlSize(.small)
                 if settings.autoInsert {
                     Toggle("Type text live as you speak", isOn: $settings.liveTyping)
                         .toggleStyle(.switch).controlSize(.small)
@@ -37,13 +37,6 @@ struct AdvancedSettingsView: View {
                                     : "Every dictation stops in the review buffer, no matter how short.")
                         }
                     }
-                    Toggle("Quick edits by voice", isOn: $settings.quickEditDetection)
-                        .toggleStyle(.switch).controlSize(.small)
-                    if settings.quickEditDetection {
-                        SubOptions {
-                            Caption("Right after an insert, \u{201C}scratch that\u{201D} removes it and \u{201C}replace X with Y\u{201D} fixes it. Only exact whole phrases count.")
-                        }
-                    }
                 }
                 SubOptions {
                     if settings.autoInsert {
@@ -62,14 +55,8 @@ struct AdvancedSettingsView: View {
                                     ? "Your original clipboard, even images and files, is put back after the paste."
                                     : "The dictated text stays on the clipboard so you can paste it again.")
                         }
-                        Toggle("Adapt to the surrounding text", isOn: $settings.adaptToSurroundings)
-                            .toggleStyle(.switch).controlSize(.small)
-                        Caption(settings.adaptToSurroundings
-                                ? "Inserting mid-sentence lowercases the first word, fixes spacing, and drops a closing period when the sentence continues."
-                                : "Text is inserted exactly as transcribed, regardless of what surrounds the cursor.")
-                        if settings.adaptToSurroundings { BeepNotice() }
                     } else {
-                        Caption("Each dictation is copied to the clipboard instead of being typed.")
+                        LinkCaption("Insert text automatically is off, so each dictation is copied to the clipboard. Turn it on from the [Dictation page](yap://dictation).")
                     }
                     if settings.autoInsert {
                         appMethodOverrides
@@ -80,7 +67,7 @@ struct AdvancedSettingsView: View {
                 SubOptions {
                     Caption("So back-to-back dictations don't run together. History keeps the text without the extra space.")
                 }
-                Caption("App-wide defaults. Each mode can override the method and trimming in its Output section.")
+                LinkCaption("App-wide defaults; each mode can override the method and trimming in its Output section. Whether text inserts at all, and how it adapts to the text around the cursor, is on the [Dictation page](yap://dictation).")
             }
 
             PerAppModesSection()
@@ -92,22 +79,6 @@ struct AdvancedSettingsView: View {
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .innerWell(radius: 7)
                 Caption("Used to sign your emails and personalize AI formatting. AI modes sign off with this instead of writing \u{201C}[Your Name]\u{201D}. Leave blank to skip sign-offs.")
-            }
-
-            CardSection("AI cleanup") {
-                Caption("AI formatting is decided by the mode you pick. AI modes (Clean Up, Email, Note, Message) rewrite your transcript; Raw Transcription inserts your exact words. Switch modes any time, including mid-dictation with the number keys.")
-            }
-
-            CardSection("Energy") {
-                Picker("Keep models in memory", selection: $settings.modelCooldownSeconds) {
-                    Text("Only while dictating").tag(0)
-                    Text("10 seconds after use").tag(10)
-                    Text("30 seconds after use").tag(30)
-                    Text("2 minutes after use").tag(120)
-                    Text("15 minutes after use").tag(900)
-                    Text("Until quit").tag(-1)
-                }
-                Caption("Loaded speech and AI models answer instantly but hold memory. Unloading sooner saves energy and memory; the next dictation after an unload takes a few extra seconds while the model reloads. \u{201C}Only while dictating\u{201D} is the deepest saver.")
             }
 
             CardSection("History & audio") {
@@ -185,6 +156,22 @@ struct AdvancedSettingsView: View {
                 Text("Every setting on every page goes back to how it was on first launch. Modes, dictionaries, commands, AI actions, and history are kept. You can undo until you quit the app.")
             }
 
+            CardSection("Start over") {
+                HStack {
+                    TipRow(icon: "trash", title: "Erase all data and start from scratch",
+                           message: "Every setting, mode, dictionary, command, and AI action, plus your whole history and saved audio. The app relaunches at its welcome screen.")
+                    Spacer()
+                    Button("Erase All Data\u{2026}") { confirmErase = true }.buttonStyle(.solidSecondary).controlSize(.small)
+                }
+            }
+            .confirmationDialog("Erase everything and start over?", isPresented: $confirmErase, titleVisibility: .visible) {
+                Button("Erase All Data", role: .destructive) { AppReset.eraseEverything(includingModels: false) }
+                Button("Erase All Data and Downloaded Models", role: .destructive) { AppReset.eraseEverything(includingModels: true) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This cannot be undone. Settings, modes, dictionaries, commands, AI actions, history, and saved audio are deleted, and the app relaunches at its welcome screen. Downloaded models are kept unless you choose to erase them too. Permissions granted in System Settings stay.")
+            }
+
         }
         .navigationTitle("Advanced")
     }
@@ -220,6 +207,37 @@ struct AdvancedSettingsView: View {
                 }
             } label: {
                 Label("Add App Override", systemImage: "plus")
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+
+            Divider().padding(.vertical, 4)
+
+            Text("After a dictation lands").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Caption("Press the app's send key as soon as your words are inserted, so a dictated message goes out on its own. Return in most chat and assistant apps, \u{2318}Return in a few.")
+            ForEach(settings.appAfterInsert.keys.sorted(), id: \.self) { bundleID in
+                HStack(spacing: 8) {
+                    AppIconView(bundleID: bundleID)
+                    Text(AppCatalog.name(for: bundleID)).lineLimit(1)
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { settings.appAfterInsert[bundleID] ?? .none },
+                        set: { settings.appAfterInsert[bundleID] = $0 }
+                    )) {
+                        ForEach(AfterInsertAction.allCases) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden().frame(maxWidth: 190)
+                    Button {
+                        settings.appAfterInsert.removeValue(forKey: bundleID)
+                    } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain).help("Stop pressing a key in this app")
+                }
+            }
+            Menu {
+                ForEach(AppCatalog.runningApps().filter { settings.appAfterInsert[$0.bundleID] == nil }, id: \.bundleID) { app in
+                    Button(app.name) { settings.appAfterInsert[app.bundleID] = .returnKey }
+                }
+            } label: {
+                Label("Add App", systemImage: "plus")
             }
             .menuStyle(.borderlessButton).fixedSize()
         }

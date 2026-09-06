@@ -139,13 +139,15 @@ struct ContentView: View {
         .onAppear {
             if !state.settings.hasCompletedOnboarding {
                 showWelcome = true
-            } else if state.settings.lastSeenWhatsNewVersion != Changelog.currentVersion {
+            } else if state.settings.lastSeenWhatsNewVersion != Changelog.whatsNewKey {
                 // Existing user, new version: one What's New sheet, once. New installs never
                 // see it (onboarding stamps the version when it completes).
                 showWhatsNew = true
             }
         }
         .sheet(isPresented: $showWhatsNew) { WhatsNewView().environment(state) }
+        .onReceive(publisher(.init("yapDebugShowWelcome"))) { note in showWelcome = (note.object as? String) != "close" }
+        .onReceive(publisher(.init("yapDebugShowWhatsNew"))) { note in showWhatsNew = (note.object as? String) != "close" }
         // Tapping any grayed-out mode/AI control while post-transcription analysis is off raises
         // this - explaining WHY it's disabled and offering to turn it back on or go to the setting.
         .alert("Post-transcription analysis is off", isPresented: Binding(
@@ -283,6 +285,10 @@ struct ContentView: View {
                   keywords: "stats statistics insights charts streak words per minute", destination: .stats),
         SearchHit(title: "Home", subtitle: "Welcome, quick controls, setup", icon: "house",
                   keywords: "home start welcome quick controls", destination: .home),
+        SearchHit(title: "Dictation", subtitle: "Keys, microphone, delivery, pop-up", icon: "mic",
+                  keywords: "dictation key microphone delivery insert pop-up panel", destination: .dictation),
+        SearchHit(title: "Quick Edit", subtitle: "Edit selected text by voice", icon: "pencil.line",
+                  keywords: "quick edit key position pop-up model rewrite selection", destination: .quickEdit),
         SearchHit(title: "Utility", subtitle: "Dictate, transform, transcribe in-app", icon: "square.grid.2x2",
                   keywords: "utility scratchpad transform transcribe file workbench", destination: .utility),
         SearchHit(title: "AI Models", subtitle: "Speech & cleanup models, downloads", icon: "cpu",
@@ -310,18 +316,34 @@ struct ContentView: View {
         // Individual settings (all live in Settings > General unless noted)
         SearchHit(title: "Keyboard shortcut", subtitle: "Settings > General", icon: "keyboard",
                   keywords: "shortcut hotkey start stop key combo record", destination: .settings, tab: .general),
-        SearchHit(title: "Right Command key", subtitle: "Settings > General", icon: "command",
-                  keywords: "right command tap toggle hold push to talk trigger", destination: .settings, tab: .general),
+        SearchHit(title: "Dictation key", subtitle: "Dictation > Keys", icon: "command",
+                  keywords: "right command dictation key tap toggle hold push to talk trigger escape twice", destination: .dictation),
         SearchHit(title: "Esc cancels dictation", subtitle: "Settings > General", icon: "escape",
                   keywords: "escape cancel discard", destination: .settings, tab: .general),
-        SearchHit(title: "Recording panel", subtitle: "Settings > General", icon: "rectangle.on.rectangle",
-                  keywords: "panel popup position size big small compact hud", destination: .settings, tab: .general),
+        SearchHit(title: "Recording pop-up", subtitle: "Dictation > Pop-up", icon: "rectangle.on.rectangle",
+                  keywords: "panel popup position size big small compact hud snap back drag stay layout", destination: .dictation),
+        SearchHit(title: "Pop-up colors", subtitle: "Dictation > Pop-up colors", icon: "paintpalette",
+                  keywords: "colors color tint background waveform rainbow rgb glass appearance strength", destination: .dictation),
+        SearchHit(title: "Quick Edit position", subtitle: "Quick Edit > Position", icon: "rectangle.bottomthird.inset.filled",
+                  keywords: "quick edit popup position snap back drag stay show preview", destination: .quickEdit),
+        SearchHit(title: "Quick Edit colors", subtitle: "Quick Edit > Pop-up colors", icon: "paintpalette",
+                  keywords: "quick edit colors color tint background waveform rainbow rgb card purple", destination: .quickEdit),
+        SearchHit(title: "Corrections by voice", subtitle: "Quick Edit > Corrections by voice", icon: "arrow.uturn.backward",
+                  keywords: "scratch that replace with undo correction fix dictation voice quick edits", destination: .quickEdit),
+        SearchHit(title: "Accent color", subtitle: "Settings > General", icon: "paintbrush",
+                  keywords: "accent color theme appearance buttons highlights", destination: .settings, tab: .general),
         SearchHit(title: "Sounds", subtitle: "Settings > General", icon: "speaker.wave.2",
                   keywords: "sounds start stop chime feedback", destination: .settings, tab: .general),
         SearchHit(title: "Microphone input", subtitle: "Settings > General", icon: "mic",
                   keywords: "microphone gain boost input level meter amplify", destination: .settings, tab: .general),
-        SearchHit(title: "Auto-stop", subtitle: "Settings > General", icon: "timer",
-                  keywords: "auto stop silence timeout maximum length recording", destination: .settings, tab: .general),
+        SearchHit(title: "Auto-stop", subtitle: "Dictation > Recording", icon: "timer",
+                  keywords: "auto stop silence timeout maximum length recording pause music video", destination: .dictation),
+        SearchHit(title: "Noise reduction", subtitle: "Dictation > Microphone", icon: "waveform.badge.minus",
+                  keywords: "noise reduce background amplify quiet whisper volume", destination: .dictation),
+        SearchHit(title: "Keep models in memory", subtitle: "Energy > Memory", icon: "memorychip",
+                  keywords: "memory unload cooldown models energy ram", destination: .energy),
+        SearchHit(title: "Erase all data", subtitle: "Settings > Advanced", icon: "trash",
+                  keywords: "erase delete wipe reset all data start over fresh onboarding welcome", destination: .settings, tab: .advanced),
         SearchHit(title: "Insertion method", subtitle: "Settings > Advanced", icon: "text.cursor",
                   keywords: "insert paste type clipboard cursor deliver output", destination: .settings, tab: .advanced),
         SearchHit(title: "History retention", subtitle: "Settings > Advanced", icon: "clock.badge.xmark",

@@ -76,6 +76,9 @@ struct AboutView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 380)
+            Link("yaptotext.com", destination: SupportLinks.site)
+                .font(.subheadline.weight(.medium))
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)

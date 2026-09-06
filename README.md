@@ -13,7 +13,7 @@ machine.
 
 Website: [yaptotext.com](https://yaptotext.com) (help, install, release notes)
 
-![YapToText](Marketing/posters-v4/01-hero.jpg)
+![YapToText](Marketing/posters-v5/01-hero.jpg)
 
 ## Why it exists
 
@@ -60,19 +60,33 @@ do yet. Prices and features change, so check for yourself before you switch.
 - **Built for accessibility.** Works with VoiceOver and Voice Control, one key runs
   everything, and dictation can fully replace typing.
 
-![Quick Edit](Marketing/posters-v4/03-quick-edit.jpg)
+![Quick Edit](Marketing/posters-v5/03-quick-edit.jpg)
 
-![The listening engine](Marketing/posters-v4/04-listening-engine.jpg)
+![The listening engine](Marketing/posters-v5/04-listening-engine.jpg)
 
-![AI pipelines](Marketing/posters-v4/06-ai-pipelines.jpg)
+![AI pipelines](Marketing/posters-v5/06-ai-pipelines.jpg)
 
-![Menu bar](Marketing/posters-v4/05-menubar.jpg)
+![Menu bar](Marketing/posters-v5/05-menubar.jpg)
 
-![Watch the pipeline work](Marketing/posters-v4/07-pipeline-live.jpg)
+![Watch the pipeline work](Marketing/posters-v5/07-pipeline-live.jpg)
 
-![Teach it your words](Marketing/posters-v4/09-personalize.jpg)
+![Teach it your words](Marketing/posters-v5/09-personalize.jpg)
 
-![Privacy](Marketing/posters-v4/08-privacy.jpg)
+![Privacy](Marketing/posters-v5/08-privacy.jpg)
+
+## What's new in 1.5
+
+- Send it for me: choose a key per app (Return or ⌘Return) that is pressed the moment your words land, so a dictated message or prompt goes out on its own
+- Quick Edit follows your request: rewrite, change tone, translate, capitalize. Case changes apply instantly, and it says so when nothing changed or when what you said was not an edit
+- Quick Edit has its own pop-up: pick where it opens, drag it anywhere and it stays, and give it its own colors. The key taps to start and stop by default
+- The dictation pop-up stays wherever you drag it; layout, position, snap-back, and colors live on the Dictation page with a live preview
+- Cancelling a dictation closes the pop-up in one motion, the same way every time
+- Smart insert follows you when you switch apps mid-dictation, keeps working in chat apps, and closes the previous sentence when you dictate just before its period
+- Dictionaries group every spelling of a word into one folder, the app's own name is recognized however it is heard, and suggested sound-alikes never include plurals, truncations, or real words
+- A sign-off is spelled the way you gave the app your name
+- Cleanup never bleeps a word you said or adds a label or a copy of the original; invented speaker names, wrapping quotes, and silent-clip phrases are removed
+- Erase All Data in Settings > Advanced starts the app over from the welcome screen
+- Every setting has one home, and onboarding shows the real pop-ups with their controls
 
 ## What's new in 1.4
 

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The Quick Edit teaching content, shared by the onboarding step and the What's New sheet
-/// so both always tell the same story: select text, hold Right Option, say what you want -
-/// like leaning over to a person at the keyboard and telling them the edit out loud.
+/// The Quick Edit teaching content for onboarding: the real key row, the real card, and a
+/// few example requests - select text, press the key, say what you want, like leaning over
+/// to a person at the keyboard and telling them the edit out loud.
 struct QuickEditTutorial: View {
     @Environment(AppState.self) private var state
     /// Compact spacing for the sheet; roomier inside onboarding.
@@ -10,53 +10,61 @@ struct QuickEditTutorial: View {
 
     var body: some View {
         @Bindable var settings = state.settings
-        VStack(alignment: .leading, spacing: compact ? 10 : 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "option")
-                    .font(.system(size: 22, weight: .semibold))
-                    .iconTint(Color.accentColor)
-                    .frame(width: 40, height: 40)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Select text in any application and hold the Right Option key. Say the change out loud - as if you're talking to a personal editor. Release the key, and it automatically edits your text.")
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: compact ? 10 : 12) {
+            Text("Select text in any app, press your Quick Edit key, and say the change out loud, as if you were telling an editor at the keyboard. The edit lands in place.")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // The REAL key row, the same control the Quick Edit page uses: on or off, tap or
+            // hold, and which key. Choices apply instantly.
+            HStack(spacing: 8) {
+                Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                Text("Quick Edit key").font(.callout.weight(.medium))
+                Toggle("", isOn: Binding(
+                    get: { settings.quickEditTrigger != .off },
+                    set: { on in
+                        settings.quickEditTrigger = on ? settings.quickEditPreferredTrigger : .off
+                        AppDelegate.shared?.reloadQuickEditKey()
+                    }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                if settings.quickEditTrigger != .off {
+                    Picker("", selection: $settings.quickEditTrigger) {
+                        ForEach(ModifierTrigger.allCases.filter { $0 != .off }) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden().fixedSize().controlSize(.small)
+                    .onChange(of: settings.quickEditTrigger) {
+                        if settings.quickEditTrigger != .off { settings.quickEditPreferredTrigger = settings.quickEditTrigger }
+                        AppDelegate.shared?.reloadQuickEditKey()
+                    }
                 }
+                Spacer(minLength: 8)
+                ModifierKeyRecorderField(key: $settings.quickEditTriggerKey, role: .quickEdit, onTurnOff: {
+                    settings.quickEditTrigger = .off
+                    AppDelegate.shared?.reloadQuickEditKey()
+                })
+                    .frame(width: 110, height: 24)
+                    .disabled(settings.quickEditTrigger == .off)
+                    .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
             }
-
-            QuickEditDemo()
-
-            Text("It's like telling a person at the keyboard exactly what to do:")
+            Text(settings.quickEditTrigger == .off
+                 ? "Off. Turn it on to edit selected text by voice with a key press."
+                 : settings.quickEditTrigger == .pushToTalk
+                 ? "Hold \(settings.quickEditTriggerKey.label) while you speak the change; release to apply."
+                 : "Tap \(settings.quickEditTriggerKey.label) to start listening, tap again to apply.")
                 .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            // The REAL Quick Edit card, cycling listening -> applying -> done in its own colors.
+            QuickEditPopupPreview(settings: settings)
+
+            VStack(alignment: .leading, spacing: 5) {
                 exampleRow("\u{201C}Capitalize this word\u{201D}")
-                exampleRow("\u{201C}Make this entire word in caps\u{201D}")
                 exampleRow("\u{201C}Make this past tense\u{201D}")
                 exampleRow("\u{201C}Make it sound more friendly\u{201D}")
                 exampleRow("\u{201C}Add this to my dictionary\u{201D}", note: "so it's always spelled and capitalized this way")
             }
             .padding(10)
             .innerWell(radius: Metrics.sectionRadius)
-
-            HStack {
-                Text("Quick Edit key")
-                Spacer()
-                Picker("", selection: $settings.quickEditTrigger) {
-                    ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
-                }
-                .labelsHidden().fixedSize().controlSize(.small)
-                .onChange(of: settings.quickEditTrigger) { AppDelegate.shared?.reloadQuickEditKey() }
-                ModifierKeyRecorderField(key: $settings.quickEditTriggerKey, role: .quickEdit, onTurnOff: {
-                    settings.quickEditTrigger = .off
-                    AppDelegate.shared?.reloadQuickEditKey()
-                })
-                    .frame(width: 110, height: 24)
-                    .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
-            }
-            Text("On by default. Click the field to bind a different key. Option shortcuts and accented characters still work normally.")
-                .font(.caption2).foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -116,9 +124,10 @@ struct QuickEditTutorial: View {
     }
 }
 
-/// Compact appearance chooser shared by onboarding and the What's New sheet: accent color
-/// presets plus the pop-up accent style, with the live pop-up preview. Every choice applies
-/// instantly, so both flows are a real "pick what you want" moment, not a description.
+/// Appearance chooser shared by onboarding and the What's New sheet: the app accent, then
+/// the REAL dictation pop-up and the REAL Quick Edit card, live, each with its own layout,
+/// position, and color controls. Every choice applies instantly, so both flows are a real
+/// "pick what you want" moment, not a description.
 struct AppearanceQuickPicker: View {
     @Environment(AppState.self) private var state
     /// Live demo: until the user clicks ANYTHING, the accent color cycles through the presets
@@ -128,6 +137,8 @@ struct AppearanceQuickPicker: View {
     @State private var autoCycling = true
     @State private var cycleTask: Task<Void, Never>?
     @State private var originalAccentHex: String??
+    enum Which: Hashable { case dictation, quickEdit }
+    @State private var which: Which = .dictation
 
     var body: some View {
         @Bindable var settings = state.settings
@@ -143,75 +154,136 @@ struct AppearanceQuickPicker: View {
                         .background(.secondary.opacity(settings.accentColorHex == nil ? 0.25 : 0.1), in: Capsule())
                 }
                 .buttonStyle(.plain).help("Follow the system accent color")
-                ForEach(GeneralSettingsView.accentPresets, id: \.hex) { preset in
-                    Button {
-                        choose { settings.accentColorHex = preset.hex }
-                    } label: {
-                        Circle().fill(preset.color).frame(width: 16, height: 16)
-                            .overlay(Circle().strokeBorder(.primary.opacity(
-                                settings.accentColorHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
-                    }
-                    .buttonStyle(.plain).help(preset.name)
-                }
+                presetRow(selected: settings.accentColorHex) { hex in choose { settings.accentColorHex = hex } }
                 ColorPicker("", selection: Binding(
                     get: { state.settings.customAccent ?? .accentColor },
                     set: { c in choose { settings.accentColorHex = c.hexString } }),
                             supportsOpacity: false)
                     .labelsHidden().controlSize(.small).help("Pick any color")
             }
-            GeneralSettingsView.PanelTintPreview(settings: settings)
-            Picker("Pop-up background", selection: Binding(
-                get: { settings.panelTintStyle },
-                set: { v in choose { settings.panelTintStyle = v } })) {
-                ForEach(PanelTintStyle.allCases) { Text($0.label).tag($0) }
+
+            Picker("", selection: $which) {
+                Text("Dictation pop-up").tag(Which.dictation)
+                Text("Quick Edit card").tag(Which.quickEdit)
             }
-            .font(.callout)
-            // The third colour: the wave itself, separate from the app accent and from the
-            // glass it floats on - with its own vividness dial and RGB controls.
-            Picker("Pop-up waveform", selection: Binding(
-                get: { settings.waveColorStyle },
-                set: { v in choose { settings.waveColorStyle = v } })) {
-                ForEach(WaveColorStyle.allCases) { Text($0.label).tag($0) }
-            }
-            .font(.callout)
-            if settings.waveColorStyle == .custom {
-                HStack {
-                    Text("Wave color").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    ForEach(GeneralSettingsView.accentPresets, id: \.hex) { preset in
-                        Button {
-                            choose { settings.waveColorHex = preset.hex }
-                        } label: {
-                            Circle().fill(preset.color).frame(width: 16, height: 16)
-                                .overlay(Circle().strokeBorder(.primary.opacity(
-                                    settings.waveColorHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
-                        }
-                        .buttonStyle(.plain).help(preset.name)
+            .pickerStyle(.segmented).labelsHidden()
+
+            if which == .dictation {
+                // The real recording panel, in the layout and position chosen right here.
+                DictationPopupPreview(settings: settings)
+                HStack(spacing: 12) {
+                    Picker("Layout", selection: Binding(
+                        get: { settings.panelStyle },
+                        set: { v in choose { settings.panelStyle = v } })) {
+                        ForEach(PanelStyle.allCases) { Text($0.label).tag($0) }
                     }
-                    ColorPicker("", selection: Binding(
-                        get: { state.settings.waveTint ?? state.settings.customAccent ?? .accentColor },
-                        set: { c in choose { settings.waveColorHex = c.hexString } }),
-                                supportsOpacity: false)
-                        .labelsHidden().controlSize(.small).help("Pick any color")
+                    Picker("Position", selection: Binding(
+                        get: { settings.panelPosition },
+                        set: { v in choose { settings.panelPosition = v; settings.panelDraggedX = nil; settings.panelDraggedY = nil } })) {
+                        ForEach(PanelPosition.allCases) { Text($0.label).tag($0) }
+                    }
                 }
-            }
-            HStack {
-                Text("Wave strength").font(.caption).foregroundStyle(.secondary)
-                Slider(value: Binding(get: { settings.waveStrength },
-                                      set: { v in choose { settings.waveStrength = v } }), in: 0.15...1)
-            }
-            if settings.waveColorStyle == .rgb {
+                .font(.callout)
+                Picker("Pop-up background", selection: Binding(
+                    get: { settings.panelTintStyle },
+                    set: { v in choose { settings.panelTintStyle = v } })) {
+                    ForEach(PanelTintStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .font(.callout)
+                if settings.panelTintStyle == .custom {
+                    HStack {
+                        Text("Background color").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        presetRow(selected: settings.panelTintHex) { hex in choose { settings.panelTintHex = hex } }
+                        ColorPicker("", selection: Binding(
+                            get: { state.settings.panelTint ?? .blue },
+                            set: { c in choose { settings.panelTintHex = c.hexString } }), supportsOpacity: false)
+                            .labelsHidden().controlSize(.small)
+                    }
+                }
+                // The third colour: the wave itself, separate from the app accent and from the
+                // glass it floats on - with its own vividness dial and RGB controls.
+                Picker("Pop-up waveform", selection: Binding(
+                    get: { settings.waveColorStyle },
+                    set: { v in choose { settings.waveColorStyle = v } })) {
+                    ForEach(WaveColorStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .font(.callout)
+                if settings.waveColorStyle == .custom {
+                    HStack {
+                        Text("Wave color").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        presetRow(selected: settings.waveColorHex) { hex in choose { settings.waveColorHex = hex } }
+                        ColorPicker("", selection: Binding(
+                            get: { state.settings.waveTint ?? state.settings.customAccent ?? .accentColor },
+                            set: { c in choose { settings.waveColorHex = c.hexString } }),
+                                    supportsOpacity: false)
+                            .labelsHidden().controlSize(.small).help("Pick any color")
+                    }
+                }
                 HStack {
-                    Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                    Slider(value: Binding(get: { settings.waveRGBSpeed },
-                                          set: { v in choose { settings.waveRGBSpeed = v } }), in: 0.2...3)
+                    Text("Wave strength").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { settings.waveStrength },
+                                          set: { v in choose { settings.waveStrength = v } }), in: 0.15...1)
+                }
+                if settings.waveColorStyle == .rgb {
+                    HStack {
+                        Text("RGB speed").font(.caption).foregroundStyle(.secondary)
+                        Slider(value: Binding(get: { settings.waveRGBSpeed },
+                                              set: { v in choose { settings.waveRGBSpeed = v } }), in: 0.2...3)
+                    }
+                    HStack {
+                        Text("RGB spread").font(.caption).foregroundStyle(.secondary)
+                        Slider(value: Binding(get: { settings.waveRGBSpread },
+                                              set: { v in choose { settings.waveRGBSpread = v } }), in: 0...0.33)
+                    }
+                }
+            } else {
+                // The real Quick Edit card, cycling through its stages in its own colors.
+                QuickEditPopupPreview(settings: settings)
+                Picker("Card background", selection: Binding(
+                    get: { settings.quickEditTintStyle },
+                    set: { v in choose { settings.quickEditTintStyle = v } })) {
+                    ForEach(PanelTintStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .font(.callout)
+                if settings.quickEditTintStyle == .custom {
+                    HStack {
+                        Text("Background color").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        presetRow(selected: settings.quickEditTintHex) { hex in choose { settings.quickEditTintHex = hex } }
+                        ColorPicker("", selection: Binding(
+                            get: { state.settings.quickEditTintHex.flatMap { Color(hexString: $0) } ?? .purple },
+                            set: { c in choose { settings.quickEditTintHex = c.hexString } }), supportsOpacity: false)
+                            .labelsHidden().controlSize(.small)
+                    }
+                }
+                Picker("Card waveform", selection: Binding(
+                    get: { settings.quickEditWaveColorStyle },
+                    set: { v in choose { settings.quickEditWaveColorStyle = v } })) {
+                    ForEach(WaveColorStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .font(.callout)
+                if settings.quickEditWaveColorStyle == .custom {
+                    HStack {
+                        Text("Wave color").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        presetRow(selected: settings.quickEditWaveColorHex) { hex in choose { settings.quickEditWaveColorHex = hex } }
+                        ColorPicker("", selection: Binding(
+                            get: { state.settings.quickEditWaveColorHex.flatMap { Color(hexString: $0) } ?? .purple },
+                            set: { c in choose { settings.quickEditWaveColorHex = c.hexString } }), supportsOpacity: false)
+                            .labelsHidden().controlSize(.small)
+                    }
                 }
                 HStack {
-                    Text("RGB spread").font(.caption).foregroundStyle(.secondary)
-                    Slider(value: Binding(get: { settings.waveRGBSpread },
-                                          set: { v in choose { settings.waveRGBSpread = v } }), in: 0...0.33)
+                    Text("Wave strength").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { settings.quickEditWaveStrength },
+                                          set: { v in choose { settings.quickEditWaveStrength = v } }), in: 0.15...1)
                 }
+                Text("Its own colors, so an edit never looks like a dictation. Position, snap-back, and more live on the Quick Edit page.")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
+
             HStack {
                 Picker("Menu bar icon", selection: Binding(
                     get: { settings.menuBarIconStyle },
@@ -220,7 +292,7 @@ struct AppearanceQuickPicker: View {
                 }
                 .font(.callout)
             }
-            Text("Change these any time in Settings \u{2192} Appearance.")
+            Text("Change these any time: the accent in Settings, the pop-ups on the Dictation and Quick Edit pages.")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
         .onAppear {
@@ -246,6 +318,17 @@ struct AppearanceQuickPicker: View {
         }
     }
 
+    /// The six preset dots, highlighting the one that matches `selected`.
+    private func presetRow(selected: String?, pick: @escaping (String) -> Void) -> some View {
+        ForEach(GeneralSettingsView.accentPresets, id: \.hex) { preset in
+            Button { pick(preset.hex) } label: {
+                Circle().fill(preset.color).frame(width: 16, height: 16)
+                    .overlay(Circle().strokeBorder(.primary.opacity(selected == preset.hex ? 0.6 : 0), lineWidth: 1.5))
+            }
+            .buttonStyle(.plain).help(preset.name)
+        }
+    }
+
     /// A real user choice: stop the demo for good, then apply what they picked.
     private func choose(_ apply: () -> Void) {
         autoCycling = false
@@ -262,21 +345,45 @@ struct AppearanceQuickPicker: View {
 struct WhatsNewView: View {
     @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
+    @State private var page = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            featuresPage
+            if page == 0 { featuresPage } else { appearancePage }
 
             HStack {
+                if page == 1 {
+                    Button("Back") { withAnimation(.easeInOut(duration: 0.25)) { page = 0 } }
+                }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                if page == 0 {
+                    Button("Make it yours") { withAnimation(.easeInOut(duration: 0.25)) { page = 1 } }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Done") { dismiss() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                }
             }
         }
         .padding(22)
         .frame(width: 480)
+        .onReceive(NotificationCenter.default.publisher(for: .init("yapDebugWhatsNewPage"))) { note in
+            if let p = note.object as? Int { page = p }
+        }
         .onDisappear {
-            state.settings.lastSeenWhatsNewVersion = Changelog.currentVersion
+            state.settings.lastSeenWhatsNewVersion = Changelog.whatsNewKey
+        }
+    }
+
+    /// The pop-ups, live, with their new controls: the same chooser onboarding uses.
+    private var appearancePage: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Make it yours").font(.title2.weight(.bold))
+            Text("The dictation pop-up and the Quick Edit card each have their own layout, position, and colors now. Try them here; everything applies instantly.")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            AppearanceQuickPicker()
         }
     }
 

@@ -54,6 +54,9 @@ struct Mode: Codable, Identifiable, Equatable, Hashable {
     /// (pressing again stops it). nil = no dedicated shortcut.
     var activationHotkey: KeyCombo? = nil
     var trimTrailingNewlines: Bool? // trim trailing whitespace; nil = the app-wide setting
+    /// True for a one-shot Quick Edit / AI Action: the instructions are the user's edit request
+    /// and the text is what they selected, so the engines use the edit prompt, not cleanup's.
+    var isEditAction: Bool? = nil
 
     /// Whether this mode is engaged (shown in the switcher and cycled through).
     var isEngaged: Bool { isEnabled ?? true }

@@ -136,7 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         panel = RecordingPanel(controller: state.controller, settings: state.settings)
-        state.controller.onPresentPanel = { [weak self] in self?.panel?.show() }
+        state.controller.onPresentPanel = { [weak self] in
+            self?.panelPreviewTask?.cancel(); self?.panelPreviewTask = nil   // a real session owns the panel now
+            self?.panel?.show()
+        }
         state.controller.onDismissPanel = { [weak self] in self?.panel?.hide() }
         state.controller.onRecordingDidStart = { [weak self] in
             guard let self else { return }
@@ -200,10 +203,138 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dnc = DistributedNotificationCenter.default()
         // Marketing/diagnostic navigation: jump the main window to any sidebar destination,
         // and open the menu bar popover, from the shell (debug builds only).
-        dnc.addObserver(forName: .init("yap.debug.goto"), object: nil, queue: .main) { note in
+        dnc.addObserver(forName: .init("yap.debug.goto"), object: nil, queue: .main) { [weak self] note in
             if let raw = note.object as? String {
+                // A closed main window comes back for the screenshot, ordered front without
+                // activating the app (no focus stolen from whatever the user is doing).
+                if let window = NSApp.windows.first(where: { !($0 is NSPanel) && $0.canBecomeMain }), !window.isVisible {
+                    window.orderFront(nil)
+                } else if NSApp.windows.first(where: { !($0 is NSPanel) && $0.canBecomeMain }) == nil, let self {
+                    _ = self.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)   // closed window: recreate it
+                }
                 NotificationCenter.default.post(name: .yapShowDestination, object: raw)
             }
+        }
+        dnc.addObserver(forName: .init("yap.debug.hidewindow"), object: nil, queue: .main) { _ in
+            NSApp.windows.first(where: { !($0 is NSPanel) && $0.canBecomeMain })?.orderOut(nil)
+        }
+        // Exercise a Quick Edit instruction through the model and log the result; nothing is
+        // pasted anywhere. Object: "instruction||text".
+        dnc.addObserver(forName: .init("yap.debug.aiaction"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let raw = note.object as? String else { return }
+            let parts = raw.components(separatedBy: "||")
+            guard parts.count == 2 else { return }
+            Task { @MainActor in
+                if let cased = CaseEdit.apply(instruction: parts[0], to: parts[1]) {
+                    yapdiag("aiaction-test: deterministic -> \(cased.debugDescription)"); return
+                }
+                do {
+                    let out = try await self.state.controller.applyAIAction(instructions: parts[0], to: parts[1])
+                    yapdiag("aiaction-test: \(parts[0].debugDescription) -> \(Self.trimAddedPeriod(out, selection: parts[1]).debugDescription)")
+                } catch DictationController.AIActionError.notAnEdit {
+                    yapdiag("aiaction-test: \(parts[0].debugDescription) -> NOT AN EDIT")
+                } catch DictationController.AIActionError.declined {
+                    yapdiag("aiaction-test: \(parts[0].debugDescription) -> DECLINED (model commentary)")
+                } catch {
+                    yapdiag("aiaction-test: \(parts[0].debugDescription) -> error \(error)")
+                }
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.welcome"), object: nil, queue: .main) { note in
+            NotificationCenter.default.post(name: .init("yapDebugShowWelcome"), object: note.object as? String)
+            if let raw = note.object as? String, raw != "close" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    NotificationCenter.default.post(name: .init("yapDebugWelcomeStep"), object: raw)
+                }
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.whatsnew"), object: nil, queue: .main) { note in
+            let raw = note.object as? String
+            NotificationCenter.default.post(name: .init("yapDebugShowWhatsNew"), object: raw)
+            if raw == "page2" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    NotificationCenter.default.post(name: .init("yapDebugWhatsNewPage"), object: 1)
+                }
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.vocabdelete"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let heard = (note.object as? String)?.lowercased() else { return }
+            for dict in self.state.vocabulary.dictionaries {
+                for r in dict.replacements where r.from.lowercased() == heard {
+                    self.state.vocabulary.deleteReplacement(r, in: dict.id)
+                    yapdiag("vocab: deleted \(r.from) -> \(r.to)")
+                }
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.status"), object: nil, queue: .main) { [weak self] _ in
+            self?.logStatusItemPlacement()
+        }
+        // Marketing staging: the REAL recording panel (real glass chrome) driven by an inert
+        // preview controller with synthesized speech and a finished sentence - no microphone,
+        // no audio, nothing inserted. Object "expanded|Your sentence." / "compact|..." / "off".
+        dnc.addObserver(forName: .init("yap.debug.stagepanel"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let raw = note.object as? String else { return }
+            if raw == "off" {
+                self.stagingFeed?.cancel(); self.stagingFeed = nil
+                self.stagingPanel?.hide()
+                return
+            }
+            let parts = raw.components(separatedBy: "|")
+            if let style = PanelStyle(rawValue: parts[0]) { self.state.settings.panelStyle = style }
+            let text = parts.count > 1 ? parts[1] : ""
+            if self.stagingController == nil {
+                let c = DictationController(settings: self.state.settings, modeStore: self.state.modeStore,
+                                            vocabulary: self.state.vocabulary, commands: self.state.commands,
+                                            history: self.state.history, permissions: self.state.permissions,
+                                            models: self.state.models)
+                c.configureForPreview(liveText: "")
+                self.stagingController = c
+            }
+            guard let c = self.stagingController else { return }
+            if self.stagingPanel == nil { self.stagingPanel = RecordingPanel(controller: c, settings: self.state.settings) }
+            c.setPreviewLiveText(text)
+            self.stagingPanel?.show()
+            self.stagingFeed?.cancel()
+            self.stagingFeed = Task { @MainActor in
+                var t = 0.0
+                let energy = parts.count > 2 ? (Double(parts[2]) ?? 1) : 1   // "style|text|energy"
+                while !Task.isCancelled {
+                    PreviewSpeech.fill(c.visualData, t: t, energy: energy)
+                    try? await Task.sleep(nanoseconds: 33_000_000)
+                    t += 0.033
+                }
+            }
+        }
+        // Quick Edit card held in one stage: "listening|make it formal", "working|...", "done|Done", "off".
+        dnc.addObserver(forName: .init("yap.debug.qestage"), object: nil, queue: .main) { note in
+            guard let raw = note.object as? String else { return }
+            if raw == "off" { QuickEditWindow.shared.endStaging(); return }
+            let parts = raw.components(separatedBy: "|")
+            let text = parts.count > 1 ? parts[1] : ""
+            switch parts[0] {
+            case "listening": QuickEditWindow.shared.stage(.listening, command: text)
+            case "working": QuickEditWindow.shared.stage(.working(text), command: text)
+            case "done": QuickEditWindow.shared.stage(.result(text.isEmpty ? "Done" : text, success: true), command: text)
+            case "failed": QuickEditWindow.shared.stage(.result(text.isEmpty ? "Couldn't apply that edit" : text, success: false), command: text)
+            default: break
+            }
+        }
+        dnc.addObserver(forName: .init("yap.debug.historyexpand"), object: nil, queue: .main) { _ in
+            NotificationCenter.default.post(name: .init("yapDebugHistoryExpand"), object: nil)
+        }
+        dnc.addObserver(forName: .init("yap.debug.relaunch"), object: nil, queue: .main) { _ in
+            AppReset.relaunch()
+        }
+        dnc.addObserver(forName: .init("yap.debug.dock"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let raw = note.object as? String else { return }
+            self.state.settings.showDockIcon = raw == "show"
+            self.reloadDockIcon()
+        }
+        dnc.addObserver(forName: .init("yap.debug.qepreview"), object: nil, queue: .main) { _ in
+            QuickEditWindow.shared.preview()
+        }
+        dnc.addObserver(forName: .init("yap.debug.panelpreview"), object: nil, queue: .main) { [weak self] _ in
+            self?.previewRecordingPanel()
         }
         dnc.addObserver(forName: .init("yap.debug.switcher"), object: nil, queue: .main) { [weak self] _ in
             self?.showModeSwitcher()
@@ -297,6 +428,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Harness knob: the low-ratio over-subtraction multiplier (object = "1.25").
             if let v = Float((note.object as? String) ?? "") { WhisperEngine.lowSNRDenoiseStrength = v; yapdiag("denoiseStrength=\(v)") }
         }
+        dnc.addObserver(forName: .init("yap.debug.marketing"), object: nil, queue: .main) { [weak self] note in
+            // Marketing rig: "on" stages the shared look in memory, "off" restores the user's values.
+            // The main window is never touched: shots use the window exactly as the user sized it.
+            guard let self else { return }
+            self.state.settings.stageMarketingLook((note.object as? String) == "on")
+            self.refreshPanelSize()
+            self.reloadDockIcon()
+            self.reloadStatusItem()
+        }
         dnc.addObserver(forName: .init("yap.debug.style"), object: nil, queue: .main) { [weak self] note in
             guard let self, let raw = note.object as? String,
                   let style = PanelStyle(rawValue: raw) else { return }
@@ -337,6 +477,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let adapted = InsertionContext.adapt("Insert.", before: s.before, after: s.after)
                 yapdiag("ctxprobe: available=\(s.available) before=\(s.before.suffix(30).debugDescription) after=\(s.after.prefix(30).debugDescription) -> \(adapted.debugDescription)")
             }
+        }
+        dnc.addObserver(forName: .init("yap.debug.panellook"), object: nil, queue: .main) { [weak self] note in
+            // Marketing shots: one panel look per layout. Object = "tintStyle|tintHex|strength|waveStyle|waveHex".
+            // Only meaningful while yap.debug.marketing is on (writes suspended, restored by "off").
+            guard let self, let raw = note.object as? String else { return }
+            let p = raw.components(separatedBy: "|")
+            guard p.count == 5 else { return }
+            let s = self.state.settings
+            if let tint = PanelTintStyle(rawValue: p[0]) { s.panelTintStyle = tint }
+            s.panelTintHex = p[1].isEmpty ? nil : p[1]
+            if let strength = Double(p[2]) { s.panelTintStrength = strength }
+            if let wave = WaveColorStyle(rawValue: p[3]) { s.waveColorStyle = wave }
+            s.waveColorHex = p[4].isEmpty ? nil : p[4]
         }
         dnc.addObserver(forName: .init("yap.debug.waveboost"), object: nil, queue: .main) { note in
             // Marketing shots: crank the drawn wave amplitude (object = multiplier string).
@@ -853,6 +1006,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else {
                 if self.state.controller.isScratchpadSession {
+                    // A second press within a second of the first cannot be "stop and apply":
+                    // nobody has finished a request yet. It is a slow tap, a hold-to-talk
+                    // habit, or a nervous re-press (caught live: a 0.7 s session whose only
+                    // word was the first syllable of "Capitalize"). Keep listening.
+                    if let started = self.quickEditSessionStartedAt, Date().timeIntervalSince(started) < 1.0 {
+                        yapdiag("quickEdit: press \(Int(Date().timeIntervalSince(started) * 1000)) ms after start - too soon to stop; still listening")
+                        return
+                    }
                     self.state.controller.stop()          // press #2 while listening: end + apply
                     QuickEditWindow.shared.showHeard()
                 } else if self.quickEditApplying || QuickEditWindow.shared.isShowing {
@@ -892,6 +1053,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             quickEditKey.onUp = { _ in up() }
             quickEditKey.start()
         }
+    }
+
+    /// When the current Quick Edit session began listening (toggle mode's too-soon guard).
+    private var quickEditSessionStartedAt: Date?
+
+    /// An utterance made only of filler is not an instruction: running the model on "Okay."
+    /// rewrote a sentence nobody asked to change.
+    static func isFillerOnly(_ utterance: String) -> Bool {
+        let words = utterance.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init)
+        guard !words.isEmpty, words.count <= 3 else { return false }
+        let filler: Set<String> = ["okay", "ok", "yes", "no", "yep", "yeah", "um", "uh", "hmm", "hm", "mm",
+                                   "alright", "right", "thanks", "thank", "you", "hello", "hi", "hey", "so", "oh"]
+        return words.allSatisfy { filler.contains($0) }
     }
 
     /// True when a Quick Edit instruction is a dictionary request rather than a text edit.
@@ -935,36 +1109,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// add each as a substitution toward the correct spelling. Strictly filtered and capped, so
     /// a hallucinated answer can never pollute the dictionary; failure is silent (the exact-match
     /// entry is already in place).
+    /// The ways a recognizer splits a compound word into the words it actually hears:
+    /// "YouTube" -> "you tube", "YapToText" -> "yap to text", "AirPods" -> "air pods". Split at
+    /// every lowercase-to-uppercase and letter-to-digit seam; nothing here guesses letters.
+    static func splitVariants(of word: String) -> [String] {
+        var parts: [String] = []
+        var current = ""
+        var previous: Character?
+        for ch in word {
+            if let p = previous, !current.isEmpty,
+               (p.isLowercase && ch.isUppercase) || (p.isLetter && ch.isNumber) || (p.isNumber && ch.isLetter) {
+                parts.append(current); current = ""
+            }
+            current.append(ch); previous = ch
+        }
+        if !current.isEmpty { parts.append(current) }
+        guard parts.count >= 2, parts.allSatisfy({ !$0.isEmpty }) else { return [] }
+        let spaced = parts.map { $0.lowercased() }.joined(separator: " ")
+        return spaced == word.lowercased() ? [] : [spaced]
+    }
+
+    /// The model's list, filtered hard. A small on-device model offers junk alongside the
+    /// real sound-alikes ("alpha's", "alp", "alp-ha" for Alpha), and a junk entry silently
+    /// rewrites ordinary text forever. Kept only when it is: not the word itself or an
+    /// inflection of it (possessives and plurals must survive), not a truncation or a
+    /// hyphenated split of it, not an everyday English word, close to the word in consonant
+    /// skeleton, and starting with the same letter.
+    static func soundAlikeCandidates(in reply: String, for word: String, existing: Set<String>) -> [String] {
+        let target = word.lowercased()
+        let targetSkeleton = DictationController.nameSkeleton(target)
+        func inflected(_ c: String) -> Bool {
+            var c = c.replacingOccurrences(of: "'", with: "")
+            for suffix in ["ing", "ed", "es", "s"] where c.count > suffix.count && c.hasSuffix(suffix) {
+                c = String(c.dropLast(suffix.count)); break
+            }
+            return c == target || c == target.replacingOccurrences(of: "'", with: "")
+        }
+        func skeletonClose(_ c: String) -> Bool {
+            let a = DictationController.nameSkeleton(c), b = targetSkeleton
+            if a == b { return true }
+            guard abs(a.count - b.count) <= 1 else { return false }
+            // One substitution, insertion, or deletion apart.
+            let (short, long) = a.count <= b.count ? (Array(a), Array(b)) : (Array(b), Array(a))
+            if short.count == long.count { return zip(short, long).filter { $0 != $1 }.count <= 1 }
+            var i = 0, j = 0, skipped = false
+            while i < short.count && j < long.count {
+                if short[i] == long[j] { i += 1; j += 1 } else if skipped { return false } else { skipped = true; j += 1 }
+            }
+            return true
+        }
+        return reply.lowercased()
+            .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: .punctuationCharacters) }
+            .filter { candidate in
+                let words = candidate.split(separator: " ")
+                let squeezed = candidate.replacingOccurrences(of: "-", with: "").replacingOccurrences(of: " ", with: "")
+                return candidate.count >= 3 && candidate.count <= 24
+                    && candidate != target
+                    && words.count <= 3
+                    && candidate.allSatisfy { $0.isLetter || $0 == "'" || $0 == "-" || $0 == " " }
+                    && !existing.contains(candidate)
+                    && candidate.first == target.first
+                    && !inflected(candidate)
+                    && !(squeezed == target)                                   // "alp-ha", "you tu be"
+                    && !(target.hasPrefix(candidate) && candidate.count < target.count)   // "alp"
+                    && !EnglishWords.isCommon(candidate, targetIsName: word.first?.isUppercase == true)
+                    && skeletonClose(candidate)
+            }
+            .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            .prefix(4).map { $0 }
+    }
+
     func expandSoundAlikes(for word: String) {
         // Single words only: phrases don't have phonetic twins in a useful way.
         guard !word.contains(" "), word.count >= 3 else { return }
+        var existing = Set(state.vocabulary.dictionaries.flatMap { $0.replacements.map { $0.from.lowercased() } })
+        // 1. Deterministic: the compound split into separately heard words.
+        var added: [String] = []
+        for split in Self.splitVariants(of: word) where !existing.contains(split) {
+            state.vocabulary.addReplacement(Replacement(from: split, to: word))
+            existing.insert(split); added.append(split)
+        }
+        // 2. Sound-alikes from the on-device model, strictly filtered and capped: a
+        //    hallucinated answer can never pollute the dictionary; failure is silent.
         Task { [weak self] in
             guard let self else { return }
-            let prompt = "The word or name is: \(word)\nList up to 5 DIFFERENT spellings that a speech recognizer would likely produce when someone says this word aloud (common homophones and phonetic spellings). Rules: output ONLY the spellings, comma-separated, all lowercase, single words, no numbering, no explanations, and do not include \(word) itself."
+            let prompt = "The word or name is: \(word)\nList up to 5 DIFFERENT spellings that a speech recognizer would likely produce when someone says this word aloud: common homophones, phonetic spellings, and the word broken into the separate everyday words a listener would hear (for YouTube: you tube). Rules: output ONLY the spellings, comma-separated, all lowercase, at most three words each, no numbering, no explanations, and do not include \(word) itself."
             guard let reply = try? await self.state.controller.applyAIAction(
                 instructions: "You list likely speech-recognition spellings of a word. Output only a comma-separated list.",
                 to: prompt) else { return }
-            let existing = Set(self.state.vocabulary.dictionaries.flatMap { $0.replacements.map { $0.from.lowercased() } })
-            let target = word.lowercased()
-            let variants = reply.lowercased()
-                .components(separatedBy: CharacterSet(charactersIn: ",\n"))
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: .punctuationCharacters) }
-                .filter { candidate in
-                    candidate.count >= 3 && candidate.count <= 24
-                    && candidate != target
-                    && candidate.allSatisfy { $0.isLetter || $0 == "'" || $0 == "-" }
-                    && !existing.contains(candidate)
-                    // Sanity: a real sound-alike shares the first letter's sound more often
-                    // than not; requiring the same first letter blocks most hallucinations.
-                    && candidate.first == target.first
-                }
-                .prefix(4)
-            guard !variants.isEmpty else { return }
+            let variants = Self.soundAlikeCandidates(in: reply, for: word, existing: existing)
             for variant in variants {
                 self.state.vocabulary.addReplacement(Replacement(from: variant, to: word))
+                added.append(variant)
             }
-            yapdiag("quickEdit: sound-alikes for '\(word)': \(variants.joined(separator: ", "))")
-            self.state.controller.flashStatus("Also mapped \(variants.count) sound-alike\(variants.count == 1 ? "" : "s") to \u{201C}\(word)\u{201D}")
+            guard !added.isEmpty else { return }
+            yapdiag("quickEdit: sound-alikes for '\(word)': \(added.joined(separator: ", "))")
+            self.state.controller.flashStatus("Also mapped \(added.count) sound-alike\(added.count == 1 ? "" : "s") to \u{201C}\(word)\u{201D}")
         }
     }
 
@@ -1016,10 +1257,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard self.state.settings.quickEditTrigger != .pushToTalk || self.quickEditKeyHeld else {
                 QuickEditWindow.shared.dismiss(); return
             }
+            self.quickEditSessionStartedAt = Date()
             self.state.controller.startScratchpad { [weak self] instruction in
                 guard let self else { return }
                 let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else {
+                // Nothing, or a filler ("Okay.", "um"): no request was made, so no model run
+                // and nothing touches the document.
+                guard !trimmed.isEmpty, !Self.isFillerOnly(trimmed) else {
                     QuickEditWindow.shared.showResult("Didn't catch an instruction", success: false)
                     return
                 }
@@ -1033,6 +1277,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     QuickEditWindow.shared.showResult("Added \u{201C}\(text.prefix(30))\u{201D} to your dictionary")
                     return
                 }
+                // Plain case changes never need the model: instant, exact, and immune to a
+                // small model deciding the text is "already capitalized".
+                if let cased = CaseEdit.apply(instruction: trimmed, to: text) {
+                    yapdiag("quickEdit: deterministic case edit -> \(cased.prefix(60).debugDescription)")
+                    QuickEditWindow.shared.showWorking(trimmed)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if cased == text {
+                            QuickEditWindow.shared.showResult("Already like that", success: false)
+                        } else {
+                            await self.paste(cased, into: target)
+                            QuickEditWindow.shared.showResult("Done")
+                        }
+                    }
+                    return
+                }
                 QuickEditWindow.shared.showWorking(trimmed)
                 self.quickEditApplying = true
                 self.quickEditCancelled = false
@@ -1044,12 +1304,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                  isCancelled: { [weak self] in
                                      guard let self else { return true }
                                      return self.quickEditCancelled || self.quickEditGeneration != gen
-                                 }) { [weak self] ok in
+                                 }) { [weak self] outcome in
                     guard let self, self.quickEditGeneration == gen else { return }   // stale session
                     self.quickEditApplying = false
                     self.disarmCancelKey()
                     guard !self.quickEditCancelled else { return }   // window already says "Cancelled"
-                    QuickEditWindow.shared.showResult(ok ? "Done" : "Couldn't apply that edit", success: ok)
+                    switch outcome {
+                    case .applied: QuickEditWindow.shared.showResult("Done")
+                    case .unchanged: QuickEditWindow.shared.showResult("Nothing changed", success: false)
+                    case .notAnEdit: QuickEditWindow.shared.showResult("That didn't sound like an edit", success: false)
+                    case .failed: QuickEditWindow.shared.showResult("Couldn't apply that edit", success: false)
+                    }
                 }
             }
         }
@@ -1233,9 +1498,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? await Task.sleep(nanoseconds: 40_000_000)
     }
 
+    enum AIActionOutcome { case applied, unchanged, notAnEdit, failed }
+
+    /// The selection's neighbours own its punctuation: a model that adds a full stop to a
+    /// selection that had none produces "works.." once the original period follows. A "?" or
+    /// "!" is kept, since it carries meaning the surrounding text cannot supply.
+    /// The selection's own edge spacing survives the edit: a selection that ended in a space
+    /// ("...next sentence. ") must not come back without it, or the next dictation lands
+    /// glued to the last word ("matey.Is").
+    static func preserveEdgeWhitespace(_ result: String, selection: String) -> String {
+        let ws: (Character) -> Bool = { $0 == " " || $0 == "\t" || $0 == "\n" }
+        let lead = String(selection.prefix(while: ws))
+        let trail = String(selection.reversed().prefix(while: ws).reversed())
+        var out = result
+        if !lead.isEmpty, !out.hasPrefix(lead) { out = lead + out.drop(while: ws) }
+        if !trail.isEmpty, !out.hasSuffix(trail) {
+            out = String(out.reversed().drop(while: ws).reversed()) + trail
+        }
+        return out
+    }
+
+    static func trimAddedPeriod(_ result: String, selection: String) -> String {
+        let sel = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = sel.last, !".!?…:;,".contains(last), result.hasSuffix(".") else { return result }
+        return String(result.dropLast())
+    }
+
     private func runAIAction(_ action: AIAction, on text: String, target: NSRunningApplication?,
                              isCancelled: (() -> Bool)? = nil,
-                             onFinish: ((Bool) -> Void)? = nil) {
+                             onFinish: ((AIActionOutcome) -> Void)? = nil) {
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1248,17 +1539,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     yapdiag("runAIAction: cancelled before paste; discarding result")
                     return
                 }
-                guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedResult.isEmpty else {
                     self.state.controller.announceStatus("No changes made")
-                    onFinish?(false)
+                    onFinish?(.failed)
                     return
                 }
-                await self.paste(result, into: target)
-                onFinish?(true)
+                // Same text back: say so instead of pasting a copy over the selection and
+                // calling it done (the paste is invisible, the "Done" is a lie).
+                guard trimmedResult != text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                    yapdiag("runAIAction: model returned the text unchanged")
+                    self.state.controller.announceStatus("Nothing changed")
+                    onFinish?(.unchanged)
+                    return
+                }
+                await self.paste(Self.preserveEdgeWhitespace(Self.trimAddedPeriod(result, selection: text), selection: text), into: target)
+                onFinish?(.applied)
+            } catch DictationController.AIActionError.notAnEdit {
+                if isCancelled?() != true { self.state.controller.announceStatus("That didn't sound like an edit") }
+                onFinish?(.notAnEdit)
+            } catch DictationController.AIActionError.declined {
+                if isCancelled?() != true { self.state.controller.announceStatus("Couldn't apply that edit") }
+                onFinish?(.failed)
             } catch {
                 yapdiag("runAIAction FAILED: \(error)")
                 if isCancelled?() != true { self.state.controller.flashStatus("AI action failed") }
-                onFinish?(false)
+                onFinish?(.failed)
             }
         }
     }
@@ -1319,13 +1625,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Re-apply the panel size to a panel that is already on screen (Size changed mid-dictation).
     func refreshPanelSize() { panel?.applySizeIfVisible() }
+    /// The Dictation page's "Show pop-up": the real recording panel, idle, at its configured
+    /// spot for a few seconds so it can be looked at and dragged into place. A dictation that
+    /// starts meanwhile owns the panel from then on, so the timed hide steps aside.
+    private var panelPreviewTask: Task<Void, Never>?
+    private var stagingPanel: RecordingPanel?
+    private var stagingController: DictationController?
+    private var stagingFeed: Task<Void, Never>?
+    func previewRecordingPanel() {
+        guard let panel, !state.controller.isRecording, !state.controller.isBusy else { return }
+        panelPreviewTask?.cancel()
+        panel.show()
+        panelPreviewTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled, let self,
+                  !self.state.controller.isRecording, !self.state.controller.isBusy else { return }
+            self.state.controller.closeIsCancel = true   // leave the way a cancel does
+            self.panel?.hide()
+        }
+    }
 
     /// Show or hide the Dock icon. `.accessory` drops the Dock tile (and the app menu); reach the
     /// window again from the menu bar icon or the dictation shortcut. `.regular` restores it.
     func reloadDockIcon() {
+        // Dropping to .accessory deactivates the app and takes its windows off screen with
+        // it, so the window the user was just looking at vanished along with the tile.
+        // Re-activate and put the main window back once the policy change has settled.
+        let visibleWindows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }
         NSApp.setActivationPolicy(state.settings.showDockIcon ? .regular : .accessory)
-        if state.settings.showDockIcon {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.activate(ignoringOtherApps: true)
+            for window in visibleWindows { window.makeKeyAndOrderFront(nil) }
         }
     }
 
@@ -1339,21 +1669,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var menuPopover: NSPopover?
 
+    /// The status item remembers its slot in the menu bar under this name; macOS decides the
+    /// slot and the user moves it with Cmd-drag, as with any app. The one intervention: a new
+    /// item lands at the far LEFT of the status area, which on a notched, crowded menu bar is
+    /// where macOS hides items that no longer fit. If the item comes up with no window at all,
+    /// it is re-created once in the leftmost slot that is actually visible, right of the notch.
+    static let statusAutosaveName = "YapToText.menuBarIcon"
+    static var statusPositionKey: String { "NSStatusItem Preferred Position \(statusAutosaveName)" }
+    private var statusRescueTried = false
+
     func reloadStatusItem() {
         if state.settings.showMenuBarIcon {
             guard statusItem == nil else { return }
             // variableLength: the mark is slightly wider than tall (content-fitted art), and a
             // square item would clip its sides.
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = Self.statusAutosaveName
             item.button?.target = self
             item.button?.action = #selector(toggleMenuPopover(_:))
             statusItem = item
             refreshStatusIcon()
             startMenuBlink()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in self?.rescueHiddenStatusItemIfNeeded() }
         } else if let item = statusItem {
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
         }
+    }
+
+    /// No window one second after creation means the menu bar had no room where macOS put
+    /// the item. Once, seed the leftmost visible slot (just right of the notch) and rebuild it.
+    private func rescueHiddenStatusItemIfNeeded() {
+        logStatusItemPlacement()
+        guard let item = statusItem, item.button?.window == nil, !statusRescueTried,
+              let screen = NSScreen.main else { return }
+        statusRescueTried = true
+        let fromRight: CGFloat
+        if let notchRight = screen.auxiliaryTopRightArea?.minX {
+            fromRight = screen.frame.width - notchRight - 8
+        } else {
+            fromRight = screen.frame.width * 0.45
+        }
+        yapdiag("status: hidden with no window - rescuing to \(Int(fromRight)) pt from the right edge")
+        UserDefaults.standard.set(Double(fromRight), forKey: Self.statusPositionKey)
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
+        reloadStatusItem()
+    }
+
+    /// Where the status item ended up, for the log: a menu bar with no room hides it entirely.
+    private func logStatusItemPlacement() {
+        guard let item = statusItem else { yapdiag("status: no item"); return }
+        let frame = item.button?.window?.frame
+        let notch = NSScreen.main?.auxiliaryTopLeftArea.map { "\(Int($0.maxX))-\(Int((NSScreen.main?.auxiliaryTopRightArea?.minX) ?? 0))" } ?? "none"
+        yapdiag("status: visible=\(item.isVisible) windowFrame=\(frame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "nil") notchGap=\(notch) screenW=\(Int(NSScreen.main?.frame.width ?? 0))")
     }
 
     /// Smoothed per-bar levels for the waveform icon: raw levelHistory arrives in ~43ms steps,

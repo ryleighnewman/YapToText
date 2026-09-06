@@ -37,12 +37,14 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(replacing: .help) {
-            Button("YapToText Help") { NSWorkspace.shared.open(SupportLinks.repo) }
-                .keyboardShortcut("?", modifiers: .command)
             Button("YapToText Help") { HelpWindowController.shared.show(state: state) }
+                .keyboardShortcut("?", modifiers: .command)
+            Button("Online Help…") { NSWorkspace.shared.open(SupportLinks.siteHelp) }
+            Button("YapToText Website") { NSWorkspace.shared.open(SupportLinks.site) }
             Divider()
             Button("Support YapToText…") { SupportWindowController.shared.show(state: state) }
             Button("Report an Issue…") { NSWorkspace.shared.open(SupportLinks.issues) }
+            Button("View Source on GitHub") { NSWorkspace.shared.open(SupportLinks.repo) }
         }
     }
 }

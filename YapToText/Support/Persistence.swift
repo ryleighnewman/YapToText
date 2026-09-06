@@ -26,7 +26,12 @@ enum Persistence {
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
+    /// Set by "Erase All Data" once the files are gone, so nothing re-creates them on the
+    /// way out (stores flush and history clears during termination).
+    nonisolated(unsafe) static var writesSuspended = false
+
     static func save<T: Encodable>(_ value: T, to name: String) {
+        guard !writesSuspended else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(value) else { return }

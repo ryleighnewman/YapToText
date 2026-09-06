@@ -20,6 +20,18 @@ struct EnergySettingsView: View {
                     .innerWell(radius: Metrics.innerRadius)
                 }
 
+                CardSection("Memory") {
+                    Picker("Keep models in memory", selection: $settings.modelCooldownSeconds) {
+                        Text("Only while dictating").tag(0)
+                        Text("10 seconds after use").tag(10)
+                        Text("30 seconds after use").tag(30)
+                        Text("2 minutes after use").tag(120)
+                        Text("15 minutes after use").tag(900)
+                        Text("Until quit").tag(-1)
+                    }
+                    Caption("Loaded speech and AI models answer instantly but hold memory. Unloading sooner saves energy and memory; the next dictation after an unload takes a few extra seconds while the model reloads. \u{201C}Only while dictating\u{201D} is the deepest saver.")
+                }
+
                 CardSection("Adaptive models",
                             subtitle: "Run different models depending on whether this Mac is plugged in") {
                     Toggle("Switch models with the power source", isOn: $settings.energyAdaptive)

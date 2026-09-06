@@ -53,7 +53,7 @@ struct HomeView: View {
                 .help("What's new in this version")
                 .popover(isPresented: $showChangelog, arrowEdge: .bottom) { changelogPopover }
             }
-            Text("A powerful speech-to-text accessibility tool, running entirely on your Mac.")
+            Text("Local Powerful Dictation")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -101,7 +101,7 @@ struct HomeView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("One key is all it takes").font(.callout.weight(.semibold))
-                Text("This app is loaded with features, but you don't need any of them to start. Just tap \(dictationKeyName) and talk. Feeling curious? Every panel on the left is yours to play with.")
+                Text("This app is loaded with customizability and deeper features, but all you have to do is tap \(dictationKeyName) and talk. Everything on the left is optional.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -154,13 +154,9 @@ struct HomeView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Fix a misheard word once").font(.caption.weight(.semibold))
-                Text("If a word keeps coming out wrong, set a fix in Dictionaries. For example, the AI often gets my name wrong, so I have it change \u{201C}Riley\u{201D} to \u{201C}Ryleigh\u{201D}.")
+                Text("Add it in Dictionaries, or select the right spelling anywhere, press your Quick Edit key, and say \u{201C}add this to my dictionary\u{201D}.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Or do it automatically: select the correctly-spelled word anywhere, hold Right Option, and say \u{201C}add this to my dictionary\u{201D} - AI builds the entry and even maps the likely mishearings for you.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
             }
             Spacer(minLength: 0)
         }
@@ -206,13 +202,9 @@ struct HomeView: View {
     // MARK: Quick controls (the everyday switches, right on Home)
 
     /// The little "this is where you change the keys" affordance: every binding row gets one.
-    private func editBindingLink(_ help: String = "Change this binding in Settings") -> some View {
+    private func editBindingLink(_ help: String = "Change this binding on the Dictation page") -> some View {
         Button {
-            NotificationCenter.default.post(name: .yapShowSettings, object: nil)
-            // A beat later (Settings is on screen), light up the Shortcuts card.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                NotificationCenter.default.post(name: .yapHighlightShortcuts, object: nil)
-            }
+            NotificationCenter.default.post(name: .yapShowDestination, object: "dictation")
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "keyboard").font(.caption2)
@@ -252,8 +244,7 @@ struct HomeView: View {
             SubOptions {
                 Toggle("Intelligent insert", isOn: $settings.adaptToSurroundings)
                     .toggleStyle(.switch).controlSize(.small)
-                Caption("Dictating into the middle of a sentence adapts automatically: the first word lowercases when it should, spacing joins cleanly, and a trailing period is dropped when the sentence continues.")
-                if settings.adaptToSurroundings { BeepNotice() }
+                Caption("Mid-sentence dictation matches the spacing and capitalization around your cursor.")
             }
             HStack(spacing: 8) {
                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
@@ -273,53 +264,54 @@ struct HomeView: View {
                     .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
             }
             // A breath of padding separates the key bindings (above) from the system looks (below).
-            HStack(spacing: 8) {
-                Image(systemName: "menubar.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
-                Picker("Menu bar icon", selection: $settings.menuBarIconStyle) {
-                    ForEach(MenuBarIconStyle.allCases) { Text($0.label).tag($0) }
-                }
-                .onChange(of: settings.menuBarIconStyle) { AppDelegate.shared?.refreshStatusIcon() }
-            }
-            .padding(.top, 10)
             // MASTER SWITCH for the whole mode/AI system. Off = extremely rapid transcription:
             // your words typed exactly as spoken, no AI stage at all.
             Toggle("Post-transcription analysis", isOn: $settings.aiCleanupEnabled)
                 .toggleStyle(.switch).controlSize(.small)
             SubOptions {
                 Caption(settings.aiCleanupEnabled
-                    ? "Modes, Auto formatting, voice quick edits, and AI cleanup run after each transcription. Turn this off for the fastest possible raw transcription with no AI."
-                    : "Off: dictation types exactly what you say, instantly, with no AI. Modes and formatting are disabled until you turn this back on.")
+                    ? "Modes, Auto, and AI cleanup run after each transcription."
+                    : "Off: your words land exactly as spoken, with no AI.")
             }
-            Toggle("Auto mode: adapt to what you're saying", isOn: $settings.autoContextMode)
+            Toggle("Auto mode", isOn: $settings.autoContextMode)
                 .toggleStyle(.switch).controlSize(.small)
                 .analysisGated(state)
             if settings.aiCleanupEnabled, settings.autoContextMode {
                 SubOptions {
-                    Caption("Each dictation is screened in an instant: emails get formatted as emails, casual chat stays as spoken, everything else is cleaned up.")
+                    Caption("Emails become emails, chat stays as spoken, the rest is cleaned up.")
                     if settings.userName.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Caption("Add your name so Auto mode signs emails as you:")
-                        NameCaptureField()
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Caption("Sign emails as:")
+                            NameCaptureField()
+                        }
                     }
                 }
             }
-            Toggle("Show the menu bar icon", isOn: $settings.showMenuBarIcon).toggleStyle(.switch).controlSize(.small)
-                .onChange(of: settings.showMenuBarIcon) { AppDelegate.shared?.reloadStatusItem() }
-            Toggle("Show the app in the Dock", isOn: $settings.showDockIcon).toggleStyle(.switch).controlSize(.small)
-                .onChange(of: settings.showDockIcon) { AppDelegate.shared?.reloadDockIcon() }
-            if !settings.showDockIcon {
-                SubOptions {
-                    Caption("The Dock icon is hidden. Reopen this window from the menu bar capybara or your dictation shortcut.")
-                }
-            }
             if !settings.hasDismissedDictionaryTip { dictionaryTip }
-            HStack {
-                Caption("Every setting, including per-mode overrides, lives in Settings.")
-                Spacer()
-                Button("All Settings") {
-                    NotificationCenter.default.post(name: .yapShowSettings, object: nil)
+            HStack(spacing: 8) {
+                Image(systemName: "menubar.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                Text("Menu bar icon")
+                Toggle("", isOn: $settings.showMenuBarIcon).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .onChange(of: settings.showMenuBarIcon) { AppDelegate.shared?.reloadStatusItem() }
+                if settings.showMenuBarIcon {
+                    Picker("", selection: $settings.menuBarIconStyle) {
+                        ForEach(MenuBarIconStyle.allCases) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden().fixedSize()
+                    .onChange(of: settings.menuBarIconStyle) { AppDelegate.shared?.refreshStatusIcon() }
                 }
-                .buttonStyle(.solidSecondary)
-                .controlSize(.small)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+            HStack(spacing: 8) {
+                Image(systemName: "dock.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
+                Text("Dock icon")
+                Toggle("", isOn: $settings.showDockIcon).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .onChange(of: settings.showDockIcon) { AppDelegate.shared?.reloadDockIcon() }
+                Spacer(minLength: 0)
+            }
+            if !settings.showDockIcon {
+                SubOptions { Caption("Reopen this window from the menu bar icon or your dictation key.") }
             }
         }
     }

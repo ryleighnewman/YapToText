@@ -451,6 +451,13 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // SPEAKER as well as the sound ("Male speaker: ...", "[Speaker 1]"). Nobody dictates
         // their own gender tag; a label at a line start is never the user's words.
         text = Self.stripSpeakerLabels(text)
+        text = Self.stripNameLabels(text)
+        // WRAPPING QUOTES: when an utterance sounds like reported speech the decoder can
+        // print a matching pair of quotation marks around the whole thing ("I saw your new
+        // video and I wanted to reach out."). Nobody dictates an entire message inside
+        // quotes without saying "open quote", so a pair that encloses the full transcript
+        // is an artifact and is removed. Quotes inside a longer sentence are kept.
+        text = Self.stripWrappingQuotes(text)
         // REPETITION LOOP: on a long clip that ends in silence the decoder can lock onto
         // one sentence and print it until the window runs out ("I don't know what we
         // could do to fix it" seventeen times, from an 85-second dictation). Nobody says
@@ -459,6 +466,17 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         if text.isEmpty { return "" }
         // A LOUD room with no clear speech activity is as hallucination-prone as
         // silence: the pleasantry filter applies there too, not just to quiet clips.
+        // A stock pleasantry from a SHORT, WEAK clip is the decoder filling silence, not
+        // speech: a 1.4 s press with a breath in it (peak 0.027, half a second above the
+        // floor) came back as "Thank you." and was pasted. Spoken on purpose, even quietly,
+        // a real "thank you" peaks several times higher and lasts longer; a longer clip is
+        // never touched by this rule.
+        let weakClip = peak < 0.05 || analysis.activeSeconds < 1.0
+        if weakClip, Double(originalCount) / WhisperEngine.sampleRate < 2.5, Self.isSilenceHallucination(text) {
+            yapdiag(String(format: "silence guard: stock phrase on a weak %.1fs clip (peak %.3f, active %.1fs) discarded: %@",
+                           Double(originalCount) / WhisperEngine.sampleRate, peak, analysis.activeSeconds, text))
+            return ""
+        }
         let lowConfidence = (peak < Self.confidentSpeechRMS || analysis.activeSeconds < 0.4)
             && !(quietButReal && analysis.activeSeconds >= 1.0)
         // GLOSSARY ECHO: the vocabulary prime is an initial_prompt, and on audio with no
@@ -607,6 +625,62 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         }
         while out.contains("  ") { out = out.replacingOccurrences(of: "  ", with: " ") }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Remove a caption-style NAME label the decoder invents at the very start of a transcript
+    /// ("Mike Hall: We should...", "JOHN SMITH: ..."): two or three capitalised or all-caps
+    /// words, a colon, then at least three more words. Common dictated headings ("Meeting
+    /// Notes:", "Action Item:", "Dear Sarah:") are kept, and nothing past the first line is
+    /// touched, so a name someone actually dictates mid-text survives.
+    static func stripNameLabels(_ text: String) -> String {
+        let pattern = #"^[ \t]*(?:>>|[\-\x{2013}\x{2014}])?[ \t]*((?:[A-Z][a-z]*(?:['\x{2019}\-][A-Za-z]+)?|[A-Z]{2,})(?:[ \t]+(?:[A-Z][a-z]*(?:['\x{2019}\-][A-Za-z]+)?|[A-Z]{2,})){1,2})[ \t]*:[ \t]+(?=(?:\S+[ \t]+){2}\S)"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)),
+              let labelRange = Range(m.range(at: 1), in: text) else { return text }
+        let words = text[labelRange].lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        if words.contains(where: { Self.headingWords.contains($0) }) { return text }
+        guard let whole = Range(m.range, in: text) else { return text }
+        yapdiag("whisper: dropped name label \(String(text[labelRange]).debugDescription)")
+        return String(text[whole.upperBound...])
+    }
+
+    /// Words that make a "Xxx Yyy:" opener a dictated heading rather than an invented name.
+    private static let headingWords: Set<String> = [
+        "note", "notes", "subject", "reminder", "reminders", "question", "questions", "answer", "warning",
+        "meeting", "title", "summary", "update", "todo", "step", "part", "chapter", "section", "example",
+        "tip", "tips", "idea", "ideas", "task", "tasks", "list", "agenda", "action", "item", "items",
+        "dear", "hi", "hello", "hey", "re", "ps", "fyi", "important", "urgent", "draft", "message",
+        "email", "memo", "plan", "goal", "goals", "issue", "bug", "fix", "error", "result", "results",
+        "conclusion", "intro", "introduction", "background", "context", "status", "day", "week", "month",
+        "year", "morning", "afternoon", "evening", "today", "tomorrow", "yesterday", "monday", "tuesday",
+        "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april",
+        "may", "june", "july", "august", "september", "october", "november", "december", "new", "first",
+        "second", "third", "next", "last", "final", "quick", "daily", "weekly", "project", "product",
+        "release", "version", "feature", "features", "pro", "con", "pros", "cons", "step", "rule", "rules",
+        "key", "point", "points", "topic", "recipe", "ingredients", "directions", "instructions",
+        "dictionary", "definition", "translation", "quote", "question", "speaker", "team", "chapter",
+    ]
+
+    /// Remove one pair of quotation marks that encloses the ENTIRE transcript. Straight,
+    /// curly and guillemet pairs are recognised. The pair is only removed when no other mark
+    /// of the same family appears in between, so a quoted phrase inside a longer sentence
+    /// ("He said \"no\" and left.") and a transcript made of several quoted spans
+    /// ("\"Hello\" she said \"goodbye\"") are returned exactly as given.
+    static func stripWrappingQuotes(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 3, let first = trimmed.first, let last = trimmed.last else { return text }
+        // Opener -> accepted closers, and every mark that belongs to the same family.
+        let families: [Character: (closers: Set<Character>, family: Set<Character>)] = [
+            "\"": (["\"", "\u{201D}"], ["\"", "\u{201C}", "\u{201D}"]),
+            "\u{201C}": (["\u{201D}", "\""], ["\"", "\u{201C}", "\u{201D}"]),
+            "\u{2018}": (["\u{2019}", "'"], ["'", "\u{2018}", "\u{2019}"]),
+            "'": (["'", "\u{2019}"], ["'", "\u{2018}", "\u{2019}"]),
+            "\u{00AB}": (["\u{00BB}"], ["\u{00AB}", "\u{00BB}"]),
+        ]
+        guard let marks = families[first], marks.closers.contains(last) else { return text }
+        let inner = trimmed.dropFirst().dropLast()
+        if inner.contains(where: { marks.family.contains($0) }) { return text }
+        return inner.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// True when a short output is made ENTIRELY of words from the priming glossary: the

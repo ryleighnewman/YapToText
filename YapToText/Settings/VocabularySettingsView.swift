@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 
 struct VocabularySettingsView: View {
+    /// Which target-word folders are open, per dictionary.
+    @State private var expandedGroups: Set<String> = []
     @Environment(AppState.self) private var state
     @State private var suggestions: [SmartDictionary.Suggestion] = []
     /// Per-dictionary search: which cards have the field open, and each card's query.
@@ -130,45 +132,13 @@ struct VocabularySettingsView: View {
             } else if visible.isEmpty {
                 Text("No substitutions match \u{201C}\(query)\u{201D}.").font(.caption).foregroundStyle(.secondary)
             } else {
-                ForEach(visible) { r in
-                    HStack(spacing: 8) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.caption2).foregroundStyle(.tertiary)
-                            .help("Drag to reorder - substitutions run top to bottom")
-                            .draggable(r.id.uuidString)
-                        TextField("Heard", text: replacementBinding(r, in: dict.id, \.from))
-                            .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "arrow.right").foregroundStyle(.secondary).font(.caption)
-                        TextField("Replace with", text: replacementBinding(r, in: dict.id, \.to))
-                            .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
-                        if r.wholeWord { tag("word") }
-                        if r.caseSensitive { tag("Aa") }
-                        Button {
-                            // AI sound-alikes: for a name like "Ryleigh", map the common
-                            // mishearings ("riley", "rylee"...) to this spelling in one click.
-                            AppDelegate.shared?.expandSoundAlikes(for: r.to)
-                        } label: {
-                            Image(systemName: "sparkles").foregroundStyle(Color.accentColor.opacity(0.8))
-                        }
-                        .buttonStyle(.plain)
-                        .help("AI: also map likely mishearings of \u{201C}\(r.to)\u{201D} to this spelling")
-                        Button { state.vocabulary.duplicateReplacement(r, in: dict.id) } label: {
-                            Image(systemName: "plus.square.on.square").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Duplicate this substitution")
-                        Button { state.vocabulary.deleteReplacement(r, in: dict.id) } label: {
-                            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Delete this substitution")
-                    }
-                    .font(.callout)
-                    .contentShape(Rectangle())
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let dragged = items.first, let draggedID = UUID(uuidString: dragged) else { return false }
-                        state.vocabulary.moveReplacement(id: draggedID, before: r.id, in: dict.id)
-                        return true
+                // Entries that correct to the same word fold into one group ("YapToText, 11
+                // spellings") so a well-covered name takes one row, not a page. Singletons
+                // keep the full editable row.
+                ForEach(rows(for: visible), id: \.id) { row in
+                    switch row {
+                    case .single(let r): singleRow(r, in: dict)
+                    case .group(let target, let items): groupRows(target: target, items: items, in: dict)
                     }
                 }
             }
@@ -176,6 +146,139 @@ struct VocabularySettingsView: View {
         }
         .padding(Metrics.cardPad)
         .innerWell(radius: Metrics.sectionRadius)
+    }
+
+
+    /// One list row: either a lone substitution or a folder of spellings for one target.
+    private enum ListRow {
+        case single(Replacement)
+        case group(target: String, items: [Replacement])
+        var id: String {
+            switch self {
+            case .single(let r): return r.id.uuidString
+            case .group(let target, _): return "group:" + target.lowercased()
+            }
+        }
+    }
+
+    private func rows(for visible: [Replacement]) -> [ListRow] {
+        var byTarget: [String: [Replacement]] = [:]
+        for r in visible {
+            let key = r.to.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !key.isEmpty else { continue }
+            byTarget[key, default: []].append(r)
+        }
+        var rows: [ListRow] = []
+        var emitted = Set<String>()
+        for r in visible {
+            let key = r.to.trimmingCharacters(in: .whitespaces).lowercased()
+            if let items = byTarget[key], items.count >= 2 {
+                if emitted.insert(key).inserted { rows.append(.group(target: items[0].to, items: items)) }
+            } else {
+                rows.append(.single(r))
+            }
+        }
+        return rows
+    }
+
+    private func singleRow(_ r: Replacement, in dict: VocabDictionary) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .help("Drag to reorder - substitutions run top to bottom")
+                .draggable(r.id.uuidString)
+            TextField("Heard", text: replacementBinding(r, in: dict.id, \.from))
+                .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "arrow.right").foregroundStyle(.secondary).font(.caption)
+            TextField("Replace with", text: replacementBinding(r, in: dict.id, \.to))
+                .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
+            if r.wholeWord { tag("word") }
+            if r.caseSensitive { tag("Aa") }
+            // Sound-alikes: for a name like "Ryleigh", map the common mishearings
+            // ("rylee", "reilly"...) to this spelling in one click.
+            Button("Generate variations") { AppDelegate.shared?.expandSoundAlikes(for: r.to) }
+                .buttonStyle(.solidSecondary).controlSize(.small)
+                .help("Ask the on-device model for likely mishearings of \u{201C}\(r.to)\u{201D} and map them to this spelling")
+            Button { state.vocabulary.duplicateReplacement(r, in: dict.id) } label: {
+                Image(systemName: "plus.square.on.square").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Duplicate this substitution")
+            Button { state.vocabulary.deleteReplacement(r, in: dict.id) } label: {
+                Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+            .help("Delete this substitution")
+        }
+        .font(.callout)
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first, let draggedID = UUID(uuidString: dragged) else { return false }
+            state.vocabulary.moveReplacement(id: draggedID, before: r.id, in: dict.id)
+            return true
+        }
+    }
+
+    /// A folder for one target word: the header carries the word and how many spellings
+    /// lead to it; open it to see, edit, add, or remove the spellings one by one.
+    private func groupRows(target: String, items: [Replacement], in dict: VocabDictionary) -> some View {
+        let key = dict.id.uuidString + "|" + target.lowercased()
+        let open = expandedGroups.contains(key)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button {
+                    if open { expandedGroups.remove(key) } else { expandedGroups.insert(key) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                        Image(systemName: open ? "folder.fill" : "folder").iconTint(Color.accentColor).font(.caption)
+                        Text(target).font(.callout.weight(.semibold))
+                        Text("\(items.count) spellings").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(open ? "Hide the spellings" : "Show the spellings")
+                Spacer()
+                Button("Generate variations") { AppDelegate.shared?.expandSoundAlikes(for: target) }
+                    .buttonStyle(.solidSecondary).controlSize(.small)
+                    .help("Ask the on-device model for likely mishearings of \u{201C}\(target)\u{201D} and map them here")
+                Button {
+                    for r in items { state.vocabulary.deleteReplacement(r, in: dict.id) }
+                } label: {
+                    Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Delete every spelling that leads to \u{201C}\(target)\u{201D}")
+            }
+            .font(.callout)
+            .animation(.easeInOut(duration: 0.18), value: open)
+            if open {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(items) { r in
+                        HStack(spacing: 8) {
+                            TextField("Heard", text: replacementBinding(r, in: dict.id, \.from))
+                                .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
+                            if r.wholeWord { tag("word") }
+                            if r.caseSensitive { tag("Aa") }
+                            Button { state.vocabulary.deleteReplacement(r, in: dict.id) } label: {
+                                Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Delete this spelling")
+                        }
+                        .font(.callout)
+                    }
+                    AddSpellingRow(target: target) { heard in
+                        state.vocabulary.addReplacement(Replacement(from: heard, to: target), to: dict.id)
+                    }
+                }
+                .padding(.leading, 22)
+                .padding(.top, 2)
+            }
+        }
     }
 
     private func tag(_ t: String) -> some View {
@@ -251,6 +354,33 @@ private struct AddReplacementRow: View {
     }
 }
 
+
+/// Inside an open folder: one field to add another heard spelling for the same target.
+private struct AddSpellingRow: View {
+    let target: String
+    let onAdd: (String) -> Void
+    @State private var heard = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("Add another spelling of \u{201C}\(target)\u{201D}", text: $heard)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .innerWell(radius: 7)
+                .onSubmit(add)
+            Button("Add", action: add)
+                .buttonStyle(.solidSecondary).controlSize(.small)
+                .disabled(heard.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .font(.callout)
+    }
+
+    private func add() {
+        let h = heard.trimmingCharacters(in: .whitespaces)
+        guard !h.isEmpty else { return }
+        onAdd(h); heard = ""
+    }
+}
 
 // MARK: - Suggestion chips
 
