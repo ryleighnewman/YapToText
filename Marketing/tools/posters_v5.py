@@ -4,6 +4,8 @@ Gradient-hinted canvas on every poster, big consistent screenshots, bottom fade
 when a window runs off the page, feature copy that names the new engine work.
 Run from Marketing/: python3 tools/posters_v5.py -> ../posters-v5"""
 import os, math
+import numpy as np
+from scipy import ndimage
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 SP = os.path.dirname(os.path.abspath(__file__))
@@ -25,13 +27,84 @@ def font(size, weight="Bold"):
     f._size, f._weight = size, weight
     return f
 
+WINDOW_SHOTS = ("page-", "panel-", "popover", "qe-", "pipeline-")
+
+
+def clean_edge(img):
+    """screencapture leaves a wide film of alpha 10-30 around the window. Composited, that
+    film sits outside the real edge and reads as a soft dirty rim, worst on the corners
+    where it is widest. Remap the alpha so the film goes to zero while the window's own
+    one-pixel antialiased edge is kept intact: same shape, clean boundary."""
+    a = np.asarray(img.split()[3]).astype(np.float32)
+    t = np.clip((a - 36.0) / (200.0 - 36.0), 0.0, 1.0)
+    t = t * t * (3.0 - 2.0 * t)                      # smoothstep, no hard step to alias on
+    out = img.copy()
+    out.putalpha(Image.fromarray((t * 255.0 + 0.5).astype(np.uint8)))
+    return out
+
+
+def edge_extend(img):
+    """Push the window's own colour outward into the transparent margin.
+
+    Scaling an RGBA image means dividing colour by coverage somewhere, and where coverage
+    is a few counts that divide blows the pixel out to white. Those blown pixels are then
+    handed full opacity by the mask, which is the bright sparkle that was crawling along
+    every curve. Filling the outside with the nearest real pixel first means the resize
+    never sees a transparent pixel and no division ever happens."""
+    a = np.asarray(img.split()[3])
+    rgb = np.asarray(img.convert("RGB"))
+    inside = a >= 128
+    if not inside.any():
+        return img.convert("RGB")
+    # Fill from the BODY, not from the rim. A macOS window's outermost 2px are its bright
+    # hairline border; flooding those outward gives the resize bright neighbours on both
+    # sides, which widens a 2px hairline into a 4px glow and is what still read as rough.
+    core = ndimage.binary_erosion(inside, np.ones((3, 3), bool), iterations=3)
+    if not core.any():
+        core = inside
+    iy, ix = ndimage.distance_transform_edt(~core, return_distances=False,
+                                            return_indices=True)
+    out = rgb.copy()
+    out[~inside] = rgb[iy, ix][~inside]
+    return Image.fromarray(out)
+
+
+def sdf_alpha(alpha, size):
+    """Rescale a window's own mask through a signed distance field.
+
+    The captured corner is a macOS continuous corner, not a circular arc, so no fitted
+    radius matches it. A distance field carries the exact shape and, unlike an image,
+    interpolates cleanly: resampling it and re-thresholding at the poster's resolution
+    gives a corner that is smooth at any scale instead of one limited by the 752 pixels
+    the capture had to spare."""
+    a = np.asarray(alpha).astype(np.float32) / 255.0
+    inside = a >= 0.5
+    if not inside.any() or inside.all():
+        return alpha.resize(size, Image.LANCZOS)
+    d_out = ndimage.distance_transform_edt(~inside)
+    d_in = ndimage.distance_transform_edt(inside)
+    sd = d_out - d_in                                  # +ve outside, -ve inside, in pixels
+    edge = np.abs(sd) <= 1.0
+    sd[edge] = 0.5 - a[edge]                           # sub-pixel edge from the coverage itself
+    k = size[0] / alpha.width
+    up = np.asarray(Image.fromarray(sd).resize(size, Image.BICUBIC)) * k
+    return Image.fromarray((np.clip(0.5 - up, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
+
+
 def load_shot(name):
     for d in DIRS:
         p = os.path.join(d, name)
         if os.path.exists(p):
             img = Image.open(p).convert("RGBA")
             bbox = img.getbbox()
-            return img.crop(bbox) if bbox else img
+            # crop on the ORIGINAL alpha so the canvas size, and therefore every target_w
+            # in this file, stays exactly what it was for 1.5
+            img = img.crop(bbox) if bbox else img
+            if not name.startswith(WINDOW_SHOTS):
+                return img
+            img = clean_edge(img)
+            img.info["window"] = True
+            return img
     raise FileNotFoundError(name)
 
 def with_shadow(img, radius_big=70, alpha_big=54, dy_big=34, radius_tight=22, alpha_tight=46, dy_tight=10):
@@ -44,7 +117,8 @@ def with_shadow(img, radius_big=70, alpha_big=54, dy_big=34, radius_tight=22, al
         shadow.paste(black, (pad, pad + dy), mask)
         shadow = shadow.filter(ImageFilter.GaussianBlur(rad))
         sheet = Image.alpha_composite(sheet, shadow)
-    sheet.paste(img, (pad, pad), img)
+    sheet.info["shot"] = img          # scaled and re-masked in place(), at poster resolution
+    sheet.info["pad"] = pad
     return sheet, pad
 
 def draw_center(dr, y, text, f, fill, max_w=W - 200):
@@ -66,10 +140,46 @@ def headline_block(canvas, title, sub, y=118, title_size=170, sub_size=66, sub2=
         draw_center(dr, yy + sub_size * 1.5, sub2, s, SUB)
     return yy + sub_size * (2.9 if sub2 else 1.6)
 
+def resize_rgba(img, size):
+    """Resize with PREMULTIPLIED alpha. Pillow scales the four channels independently, so
+    on a curved edge the RGB of the transparent side bleeds into the visible pixels and the
+    corner picks up a dark or bright fringe. Premultiplying keeps the colour weighted by
+    coverage, which is what makes a rounded corner read as smooth instead of chewed."""
+    src = img.convert("RGBA")
+    a = src.split()[3]
+    r, g, b = src.split()[:3]
+    prem = Image.merge("RGBA", [Image.fromarray((np.asarray(ch).astype(np.uint16) *
+                                                 np.asarray(a).astype(np.uint16) // 255
+                                                 ).astype(np.uint8)) for ch in (r, g, b)] + [a])
+    prem = prem.resize(size, Image.LANCZOS)
+    pa = np.asarray(prem.split()[3]).astype(np.float32)
+    out = [Image.fromarray(np.clip(np.asarray(ch).astype(np.float32) * 255.0 /
+                                   np.maximum(pa, 1e-6), 0, 255).astype(np.uint8))
+           for ch in prem.split()[:3]]
+    return Image.merge("RGBA", out + [prem.split()[3]])
+
+
 def place(canvas, sheet, pad, cx, top, target_w):
     scale = target_w / (sheet.width - pad * 2)
     nw, nh = int(sheet.width * scale), int(sheet.height * scale)
-    sh = sheet.resize((nw, nh), Image.LANCZOS)
+    sh = sheet if (nw, nh) == sheet.size else resize_rgba(sheet, (nw, nh))
+    shot = sheet.info.get("shot")
+    if shot is not None:
+        sw, shh = max(1, round(shot.width * scale)), max(1, round(shot.height * scale))
+        if shot.info.get("window"):
+            # opaque colour first, mask second: nothing is ever divided by a coverage value
+            rgb = edge_extend(shot).resize((sw, shh), Image.LANCZOS)
+            if scale > 1.15:
+                # A 752px panel drawn 1420 wide has no more detail to give, so the interior
+                # text and controls come back soft. Restoring acutance is what separates this
+                # from looking like an enlarged screenshot. The outside is already filled with
+                # body colour, so the boundary cannot halo.
+                rgb = rgb.filter(ImageFilter.UnsharpMask(radius=1.0, percent=80, threshold=2))
+            art = rgb.convert("RGBA")
+            art.putalpha(sdf_alpha(shot.split()[3], (sw, shh)))
+        else:
+            art = shot if (sw, shh) == shot.size else resize_rgba(shot, (sw, shh))
+        sh.alpha_composite(art, (int(round(pad * scale)), int(round(pad * scale))))
     canvas.alpha_composite(sh, (int(cx - nw / 2), int(top - pad * scale)))
 
 # The gradient canvas: near-white with soft tinted light, like the app's own glass.
@@ -97,12 +207,15 @@ def fade_bottom(c, bg, depth=150):
     return Image.composite(bg, c, mask)
 
 def save(canvas, name):
-    canvas.convert("RGB").save(os.path.join(OUT, name), quality=95)
+    # 4:4:4. Default JPEG chroma subsampling averages colour over 2x2 blocks, which is
+    # exactly what turns a clean coloured curve into a stair-stepped one.
+    canvas.convert("RGB").save(os.path.join(OUT, name), quality=96,
+                               subsampling=0, optimize=True)
     print("wrote", name)
 
 def fit(img, box):
     s = min(box / img.width, box / img.height)
-    return img.resize((max(1, int(img.width * s)), max(1, int(img.height * s))), Image.LANCZOS)
+    return resize_rgba(img, (max(1, int(img.width * s)), max(1, int(img.height * s))))
 
 def chip_row(c, labels, y, size=46):
     SS = 4

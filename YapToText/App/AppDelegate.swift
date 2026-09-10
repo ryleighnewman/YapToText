@@ -159,6 +159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.controller.onDidBecomeIdle = { [weak self] in self?.disarmCancelKey() }
         state.controller.onMenuStateChanged = { [weak self] in self?.refreshStatusIcon() }
         TextInserter.adaptToSurroundings = { [weak self] in self?.state.settings.adaptToSurroundings ?? true }
+        // Per-app control of the surrounding read (issue #5). nil falls through to the
+        // built-in destructive list in InsertionContext.readIsDestructive.
+        InsertionContext.adaptOverrideLookup = { [weak self] bundleID in
+            self?.state.settings.appAdaptOverrides[bundleID]
+        }
         // Key rebinding: while a recorder field is armed, the LIVE triggers stand down so
         // the pressed key reaches the field instead of starting a dictation/quick edit.
         NotificationCenter.default.addObserver(forName: KeyRecorderHub.recordingBegan,
@@ -293,6 +298,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let c = self.stagingController else { return }
             if self.stagingPanel == nil { self.stagingPanel = RecordingPanel(controller: c, settings: self.state.settings) }
             c.setPreviewLiveText(text)
+            // "style|text|energy|phase": phase drives the ring states (transcribing/transforming)
+            // so the website can capture the condensed loader, not just the live wave.
+            switch parts.count > 3 ? parts[3] : "recording" {
+            case "transcribing": c.setPreviewPhase(.transcribing)
+            case "transforming": c.setPreviewPhase(.transforming)
+            case "inserting":    c.setPreviewPhase(.inserting)
+            default:             c.setPreviewPhase(.recording)
+            }
             self.stagingPanel?.show()
             self.stagingFeed?.cancel()
             self.stagingFeed = Task { @MainActor in
@@ -304,6 +317,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     t += 0.033
                 }
             }
+        }
+        // Grow the staged panel's live text WITHOUT restarting the wave feed, so a website
+        // clip can type a sentence out while the waveform keeps its continuous motion.
+        dnc.addObserver(forName: .init("yap.debug.stagetext"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let text = note.object as? String else { return }
+            self.stagingController?.setPreviewLiveText(text)
         }
         // Quick Edit card held in one stage: "listening|make it formal", "working|...", "done|Done", "off".
         dnc.addObserver(forName: .init("yap.debug.qestage"), object: nil, queue: .main) { note in
@@ -490,6 +509,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let strength = Double(p[2]) { s.panelTintStrength = strength }
             if let wave = WaveColorStyle(rawValue: p[3]) { s.waveColorStyle = wave }
             s.waveColorHex = p[4].isEmpty ? nil : p[4]
+        }
+        // One deterministic animation frame: fill the synthetic spectrum at time t AND pin the
+        // wave's own clock to the same t, so the rendered frame depends only on t. Object is
+        // "t|energy", or "off" to hand the clock back to the timeline.
+        dnc.addObserver(forName: .init("yap.debug.stageframe"), object: nil, queue: .main) { [weak self] note in
+            guard let self, let raw = note.object as? String else { return }
+            if raw == "off" { WaveformView.frameClock = nil; return }
+            let parts = raw.components(separatedBy: "|")
+            guard let t = Double(parts[0]) else { return }
+            let energy = parts.count > 1 ? (Double(parts[1]) ?? 1) : 1
+            if let c = self.stagingController { PreviewSpeech.fill(c.visualData, t: t, energy: energy) }
+            WaveformView.frameClock = Date(timeIntervalSinceReferenceDate: 0).timeIntervalSinceReferenceDate + t
         }
         dnc.addObserver(forName: .init("yap.debug.waveboost"), object: nil, queue: .main) { note in
             // Marketing shots: crank the drawn wave amplitude (object = multiplier string).
@@ -733,7 +764,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return flags
     }
 
+    /// SHOOT MODE (debug builds only, set by the video rig via YAPTOTEXT_SHOOT=1): this is a
+    /// SECOND copy of the app running beside the user's own. It must never take a global
+    /// hotkey, or both copies would fight over Right Command and break their dictation, and
+    /// it must not add a second menu bar item or Dock tile to their screen.
+    static let isShootInstance: Bool = {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["YAPTOTEXT_SHOOT"] == "1"
+        #else
+        return false
+        #endif
+    }()
+
     func reloadHotkey() {
+        if AppDelegate.isShootInstance { return }
         let down: () -> Void
         let up: (() -> Void)?
         switch state.settings.hotkeyBehavior {
@@ -765,6 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reloadPauseHotkey() {
+        if AppDelegate.isShootInstance { return }
         pauseHotkey.unregister()
         guard let combo = state.settings.pauseHotkey else { return }
         pauseHotkey.onKeyDown = { [weak self] in self?.state.controller.togglePause() }
@@ -772,6 +817,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reloadCycleHotkey() {
+        if AppDelegate.isShootInstance { return }
         cycleHotkey.unregister()
         guard let combo = state.settings.cycleModeHotkey else { return }
         cycleHotkey.onKeyDown = { [weak self] in self?.state.controller.cycleMode() }
@@ -779,6 +825,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reloadSwitcherHotkey() {
+        if AppDelegate.isShootInstance { return }
         switcherHotkey.unregister()
         guard let combo = state.settings.switcherHotkey else { return }
         switcherHotkey.onKeyDown = { [weak self] in self?.showModeSwitcher() }
@@ -786,6 +833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reloadHistoryHotkey() {
+        if AppDelegate.isShootInstance { return }
         historyHotkey.unregister()
         if let combo = state.settings.historyPaletteHotkey {
             historyHotkey.onKeyDown = { [weak self] in self?.showHistoryPalette() }
@@ -796,6 +844,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let redoHotkey = HotkeyManager()
     func reloadRedoHotkey() {
+        if AppDelegate.isShootInstance { return }
         redoHotkey.unregister()
         guard let combo = state.settings.redoLastHotkey else { return }
         redoHotkey.onKeyDown = { [weak self] in self?.state.controller.redoLastInsertion() }
@@ -940,6 +989,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var modeHotkeys: [UUID: HotkeyManager] = [:]
 
     func reloadModeHotkeys() {
+        if AppDelegate.isShootInstance { return }
         for (_, manager) in modeHotkeys { manager.unregister() }
         modeHotkeys.removeAll()
         for mode in state.modeStore.allModes {
@@ -1648,6 +1698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Show or hide the Dock icon. `.accessory` drops the Dock tile (and the app menu); reach the
     /// window again from the menu bar icon or the dictation shortcut. `.regular` restores it.
     func reloadDockIcon() {
+        if AppDelegate.isShootInstance { NSApp.setActivationPolicy(.accessory); return }
         // Dropping to .accessory deactivates the app and takes its windows off screen with
         // it, so the window the user was just looking at vanished along with the tile.
         // Re-activate and put the main window back once the policy change has settled.
@@ -1679,6 +1730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusRescueTried = false
 
     func reloadStatusItem() {
+        if AppDelegate.isShootInstance { return }
         if state.settings.showMenuBarIcon {
             guard statusItem == nil else { return }
             // variableLength: the mark is slightly wider than tall (content-fitted art), and a

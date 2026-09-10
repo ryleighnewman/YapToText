@@ -92,6 +92,11 @@ struct WaveformView: View {
     /// MARKETING BOOST (debug hook only): multiplies the drawn amplitude so staged
     /// screenshots show the wave at full theatrical reactivity. Never ships enabled.
     nonisolated(unsafe) static var demoAmpBoost: Double = 1
+    /// FRAME CLOCK (debug hook only): when set, the wave is drawn at this timestamp instead of
+    /// the timeline's. The video rig steps it one frame at a time so a capture that takes
+    /// 150ms still yields perfectly even 30fps motion; without it, capture jitter becomes
+    /// visible stutter in the ribbon. Never ships enabled.
+    nonisolated(unsafe) static var frameClock: Double?
 
     /// Horizontal glow bleed: the canvas extends this far past its layout width on each
     /// side so blur is never clipped at the edges (a clipped blur reads as a hard
@@ -223,7 +228,8 @@ struct WaveformView: View {
                 ctx.translateBy(x: bleedX, y: bleedY)
                 let inner = CGSize(width: size.width - 2 * bleedX,
                                    height: size.height - 2 * bleedY)
-                draw(ctx, inner, now: (live || sucking) ? timeline.date.timeIntervalSinceReferenceDate : 0,
+                draw(ctx, inner,
+                     now: Self.frameClock ?? ((live || sucking) ? timeline.date.timeIntervalSinceReferenceDate : 0),
                      suck: suckF, suckSpin: suckSpin)
             }
         }

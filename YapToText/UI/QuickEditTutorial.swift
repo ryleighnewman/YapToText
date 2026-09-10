@@ -402,8 +402,7 @@ struct WhatsNewView: View {
                     ForEach(latest.points.prefix(10), id: \.self) { point in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text("\u{2022}").foregroundStyle(.secondary)
-                            Text(point).font(.caption)
-                                .fixedSize(horizontal: false, vertical: true)
+                            ChangelogPoint(text: point, font: .caption)
                         }
                     }
                     Text("The full list is under the version number on the Home page.")

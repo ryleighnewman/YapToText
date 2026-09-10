@@ -327,6 +327,39 @@ enum InsertionContext {
             || b == "com.brave.Browser" || b == "com.vivaldi.Vivaldi" || b == "com.operasoftware.Opera"
     }
 
+    /// Apps where reading the surroundings is DESTRUCTIVE rather than merely useless.
+    ///
+    /// The read works by sending Opt+Shift+Left/Right to select the words around the cursor.
+    /// In a normal text field those are selection keys. In a terminal they are handed to
+    /// whatever full-screen program is running, which treats them as its own shortcuts:
+    /// GitHub issue #5 had Microsoft Copilot CLI opening its sessions sidebar on every
+    /// dictation, after which the text landed nowhere. There is nothing to adapt to at a
+    /// shell prompt anyway, so skipping costs nothing and saves the timeout.
+    ///
+    /// Matched on the TERMINAL's bundle id, because a TUI has no bundle id of its own.
+    static let readIsDestructive: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "dev.warp.Warp-Stable",
+        "dev.warp.Warp-Preview",
+        "com.mitchellh.ghostty",
+        "net.kovidgoyal.kitty",
+        "io.alacritty",
+        "com.github.wez.wezterm",
+        "co.zeit.hyper",
+        "com.termius.mac",
+    ]
+
+    /// The user's per-app choice, falling back to the built-in list. Set from AppDelegate so
+    /// this file stays free of a settings dependency.
+    nonisolated(unsafe) static var adaptOverrideLookup: (String) -> Bool? = { _ in nil }
+
+    static func adaptIsAllowed(bundleID: String?) -> Bool {
+        guard let b = bundleID else { return true }
+        if let pinned = adaptOverrideLookup(b) { return pinned }
+        return !readIsDestructive.contains(b)
+    }
+
     private static func shouldSkipRead(bundleID: String?) -> Bool {
         migrateBansOnce()
         guard let b = bundleID else { return false }
@@ -414,6 +447,10 @@ enum InsertionContext {
     @MainActor
     static func readSurroundings(patient: Bool = false) async -> Surround {
         let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        if !adaptIsAllowed(bundleID: bundle) {
+            yapdiag("insertctx: adapt off for \(bundle ?? "?") (destructive or pinned off)")
+            return .none
+        }
         if shouldSkipRead(bundleID: bundle) {
             yapdiag("insertctx: skipping read for \(bundle ?? "?") (never answers)")
             return .none

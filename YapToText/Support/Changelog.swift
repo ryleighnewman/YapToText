@@ -24,6 +24,13 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
+        Entry(version: "1.5.1 (16)", points: [
+            "Dictating into a terminal works better: reading the text around your cursor uses invisible keystrokes that a terminal treats as its own shortcuts, so that read is now skipped there instead of triggering commands and losing the text",
+            "Intelligent Insert can be turned off for particular apps: the list sits right under its switch on the [Dictation page](yap://dictation), with terminals already in it",
+            "Cancelling a dictation no longer throws it away: it is still transcribed and saved to History, marked as cancelled, so a stray Escape cannot lose what you said. It is never inserted anywhere",
+            "Keeping cancelled dictations is on by default, alongside the other saving options in [Settings > History & audio](yap://settings)",
+            "The app watches how well it can actually hear you: if the microphone signal drops well below your own normal, the [Dictation page](yap://dictation) says so and names the likely cause, instead of quietly mishearing more and more",
+        ]),
         Entry(version: "1.5 (15)", points: [
             "Send it for me: choose a key per app (Return or \u{2318}Return) that is pressed the moment your words land, so a dictated message or prompt goes out on its own",
             "Quick Edit follows your request: rewrite, change tone, translate, capitalize. Case changes apply instantly, and it says so when nothing changed or when what you said was not an edit",
@@ -45,8 +52,8 @@ enum Changelog {
             "A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster",
             "Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input",
             "Fixed hallucinated speaker labels such as “Male speaker:” appearing in transcripts and being learned as vocabulary",
-            "Intelligent insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps",
-            "A notice under Intelligent insert explains the beep and how to silence it in Sound settings",
+            "Intelligent Insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps",
+            "A notice under Intelligent Insert explains the beep and how to silence it in Sound settings",
             "The menu bar spinner is visible on a light menu bar",
             "Light mode has a firmer window background and clearer card edges",
             "The first dictation after idle is faster, and the microphone lets go properly after every dictation",
@@ -56,7 +63,7 @@ enum Changelog {
         Entry(version: "1.3.1 (12)", points: [
             "Dictation is over twice as fast, with a new default speech model",
             "The app is about a gigabyte smaller",
-            "Intelligent insert is faster and now works in far more apps",
+            "Intelligent Insert is faster and now works in far more apps",
             "Your clipboard is handed back right after a dictation is pasted",
             "Auto mode no longer turns what you say into a list on its own",
             "Energy settings now switch the cleanup model with the power source, not just the dictation model",
@@ -89,7 +96,7 @@ enum Changelog {
             "An Energy page in Settings that reads your Mac and recommends the right models for it",
             "Long recordings now stream out as you go, cut at natural pauses, instead of leaving you on a spinner",
             "Ending a dictation never starts audio or video that was not already playing; a paused player is only resumed if the app actually paused it",
-            "Intelligent insert adapts to the text around your cursor in more apps, including web editors",
+            "Intelligent Insert adapts to the text around your cursor in more apps, including web editors",
             "Fixed a freeze that could happen at the start of a dictation while checking Music",
         ]),
         Entry(version: "1.1.1 (6)", points: [
@@ -99,7 +106,7 @@ enum Changelog {
             "Releasing a hold-to-talk key always ends the session, even mid-startup",
             "The pop-up's opening animation is identical every time",
             "Inserting text no longer stalls the closing animation",
-            "Intelligent insert reads the surrounding text more reliably",
+            "Intelligent Insert reads the surrounding text more reliably",
         ]),
         Entry(version: "1.1 (4)", points: [
             "Quick Edit: select text in any app, press your key, say the change",
@@ -110,7 +117,7 @@ enum Changelog {
             "Long pauses are compressed; silence and background noise insert nothing",
             "The half-second before your key press is captured, so first words are never clipped",
             "Any key can be a trigger, not just modifiers; conflicting bindings are flagged red",
-            "Intelligent insert: mid-sentence dictation adapts case, spacing, and punctuation",
+            "Intelligent Insert: mid-sentence dictation adapts case, spacing, and punctuation",
             "Insert Last types into the app you were just using",
             "Dictation never affects other apps' audio; media pause only triggers for real players",
             "Re-choreographed pop-up: the wave winds into a spinning ring while it thinks",

@@ -156,10 +156,10 @@ enum HelpContent {
 
         HelpArticle(
             id: "smartinsert", section: "Writing", icon: "text.cursor",
-            title: "Intelligent insert",
+            title: "Intelligent Insert",
             summary: "Dictating into the middle of a sentence, without the cleanup afterwards.",
             blocks: [
-                .paragraph("Text dropped into the middle of existing writing usually needs fixing up: a capital letter that should be lowercase, a missing space, a period that closes a sentence which was meant to continue. Intelligent insert does that for you, by reading the words immediately around your cursor before the text lands."),
+                .paragraph("Text dropped into the middle of existing writing usually needs fixing up: a capital letter that should be lowercase, a missing space, a period that closes a sentence which was meant to continue. Intelligent Insert does that for you, by reading the words immediately around your cursor before the text lands."),
                 .steps([
                     "The first word lowercases itself when you are mid-sentence, sparing names, acronyms, and I.",
                     "Exactly one space is added where words would otherwise collide.",
@@ -168,7 +168,7 @@ enum HelpContent {
                 .paragraph("It is on by default and can be switched off in the Home page's quick controls. Apps that do not expose their text simply get the transcript unchanged, and dictating over a selection always replaces that selection rather than adapting to it."),
                 .heading("How it reads, and the beep"),
                 .paragraph("A sandboxed app is not allowed to read another app's text directly, so YapToText briefly selects a few words on each side of your cursor with synthetic keystrokes, copies them, and puts your clipboard straight back. Nothing is stored and nothing leaves your Mac. If an app never answers, YapToText stops asking it and inserts plainly."),
-                .paragraph("Some apps refuse a keystroke they do not expect (a copy with nothing selected, for example) and macOS plays the alert sound for each one. That is the app declining the key, not an error. If it bothers you: open System Settings, choose Sound, and drag the Alert volume slider all the way down. Only alert beeps are silenced; music, video, and dictation sounds are unaffected. You can also switch Intelligent insert off in Quick controls on the Home page."),
+                .paragraph("Some apps refuse a keystroke they do not expect (a copy with nothing selected, for example) and macOS plays the alert sound for each one. That is the app declining the key, not an error. If it bothers you: open System Settings, choose Sound, and drag the Alert volume slider all the way down. Only alert beeps are silenced; music, video, and dictation sounds are unaffected. You can also switch Intelligent Insert off in Quick controls on the Home page."),
             ]),
 
         HelpArticle(

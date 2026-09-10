@@ -105,11 +105,12 @@ struct AdvancedSettingsView: View {
                                               suffix: " and can be replayed from History.")
                             }
                         }
-                        Toggle("Record cancelled dictations", isOn: $settings.recordCancelledDictations).toggleStyle(.switch).controlSize(.small)
-                        if settings.recordCancelledDictations {
-                            SubOptions {
-                                Caption("When you cancel a dictation, its transcript is still saved to History. It is never inserted into an app.")
-                            }
+                        Toggle("Keep cancelled dictations", isOn: $settings.recordCancelledDictations)
+                            .toggleStyle(.switch).controlSize(.small)
+                        SubOptions {
+                            Caption(settings.recordCancelledDictations
+                                    ? "Cancel a dictation and it is still transcribed and saved here, marked as cancelled, so a stray Escape cannot lose what you said. It is never inserted anywhere."
+                                    : "Cancelling discards the recording. Nothing is saved and it cannot be recovered.")
                         }
                         Toggle("Clear history when I quit", isOn: $settings.clearHistoryOnQuit).toggleStyle(.switch).controlSize(.small)
                         Picker("Auto-delete old items", selection: $settings.autoDeleteDays) {

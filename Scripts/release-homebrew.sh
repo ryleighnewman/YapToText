@@ -40,7 +40,20 @@ xcodebuild -project "$PROJ/YapToText.xcodeproj" -scheme YapToText \
   -skipPackagePluginValidation -disableAutomaticPackageResolution \
   CODE_SIGN_IDENTITY="$DEVID" CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM=65JK8K8VGM OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime" \
-  COMPILATION_CACHE_ENABLE_CACHING=NO >> "$LOG" 2>&1
+  COMPILATION_CACHE_ENABLE_CACHING=NO >> "$LOG" 2>&1 &
+BPID=$!
+
+# The Xcode 26 wedge cure, same as archive-upload.sh: SWBBuildService's `clang -v -E -dM`
+# probe can block forever writing to a pipe nobody drains. A healthy probe exits in <1s,
+# so any probe alive >10s is stuck. Kill JUST the probe; never xcodebuild itself.
+while kill -0 $BPID 2>/dev/null; do
+  sleep 15
+  for pid in $(pgrep -f "clang -v -E -dM"); do
+    ET=$(ps -o etime= -p "$pid" | tr -d ' ')
+    case "$ET" in ??:*|?:??) kill -9 "$pid" 2>/dev/null && echo "unstuck a wedged clang probe (pid $pid)" >> "$LOG";; esac
+  done
+done
+wait $BPID 2>/dev/null || true
 
 APP="$DD/Build/Products/Release/YapToText.app"
 [ -d "$APP" ] || { echo "FATAL: build produced no app" | tee -a "$LOG"; exit 1; }

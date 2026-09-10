@@ -255,6 +255,30 @@ struct LinkCaption: View {
     }
 }
 
+/// A changelog point, with any [label](yap://page) in it as a working link. The notes name
+/// where a setting lives, and naming a place the reader then has to hunt for is worse than
+/// not naming it.
+struct ChangelogPoint: View {
+    let text: String
+    var font: Font = .callout
+
+    var body: some View {
+        Text(attributed)
+            .font(font)
+            .fixedSize(horizontal: false, vertical: true)
+            .environment(\.openURL, OpenURLAction { url in
+                guard url.scheme == "yap", let page = url.host, !page.isEmpty else { return .systemAction }
+                NotificationCenter.default.post(name: .yapShowDestination, object: page)
+                return .handled
+            })
+    }
+
+    private var attributed: AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}
+
 /// Uppercase tracked status pill (the CubeAura badge) - color + word, no icons.
 struct StatusPill: View {
     let text: String

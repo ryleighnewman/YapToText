@@ -1333,7 +1333,8 @@ final class DictationController {
                         durationSeconds: max(0, Date().timeIntervalSince(start) - paused),
                         appName: appName, appBundleID: bundleID,
                         localeIdentifier: localeID, usedAI: false,
-                        audioFileName: keepAudio ? audioFile : nil))
+                        audioFileName: keepAudio ? audioFile : nil,
+                        outcome: "cancelled"))
                     if !keepAudio { AudioStore.delete(audioFile) }
                 } else {
                     AudioStore.delete(audioFile)

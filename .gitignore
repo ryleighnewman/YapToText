@@ -18,3 +18,9 @@ Marketing/.staging-backup/
 
 # Python bytecode from the marketing tools
 __pycache__/
+
+# Website asset intermediates: the finished files are installed into the yaptotext.com repo,
+# the sources are re-shot by tools/shoot_web*.py whenever they are needed again.
+Marketing/clips/
+Marketing/shots-web/
+Marketing/video-web/

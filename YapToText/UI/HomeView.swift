@@ -239,12 +239,13 @@ struct HomeView: View {
                     .frame(width: 110, height: 24)
                     .onChange(of: settings.primaryTriggerKey) { AppDelegate.shared?.reloadRightCommandTrigger() }
             }
-            // Intelligent insert rides right under its key: the context-aware step that
+            // Intelligent Insert rides right under its key: the context-aware step that
             // fits mid-sentence dictation into the text around the cursor.
             SubOptions {
-                Toggle("Intelligent insert", isOn: $settings.adaptToSurroundings)
+                Toggle("Intelligent Insert", isOn: $settings.adaptToSurroundings)
                     .toggleStyle(.switch).controlSize(.small)
                 Caption("Mid-sentence dictation matches the spacing and capitalization around your cursor.")
+                if settings.adaptToSurroundings { BeepNotice(brief: true) }
             }
             HStack(spacing: 8) {
                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)

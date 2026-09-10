@@ -22,7 +22,7 @@ def osa(script): return sh(f"osascript -e '{script}'", check=False, capture=True
 
 def note(name, obj=None):
     o = f' "{obj}"' if obj is not None else ""
-    sh(f"swift /tmp/postnote2.swift {name}{o}", check=False)
+    sh(f"swift {os.path.join(TOOLS, 'postnote.swift')} {name}{o}", check=False)
 
 def swiftrun(tool, *args):
     return sh(f"swift {os.path.join(TOOLS, tool)} " + " ".join(str(a) for a in args), check=False, capture=True)

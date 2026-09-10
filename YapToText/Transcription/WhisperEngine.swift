@@ -48,6 +48,8 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// re-entrant, and endSession must never run while a preview pass is mid-inference.
     private static let inferenceLock = NSLock()
 
+    /// Peak of the clip most recently handed to the decoder, paired with its SNR by InputHealth.
+    nonisolated(unsafe) static var lastMeasuredPeak: Double = 0
     private static let sampleRate: Double = 16_000
     private static let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                                     sampleRate: sampleRate,
@@ -274,6 +276,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
 
         guard let modelURL, modelIsOnDisk else { throw unavailableError() }
         let peakDiag = Self.peakWindowRMS(audio)
+        Self.lastMeasuredPeak = Double(peakDiag)   // paired with the SNR below, for InputHealth
         yapdiag(String(format: "whisper endSession: samples=%d (%.2fs) peak=%.4f gates: min=%.4f",
                        audio.count, Double(audio.count) / Double(WhisperEngine.sampleRate), peakDiag, Self.silenceRMS))
         guard audio.count > Int(WhisperEngine.sampleRate / 2) else {
@@ -308,6 +311,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     private func transcribeOneShot(_ input: [Float], modelURL: URL, lang: String) async throws -> String {
         var audio = input
         let peakDiag = Self.peakWindowRMS(audio)
+        Self.lastMeasuredPeak = Double(peakDiag)   // paired with the SNR below, for InputHealth
         let originalCount = audio.count
         // Speech conditioning: measure where the SPEECH sits vs the room's own floor.
         var analysis = SpeechEnhancer.analyze(audio, sampleRate: WhisperEngine.sampleRate)
@@ -1001,6 +1005,9 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // full window; the model was trained that way. Do not re-add without an accuracy
         // harness over real recorded speech.
         yapdiag("whisper: snr=\(String(format: "%.1f", snrDB))dB clip=\(String(format: "%.2f", clippedFrac * 100))% decode=\(noisy ? "beam5" : "greedy")")
+        // Track how good the input actually is over time, so a slow slide into an unusable
+        // signal gets named instead of silently degrading every transcript.
+        InputHealth.record(snrDB: Double(snrDB), peak: Self.lastMeasuredPeak)
         params.print_progress = false
         params.print_realtime = false
         params.print_special = false

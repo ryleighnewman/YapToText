@@ -74,6 +74,14 @@ do yet. Prices and features change, so check for yourself before you switch.
 
 ![Privacy](Marketing/posters-v5/08-privacy.jpg)
 
+## What's new in 1.5.1
+
+- Dictating into a terminal works better: reading the text around your cursor uses invisible keystrokes that a terminal treats as its own shortcuts, so that read is now skipped there instead of triggering commands and losing the text
+- Intelligent Insert can be turned off for particular apps: the list sits right under its switch on the Dictation page, with terminals already in it
+- Cancelling a dictation no longer throws it away: it is still transcribed and saved to History, marked as cancelled, so a stray Escape cannot lose what you said. It is never inserted anywhere
+- Keeping cancelled dictations is on by default, alongside the other saving options in Settings > History & audio
+- The app watches how well it can actually hear you: if the microphone signal drops well below your own normal, the Dictation page says so and names the likely cause, instead of quietly mishearing more and more
+
 ## What's new in 1.5
 
 - Send it for me: choose a key per app (Return or ⌘Return) that is pressed the moment your words land, so a dictated message or prompt goes out on its own

@@ -423,6 +423,12 @@ final class AppSettings {
     var appInsertionOverrides: [String: InsertionMethod] { didSet { save() } }
     /// Per-app key pressed after a dictation is inserted (send the message). Empty = never.
     var appAfterInsert: [String: AfterInsertAction] { didSet { save() } }
+    /// Per-app control of the surrounding-text read. nil = use the built-in default for that
+    /// app, true = always read, false = never read. Reading sends Opt+Shift+arrow keys, which
+    /// are text selection in a normal field but plain shortcuts inside a terminal UI, where
+    /// they trigger commands instead (issue #5: Copilot CLI opened its sidebar and the text
+    /// never landed). See InsertionContext.readIsDestructive.
+    var appAdaptOverrides: [String: Bool] { didSet { save() } }
     /// Pause whatever's playing (music, video) when dictation starts, resume when it ends.
     var pauseMediaDuringDictation: Bool { didSet { save() } }
     /// Digit mode-switching while dictating (press 1-9 to pick the post-processing mode).
@@ -592,6 +598,7 @@ final class AppSettings {
         var reviewLongTextOnly: Bool?
         var appInsertionOverrides: [String: InsertionMethod]?
         var appAfterInsert: [String: AfterInsertAction]?
+        var appAdaptOverrides: [String: Bool]?
         var pauseMediaDuringDictation: Bool?
         var digitModeSwitching: Bool?
         var panelSnapsBack: Bool?
@@ -714,6 +721,7 @@ final class AppSettings {
         reviewLongTextOnly = loaded?.reviewLongTextOnly ?? true
         appInsertionOverrides = loaded?.appInsertionOverrides ?? [:]
         appAfterInsert = loaded?.appAfterInsert ?? [:]
+        appAdaptOverrides = loaded?.appAdaptOverrides ?? [:]
         pauseMediaDuringDictation = loaded?.pauseMediaDuringDictation ?? true
         digitModeSwitching = loaded?.digitModeSwitching ?? true
         panelSnapsBack = loaded?.panelSnapsBack ?? false
@@ -812,7 +820,7 @@ final class AppSettings {
         historyRetention = loaded?.historyRetention ?? .last500
         clearHistoryOnQuit = loaded?.clearHistoryOnQuit ?? false
         saveAudio = loaded?.saveAudio ?? true
-        recordCancelledDictations = loaded?.recordCancelledDictations ?? false
+        recordCancelledDictations = loaded?.recordCancelledDictations ?? true
         autoDeleteDays = loaded?.autoDeleteDays ?? 30
         launchAtLogin = loaded?.launchAtLogin ?? false
         offeredModelDownloads = loaded?.offeredModelDownloads ?? false
@@ -830,6 +838,13 @@ final class AppSettings {
         if !defaults.bool(forKey: "quickedit.tapMigrated") {
             defaults.set(true, forKey: "quickedit.tapMigrated")
             if quickEditTrigger == .pushToTalk { quickEditTrigger = .toggle }
+        }
+        // Cancelling used to throw the recording away. One stray Escape could lose ten minutes
+        // of speech with nothing left anywhere, so keeping the transcript is now the default and
+        // existing installs move to it once; it is still one toggle away on the Dictation page.
+        if !defaults.bool(forKey: "cancelkeep.migrated") {
+            defaults.set(true, forKey: "cancelkeep.migrated")
+            if !recordCancelledDictations { recordCancelledDictations = true }
         }
     }
 
@@ -852,7 +867,7 @@ final class AppSettings {
             historyPaletteHotkey: historyPaletteHotkey, redoLastHotkey: redoLastHotkey, rightCommandTrigger: rightCommandTrigger, fnKeyTrigger: fnKeyTrigger, rightCommandSpaceSwitcher: rightCommandSpaceSwitcher,
             cancelOnDoubleEscape: cancelOnDoubleEscape,
             activeModeID: activeModeID, perAppModeOverrides: perAppModeOverrides, userName: userName,
-            autoInsert: autoInsert, liveTyping: liveTyping, quickEditDetection: quickEditDetection, smartDictionary: smartDictionary, quickEditKeyEnabled: quickEditKeyEnabled, quickEditTrigger: quickEditTrigger, primaryTriggerKey: primaryTriggerKey, quickEditTriggerKey: quickEditTriggerKey, reviewBeforeInsert: reviewBeforeInsert, reviewLongTextOnly: reviewLongTextOnly, appInsertionOverrides: appInsertionOverrides, appAfterInsert: appAfterInsert, pauseMediaDuringDictation: pauseMediaDuringDictation, digitModeSwitching: digitModeSwitching, panelSnapsBack: panelSnapsBack, panelDraggedX: panelDraggedX, panelDraggedY: panelDraggedY, quickEditPosition: quickEditPosition, quickEditSnapsBack: quickEditSnapsBack, quickEditPreferredTrigger: quickEditPreferredTrigger, quickEditDraggedX: quickEditDraggedX, quickEditDraggedY: quickEditDraggedY, lastSeenWhatsNewVersion: lastSeenWhatsNewVersion, visualizerColorHex: visualizerColorHex, restoreClipboard: restoreClipboard, adaptToSurroundings: adaptToSurroundings, doubleEscapeToCancel: doubleEscapeToCancel, quickEditModelID: quickEditModelID, trimTrailingNewlines: trimTrailingNewlines,
+            autoInsert: autoInsert, liveTyping: liveTyping, quickEditDetection: quickEditDetection, smartDictionary: smartDictionary, quickEditKeyEnabled: quickEditKeyEnabled, quickEditTrigger: quickEditTrigger, primaryTriggerKey: primaryTriggerKey, quickEditTriggerKey: quickEditTriggerKey, reviewBeforeInsert: reviewBeforeInsert, reviewLongTextOnly: reviewLongTextOnly, appInsertionOverrides: appInsertionOverrides, appAfterInsert: appAfterInsert, appAdaptOverrides: appAdaptOverrides, pauseMediaDuringDictation: pauseMediaDuringDictation, digitModeSwitching: digitModeSwitching, panelSnapsBack: panelSnapsBack, panelDraggedX: panelDraggedX, panelDraggedY: panelDraggedY, quickEditPosition: quickEditPosition, quickEditSnapsBack: quickEditSnapsBack, quickEditPreferredTrigger: quickEditPreferredTrigger, quickEditDraggedX: quickEditDraggedX, quickEditDraggedY: quickEditDraggedY, lastSeenWhatsNewVersion: lastSeenWhatsNewVersion, visualizerColorHex: visualizerColorHex, restoreClipboard: restoreClipboard, adaptToSurroundings: adaptToSurroundings, doubleEscapeToCancel: doubleEscapeToCancel, quickEditModelID: quickEditModelID, trimTrailingNewlines: trimTrailingNewlines,
             appendSpaceAfterInsert: appendSpaceAfterInsert, modelCooldownSeconds: modelCooldownSeconds, aiCleanupEnabled: aiCleanupEnabled, autoContextMode: autoContextMode,
             inputGain: inputGain, autoAmplifyInput: autoAmplifyInput, reduceBackgroundNoise: reduceBackgroundNoise, keepMicWarm: keepMicWarm, micWarmMinutes: micWarmMinutes,
             silenceTimeout: silenceTimeout, maxRecordingSeconds: maxRecordingSeconds,
@@ -940,6 +955,7 @@ final class AppSettings {
         if let v = s.reviewLongTextOnly { reviewLongTextOnly = v }
         if let v = s.appInsertionOverrides { appInsertionOverrides = v }
         if let v = s.appAfterInsert { appAfterInsert = v }
+        if let v = s.appAdaptOverrides { appAdaptOverrides = v }
         if let v = s.pauseMediaDuringDictation { pauseMediaDuringDictation = v }
         if let v = s.digitModeSwitching { digitModeSwitching = v }
         if let v = s.panelSnapsBack { panelSnapsBack = v }

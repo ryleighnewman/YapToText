@@ -37,6 +37,10 @@ enum Diagnostics {
                 .joined(separator: ", ")
             lines.append("Outcomes (last 50): \(counts)")
         }
+        if let health = InputHealth.summary { lines.append(health) }
+        if let d = InputHealth.diagnose() {
+            lines.append(String(format: "input REGRESSED: %.1fdB now vs %.1fdB baseline", d.recentSNR, d.baselineSNR))
+        }
         lines.append("Dictations recorded: \(state.history.records.count)")
         lines.append("")
         // Stability breadcrumbs. The sandbox cannot read macOS's crash logs, so these are

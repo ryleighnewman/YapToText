@@ -46,8 +46,7 @@ struct AboutView: View {
                             ForEach(entry.points, id: \.self) { point in
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text("\u{2022}").foregroundStyle(.secondary)
-                                    Text(point).font(.callout)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    ChangelogPoint(text: point)
                                 }
                             }
                         }

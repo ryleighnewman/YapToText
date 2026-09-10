@@ -46,9 +46,13 @@ struct DictationPage: View {
                     SubOptions {
                         Caption("App-wide defaults; any mode can override the timings in its editor. Playback pauses when dictation starts and resumes at full quality when it ends.")
                     }
+
                 }
 
                 CardSection("Microphone") {
+                    // A slow slide in input quality used to be invisible: the app quietly
+                    // compensated and the transcripts just got worse. Now it says so.
+                    InputHealthNotice()
                     Toggle("Reduce background noise", isOn: $settings.reduceBackgroundNoise)
                         .toggleStyle(.switch).controlSize(.small)
                     Toggle("Auto-amplify quiet speech", isOn: $settings.autoAmplifyInput)
@@ -63,13 +67,16 @@ struct DictationPage: View {
                 CardSection("Delivery") {
                     Toggle("Insert text automatically", isOn: $settings.autoInsert)
                         .toggleStyle(.switch).controlSize(.small)
-                    Toggle("Adapt to the surrounding text", isOn: $settings.adaptToSurroundings)
+                    Toggle("Intelligent Insert", isOn: $settings.adaptToSurroundings)
                         .toggleStyle(.switch).controlSize(.small)
                     SubOptions {
                         Caption(settings.adaptToSurroundings
                                 ? "Mid-sentence dictation matches the capitalization and spacing around the cursor, and a closing period is dropped when the sentence continues."
                                 : "Text is inserted exactly as transcribed, regardless of what surrounds the cursor.")
-                        if settings.adaptToSurroundings { BeepNotice() }
+                        if settings.adaptToSurroundings {
+                            BeepNotice()
+                            IntelligentInsertPerApp(settings: settings)
+                        }
                     }
                 }
 
@@ -324,5 +331,90 @@ struct SettingSlider: View {
                 .accessibilityLabel(title)
                 .accessibilityValue(display)
         }
+    }
+}
+
+
+/// Shown on the Dictation page when the measured microphone signal is meaningfully worse than
+/// this machine's own history. Silent when the input is healthy, which is almost always.
+struct InputHealthNotice: View {
+    @State private var diagnosis: InputHealth.Diagnosis?
+
+    var body: some View {
+        Group {
+            if let d = diagnosis {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "waveform.badge.exclamationmark")
+                            .foregroundStyle(.orange)
+                        Text(d.headline).font(.callout.weight(.medium))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Caption(d.detail)
+                }
+                .padding(.bottom, 2)
+            }
+        }
+        .onAppear { diagnosis = InputHealth.diagnose() }
+    }
+}
+
+
+/// The apps where Intelligent Insert is switched off, as a plain list of exceptions.
+///
+/// This was a row of switches, and it was ambiguous: the heading said the feature was off for
+/// these apps while every switch sat in the off position, so "on" could equally have meant
+/// "on here" or "off here". A list has no polarity to misread. Being in it means off; removing
+/// an app turns it back on.
+struct IntelligentInsertPerApp: View {
+    @Bindable var settings: AppSettings
+
+    private struct Row: Identifiable { let bundleID: String; let isBuiltIn: Bool; var id: String { bundleID } }
+
+    /// Everything currently off: the built-in terminals, minus any the user switched back on,
+    /// plus any app they turned off themselves.
+    private var offRows: [Row] {
+        let builtInOff = InsertionContext.readIsDestructive
+            .filter { settings.appAdaptOverrides[$0] != true }
+            .map { Row(bundleID: $0, isBuiltIn: true) }
+        let userOff = settings.appAdaptOverrides
+            .filter { !$0.value && !InsertionContext.readIsDestructive.contains($0.key) }
+            .keys.map { Row(bundleID: $0, isBuiltIn: false) }
+        return (builtInOff + userOff).sorted { AppCatalog.name(for: $0.bundleID) < AppCatalog.name(for: $1.bundleID) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Caption("Intelligent Insert is off in these apps. Terminals are added automatically, because the keystrokes it uses are shortcuts there rather than text selection.")
+            ForEach(offRows) { row in
+                HStack(spacing: 8) {
+                    AppIconView(bundleID: row.bundleID)
+                    Text(AppCatalog.name(for: row.bundleID)).font(.callout).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Button {
+                        // Turning a built-in back on needs an explicit yes; a user's own entry
+                        // just goes away.
+                        if row.isBuiltIn { settings.appAdaptOverrides[row.bundleID] = true }
+                        else { settings.appAdaptOverrides.removeValue(forKey: row.bundleID) }
+                    } label: {
+                        Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Turn Intelligent Insert back on in \(AppCatalog.name(for: row.bundleID))")
+                }
+            }
+            if offRows.isEmpty {
+                Caption("It is on everywhere.").foregroundStyle(.tertiary)
+            }
+            Menu {
+                ForEach(AppCatalog.runningApps().filter { candidate in !offRows.contains { $0.bundleID == candidate.bundleID } }, id: \.bundleID) { app in
+                    Button(app.name) { settings.appAdaptOverrides[app.bundleID] = false }
+                }
+            } label: {
+                Label("Turn off in another app", systemImage: "plus")
+            }
+            .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+        }
+        .padding(.top, 2)
     }
 }
