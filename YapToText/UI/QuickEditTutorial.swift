@@ -338,52 +338,26 @@ struct AppearanceQuickPicker: View {
 }
 
 /// One-time "here's what's new" sheet for people who already finished onboarding, shown once
-/// per app version (Changelog.currentVersion is the key). It's a small PAGED flow - a welcome
-/// page introducing this release's features, then further pages that slide in (this release:
-/// the appearance customization) - and the same infrastructure carries future updates: add a
-/// page, update the copy, done.
+/// per app version (Changelog.currentVersion is the key): this release's points and Done.
+/// The 1.5 sheet had a second "Make it yours" page with the appearance picker; that was a
+/// one-release tour and is gone, the picker lives in onboarding and on the Dictation page.
 struct WhatsNewView: View {
     @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
-    @State private var page = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if page == 0 { featuresPage } else { appearancePage }
-
+            featuresPage
             HStack {
-                if page == 1 {
-                    Button("Back") { withAnimation(.easeInOut(duration: 0.25)) { page = 0 } }
-                }
                 Spacer()
-                if page == 0 {
-                    Button("Make it yours") { withAnimation(.easeInOut(duration: 0.25)) { page = 1 } }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                } else {
-                    Button("Done") { dismiss() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                }
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(22)
         .frame(width: 480)
-        .onReceive(NotificationCenter.default.publisher(for: .init("yapDebugWhatsNewPage"))) { note in
-            if let p = note.object as? Int { page = p }
-        }
         .onDisappear {
             state.settings.lastSeenWhatsNewVersion = Changelog.whatsNewKey
-        }
-    }
-
-    /// The pop-ups, live, with their new controls: the same chooser onboarding uses.
-    private var appearancePage: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Make it yours").font(.title2.weight(.bold))
-            Text("The dictation pop-up and the Quick Edit card each have their own layout, position, and colors now. Try them here; everything applies instantly.")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            AppearanceQuickPicker()
         }
     }
 

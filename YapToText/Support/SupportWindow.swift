@@ -19,7 +19,7 @@ final class SupportWindowController {
             .environment(state)
             .background(AppWindowBackground()))
         let win = NSWindow(contentViewController: hosting)
-        win.title = "Support YapToText"
+        win.title = "Donate to YapToText"
         win.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         win.titlebarAppearsTransparent = true
         win.isOpaque = false

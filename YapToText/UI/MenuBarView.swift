@@ -499,7 +499,7 @@ struct MenuBarView: View {
             } label: {
                 Image(systemName: "heart.fill").iconTint(.pink)
             }
-            .buttonStyle(.plain).help("Support YapToText")
+            .buttonStyle(.plain).help("Donate to YapToText")
             Spacer()
             iconButton("macwindow", "Open the window") { openMainWindow(destination: .yapShowHome) }
             iconButton("gearshape", "Settings") { openMainWindow(destination: .yapShowSettings) }

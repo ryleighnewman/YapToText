@@ -350,9 +350,9 @@ struct ContentView: View {
                   keywords: "retention delete days save audio privacy history", destination: .settings, tab: .advanced),
         SearchHit(title: "Launch at login", subtitle: "Settings > General", icon: "power",
                   keywords: "launch login startup boot", destination: .settings, tab: .general),
-        SearchHit(title: "Menu bar icon", subtitle: "Home > Quick controls", icon: "menubar.rectangle",
+        SearchHit(title: "Menu bar icon", subtitle: "Home > Icons", icon: "menubar.rectangle",
                   keywords: "menu bar icon capybara hide show", destination: .home),
-        SearchHit(title: "Dock icon", subtitle: "Home > Quick controls", icon: "dock.rectangle",
+        SearchHit(title: "Dock icon", subtitle: "Home > Icons", icon: "dock.rectangle",
                   keywords: "dock icon hide show", destination: .home),
         SearchHit(title: "Permissions", subtitle: "Home > Get set up", icon: "lock.shield",
                   keywords: "permissions microphone accessibility grant privacy", destination: .home),
@@ -360,7 +360,7 @@ struct ContentView: View {
                   keywords: "export import preset backup share setup", destination: .settings, tab: .advanced),
         SearchHit(title: "Per-app modes", subtitle: "Settings > Advanced", icon: "app.badge",
                   keywords: "per app modes override automatic application", destination: .settings, tab: .advanced),
-        SearchHit(title: "Support & tips", subtitle: "Tip jar window", icon: "heart",
+        SearchHit(title: "Donate", subtitle: "Tip jar window", icon: "heart",
                   keywords: "support tip jar donate heart restore purchases subscription", opensSupport: true),
     ]
 
@@ -404,12 +404,12 @@ struct ContentView: View {
             Button { SupportWindowController.shared.show(state: state) } label: {
                 HStack(spacing: 3) {
                     Image(systemName: "heart").font(.system(size: 11))
-                    Text("Support").font(.caption)
+                    Text("Donate").font(.caption)
                 }
                 .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Support YapToText")
+            .help("Donate to YapToText")
             Spacer()
         }
         .padding(.horizontal, 10).padding(.vertical, 6)

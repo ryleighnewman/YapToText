@@ -27,7 +27,7 @@ WHY IT'S DIFFERENT
 
 DICTATION THAT BEHAVES LIKE DICTATION
 - Say "question mark" or "exclamation point" and the mark lands where you said it, with no stray period left behind. Mention a punctuation name mid-sentence and it stays a word.
-- Intelligent insert: dictate into the middle of a sentence and the case, spacing, and punctuation adapt to the text around your cursor.
+- Intelligent Insert: dictate into the middle of a sentence and the case, spacing, and punctuation adapt to the text around your cursor.
 - Quick Edit: select text in any app, hold a key, and say the change. "Make this shorter." "Fix the spelling."
 
 AUTO MODE: IT KNOWS AN EMAIL WHEN IT HEARS ONE
@@ -82,8 +82,8 @@ dictation,speech to text,whisper,voice typing,transcribe,transcription,private,o
 - A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster
 - Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input
 - Fixed hallucinated speaker labels such as “Male speaker:” appearing in transcripts and being learned as vocabulary
-- Intelligent insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps
-- A notice under Intelligent insert explains the beep and how to silence it in Sound settings
+- Intelligent Insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps
+- A notice under Intelligent Insert explains the beep and how to silence it in Sound settings
 - The menu bar spinner is visible on a light menu bar
 - Light mode has a firmer window background and clearer card edges
 - The first dictation after idle is faster, and the microphone lets go properly after every dictation

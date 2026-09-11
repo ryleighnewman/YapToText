@@ -74,6 +74,16 @@ do yet. Prices and features change, so check for yourself before you switch.
 
 ![Privacy](Marketing/posters-v5/08-privacy.jpg)
 
+## What's new in 1.5.2
+
+- Bluetooth hearing aids and headsets keep their full sound quality: the app uses the microphone you chose instead of switching to the Bluetooth one
+- Fixed a crash and a freeze when a Bluetooth device connected mid-dictation
+- Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps, and dictating over a selection now replaces it the way it was written
+- Quick Edit swaps a word or phrase exactly as you say it, instantly
+- Cleanup no longer drops words you said
+- Hallucinated speaker labels like "Name:" and stage directions are gone
+- Miscellaneous bug fixes
+
 ## What's new in 1.5.1
 
 - Dictating into a terminal works better: reading the text around your cursor uses invisible keystrokes that a terminal treats as its own shortcuts, so that read is now skipped there instead of triggering commands and losing the text
@@ -89,7 +99,7 @@ do yet. Prices and features change, so check for yourself before you switch.
 - Quick Edit has its own pop-up: pick where it opens, drag it anywhere and it stays, and give it its own colors. The key taps to start and stop by default
 - The dictation pop-up stays wherever you drag it; layout, position, snap-back, and colors live on the Dictation page with a live preview
 - Cancelling a dictation closes the pop-up in one motion, the same way every time
-- Smart insert follows you when you switch apps mid-dictation, keeps working in chat apps, and closes the previous sentence when you dictate just before its period
+- Intelligent Insert follows you when you switch apps mid-dictation, keeps working in chat apps, and closes the previous sentence when you dictate just before its period
 - Dictionaries group every spelling of a word into one folder, the app's own name is recognized however it is heard, and suggested sound-alikes never include plurals, truncations, or real words
 - A sign-off is spelled the way you gave the app your name
 - Cleanup never bleeps a word you said or adds a label or a copy of the original; invented speaker names, wrapping quotes, and silent-clip phrases are removed
@@ -105,8 +115,8 @@ do yet. Prices and features change, so check for yourself before you switch.
 - A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster
 - Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input
 - Fixed hallucinated speaker labels such as “Male speaker:” appearing in transcripts and being learned as vocabulary
-- Intelligent insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps
-- A notice under Intelligent insert explains the beep and how to silence it in Sound settings
+- Intelligent Insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps
+- A notice under Intelligent Insert explains the beep and how to silence it in Sound settings
 - The menu bar spinner is visible on a light menu bar
 - Light mode has a firmer window background and clearer card edges
 - The first dictation after idle is faster, and the microphone lets go properly after every dictation
@@ -117,12 +127,12 @@ do yet. Prices and features change, so check for yourself before you switch.
 
 - Dictation is over twice as fast, with a new default speech model
 - The app is about a gigabyte smaller
-- Intelligent insert is faster and now works in far more apps
+- Intelligent Insert is faster and now works in far more apps
 - Your clipboard is handed back right after a dictation is pasted
 - Auto mode no longer turns what you say into a list on its own
 - Energy settings now switch the cleanup model with the power source, not just the dictation model
 - The AI Models page shows what each model is for, with accuracy and speed ratings
-- A rewritten in-app Help covering Quick Edit, intelligent insert, and energy
+- A rewritten in-app Help covering Quick Edit, Intelligent Insert, and energy
 - Bug fixes, including the menu bar spinner running backwards
 
 1.3 shipped this same work but bundled the wrong speech model, so the speed and size
@@ -146,7 +156,7 @@ gains only actually arrive in 1.3.1.
 - The microphone releases as soon as a dictation ends; the recording indicator only shows while you dictate
 - The Quick Edit key is consistent: press on / press off in toggle mode, press on / release off in hold mode
 - The recording pop-up opens the same way every time, and inserting text no longer stalls its closing animation
-- Intelligent insert reads the surrounding text more reliably
+- Intelligent Insert reads the surrounding text more reliably
 
 ## What's new in 1.1
 
@@ -154,7 +164,7 @@ gains only actually arrive in 1.3.1.
 - Rebuilt listening engine: noise removal, adaptive normalization, deep decoding in noise
 - Voice corrections: "scratch that", "replace X with Y", "add this to my dictionary"
 - Any key can be a trigger, not just modifiers
-- Intelligent insert adapts mid-sentence dictation to the surrounding text
+- Intelligent Insert adapts mid-sentence dictation to the surrounding text
 - Re-choreographed recording pop-up; the wave condenses into a spinning ring
 - Faster AI cleanup (GPU context reused), lower idle CPU
 - Custom colors with a full RGB mode; bring your own Whisper or GGUF models

@@ -21,7 +21,49 @@ enum InsertionContext {
         var before: String
         var after: String
         var available: Bool
+        /// Worth one more, quiet read at delivery time. Set when the key-sim read got an
+        /// ANSWER to its copy but an empty one (the app is alive and serving Cmd+C, it just
+        /// had not moved its selection yet: a web editor starved by the decode, Gmail in
+        /// Safari 2026-09-16), and when an app that has answered before went silent this
+        /// time (an Electron chat app, same day). A silent app that has never answered
+        /// is an empty field or a surface that cannot answer, and is left alone.
+        var retryAtDelivery = false
+        /// The dictation is REPLACING this selected text. Its surroundings cannot be read
+        /// (the selection dance would destroy the selection), but the selection's own
+        /// shape says what fits: a lowercase word mid-sentence wants a lowercase word
+        /// with no period, a sentence wants a sentence.
+        var replacing: String?
         static let none = Surround(before: "", after: "", available: false)
+    }
+
+    /// Adapt a dictation that replaces `selection`: match its case, its end mark, and its
+    /// edge spaces. Selecting "feelings" and saying "hearing aids" used to land "Hearing
+    /// aids." in the middle of the sentence (caught live, 2026-09-16).
+    static func adaptReplacing(_ text: String, selection: String) -> String {
+        let hadTrailingSpace = text.hasSuffix(" ")
+        var t = text.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return text }
+        let selCore = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let selFirst = selCore.first(where: { $0.isLetter || $0.isNumber }) else { return text }
+        // Case: a selection that starts lowercase is mid-sentence. Spare "I", contractions
+        // of it, and acronyms or names whose second letter is a capital.
+        if selFirst.isLowercase, let first = t.first, first.isUppercase {
+            let firstWord = t.prefix(while: { $0.isLetter || $0 == "'" })
+            let secondIsUpper = t.dropFirst().first?.isUppercase ?? false
+            let isI = firstWord == "I" || firstWord.hasPrefix("I'")
+            if !isI, !secondIsUpper { t = first.lowercased() + t.dropFirst() }
+        } else if selFirst.isUppercase, let first = t.first, first.isLowercase {
+            t = first.uppercased() + t.dropFirst()
+        }
+        // End mark: keep the selection's, not the dictation's. A word or phrase with no
+        // mark takes none; a selection that ended a sentence keeps that same mark.
+        let selMark = selCore.last.flatMap { ".!?,;:".contains($0) ? $0 : nil }
+        while let last = t.last, ".!?,;:".contains(last) { t.removeLast() }
+        if let selMark { t.append(selMark) }
+        // Edge spaces: a double-click selection often carries its trailing space; give it back.
+        if selection.hasPrefix(" ") { t = " " + t }
+        if selection.hasSuffix(" ") || hadTrailingSpace { t += " " }
+        return t
     }
 
     /// Read up to `maxChars` on each side of the cursor/selection in the focused element.
@@ -162,8 +204,11 @@ enum InsertionContext {
     /// - A live selection exists (probe copy changes the pasteboard): dictating over a
     ///   selection must REPLACE it - the selection dance would destroy it. Also covers
     ///   editors that copy the whole line on an empty selection (VS Code-style).
+    /// `retry` is the delivery-time second chance after a pre-read that answered empty:
+    /// no probe (the pre-read's probe already ruled out a live selection a moment ago), a
+    /// medium settle, no late copy. The Mac is quiet by then, so the app can keep up.
     @MainActor
-    private static func keyRead(patient: Bool) async -> (s: Surround, appAnswered: Bool) {
+    private static func keyRead(patient: Bool, retry: Bool = false) async -> (s: Surround, appAnswered: Bool) {
         guard !TextInserter.isSecureInputActive else { return (.none, false) }
         let pb = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(pb)
@@ -192,19 +237,27 @@ enum InsertionContext {
         //    smart insert never engaged inside Reddit. An empty copy is never a selection
         //    worth preserving, so only a non-empty probe aborts the read.
         lastSyntheticKeyAt = Date()   // the probe Cmd+C is posted inside copyChanged
-        let previous = snapshot.string
-        let probe = await copyChanged(patient ? 0.15 : 0.1)
-        if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, probe == previous {
-            // The pasteboard changed but holds what it already held: the app re-wrote its
-            // existing contents on an empty-selection copy (Electron editors do this), or
-            // something else bumped the counter. That is NOT a selection - treating it as
-            // one skipped the whole read in the user's main app twice in an afternoon.
-            yapdiag("insertctx: probe returned the old clipboard - no selection")
+        // A SENTINEL sits on the pasteboard during the probe. Some Electron editors answer
+        // an empty-selection Cmd+C by re-writing whatever the pasteboard already holds;
+        // the old test for that ("the copy equals the previous clipboard") could not tell
+        // it from a REAL selection whose text the user had copied a moment earlier. In
+        // Gmail the user selected the whole email they had just copied, dictated over it,
+        // and the read walked the caret to the end and pasted outside the selection
+        // (2026-09-16). With the sentinel in place, a re-write returns the sentinel and a
+        // selection returns its text, whatever the clipboard held before.
+        let sentinel = "\u{E000}"
+        if !retry { pb.clearContents(); pb.setString(sentinel, forType: .string) }
+        let probe: String? = retry ? "" : await copyChanged(patient ? 0.15 : 0.1)
+        if let probe, probe == sentinel {
+            yapdiag("insertctx: probe re-wrote the clipboard - no selection")
         } else if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            yapdiag("insertctx: live selection (\(probe.prefix(24).debugDescription)) - inserting unadapted")
-            // Deliberate abort, not a capability failure - report unanswered so the
-            // outcome stays neutral and no strike is recorded.
-            return (.none, false)
+            yapdiag("insertctx: live selection (\(probe.prefix(24).debugDescription)) - replacing, adapting to its shape")
+            // Deliberate stop, not a capability failure - report unanswered so the
+            // outcome stays neutral and no strike is recorded. The selection itself is
+            // the context: the paste replaces it, shaped like it.
+            var s = Surround.none
+            s.replacing = probe
+            return (s, false)
         }
         // 2 + 3. Read both sides. Slow apps (Electron especially) sometimes service the
         //    synthetic selection keys or the copy late; one quiet retry makes the read
@@ -212,6 +265,7 @@ enum InsertionContext {
         //    insert didn't turn on" report. The waits are async, so patience is free.
         var before: String?
         var after: String?
+        var atSentenceStartResult = true
         // On the critical path (insert time) a single tight attempt: an app that answers
         // does so in well under 200ms, and a silent one should not hold the delivery
         // hostage. The pre-read keeps the patient two-attempt timing - it runs hidden
@@ -226,7 +280,8 @@ enum InsertionContext {
         // Notion) runs its own JS key handling and had not moved the selection yet - the
         // copy then returned an EMPTY string, which is exactly what "smart insert does
         // nothing in Google Docs" looked like. The pre-read has time to spare, so spend it.
-        let settle: UInt64 = patient ? 240_000_000 : 30_000_000
+        let settle: UInt64 = retry ? 120_000_000 : (patient ? 240_000_000 : 30_000_000)
+        let copyWait: TimeInterval = retry ? 0.22 : (patient ? 0.5 : 0.18)
         func isBlank(_ v: String?) -> Bool { (v ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         for attempt in 0..<attempts {
             // BEFORE: select up to three words back, copy, collapse to the selection's
@@ -235,14 +290,14 @@ enum InsertionContext {
             for _ in 0..<3 { TextInserter.postKey(0x7B, flags: optShift) }   // Opt+Shift+Left
             try? await Task.sleep(nanoseconds: settle)
             lastSyntheticKeyAt = Date()
-            before = await copyChanged(patient ? 0.5 : 0.18)
+            before = await copyChanged(copyWait)
             // LATE ANSWER: an EMPTY (not missing) copy means the app bumped the pasteboard
             // before it had moved the selection - an Electron renderer starved by the
             // whisper decode running on every core at that same moment. About one Electron
             // read in four came back this way and inserted unadapted (no space after the
             // previous sentence). The selection keys are already queued, so give the app
             // another beat and copy again: one extra Cmd+C, no extra selection keys.
-            if patient, before == "" {
+            if patient, !retry, before == "" {
                 try? await Task.sleep(nanoseconds: 220_000_000)
                 lastSyntheticKeyAt = Date()
                 if let again = await copyChanged(0.4), !isBlank(again) {
@@ -272,6 +327,7 @@ enum InsertionContext {
             let atSentenceStart = isBlank(before)
                 || ".!?".contains(visibleBefore.last!)
                 || (before ?? "").hasSuffix("\n")
+            atSentenceStartResult = atSentenceStart
             if atSentenceStart {
                 yapdiag("insertctx: after-read skipped (caret at sentence start)")
                 after = nil
@@ -280,7 +336,7 @@ enum InsertionContext {
                 for _ in 0..<2 { TextInserter.postKey(0x7C, flags: optShift) }   // Opt+Shift+Right
                 try? await Task.sleep(nanoseconds: settle)
                 lastSyntheticKeyAt = Date()
-                after = await copyChanged(patient ? 0.5 : 0.18)
+                after = await copyChanged(copyWait)
                 if after != nil { TextInserter.postKey(0x7B, flags: []); lastSyntheticKeyAt = Date() }   // Left: restore caret
                 try? await Task.sleep(nanoseconds: 20_000_000)
             }
@@ -297,13 +353,24 @@ enum InsertionContext {
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
 
+        // The AFTER side can be starved just like the before side: an answered-empty copy
+        // mid-sentence ("outside of that| region.", Gmail, 2026-09-16) let the dictation
+        // land with its capital and period intact. Flag it for the delivery-time retry.
+        if !retry, !isBlank(before), after == "", !atSentenceStartResult {
+            var s = Surround(before: before ?? "", after: "", available: true)
+            s.retryAtDelivery = true
+            yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after answered empty - will retry at delivery")
+            return (s, true)
+        }
         guard !isBlank(before) || !isBlank(after) else {
             // Reported as UNANSWERED on purpose, so a blank read scores neutral and never
             // accrues strikes: a slow web editor that gave nothing this time is not an app
             // that can never answer, and banning it is how the feature silently died in
             // the user's main app once already.
-            yapdiag("insertctx: read came back blank (before=\(before == nil ? "unanswered" : "empty")) - inserting unadapted")
-            return (.none, false)
+            yapdiag("insertctx: read came back blank (before=\(before == nil ? "unanswered" : "empty"))\(retry ? " on the retry" : "") - inserting unadapted")
+            var none = Surround.none
+            none.retryAtDelivery = before != nil && !retry
+            return (none, false)
         }
         yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after=\((after ?? "").prefix(30).debugDescription)")
         return (Surround(before: before ?? "", after: after ?? "", available: true), true)
@@ -315,6 +382,13 @@ enum InsertionContext {
     // the read is skipped there, with a re-probe every 25th insert so an app that starts
     // cooperating (update, settings change) gets rediscovered.
     private static func failKey(_ b: String) -> String { "insertctx.fail." + b }
+    private static func answeredKey(_ b: String) -> String { "insertctx.answered." + b }
+    /// Has this app EVER answered a key-sim read? Silence from such an app is a starved
+    /// or busy moment, not an inability, and earns the delivery-time retry.
+    static func hasAnswered(bundleID: String?) -> Bool {
+        guard let b = bundleID else { return false }
+        return UserDefaults.standard.bool(forKey: answeredKey(b))
+    }
     private static func blankKey(_ b: String) -> String { "insertctx.blank." + b }
     private static func skipKey(_ b: String) -> String { "insertctx.skips." + b }
 
@@ -389,6 +463,7 @@ enum InsertionContext {
         let ud = UserDefaults.standard
         switch outcome {
         case .success:
+            ud.set(true, forKey: answeredKey(b))
             ud.set(0, forKey: failKey(b))
             ud.set(0, forKey: skipKey(b))
             ud.set(0, forKey: blankKey(b))
@@ -445,7 +520,7 @@ enum InsertionContext {
     /// sandbox), with the per-app skip. Separated from adapt() so the read can run
     /// CONCURRENTLY with AI cleanup - its latency hides behind the model's.
     @MainActor
-    static func readSurroundings(patient: Bool = false) async -> Surround {
+    static func readSurroundings(patient: Bool = false, retry: Bool = false) async -> Surround {
         let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         if !adaptIsAllowed(bundleID: bundle) {
             yapdiag("insertctx: adapt off for \(bundle ?? "?") (destructive or pinned off)")
@@ -458,9 +533,14 @@ enum InsertionContext {
         var s = read()
         var appAnswered = true          // the AX path answering IS an answer
         if !s.available {
-            let key = await keyRead(patient: patient)
+            let key = await keyRead(patient: patient, retry: retry)
             s = key.s
             appAnswered = key.appAnswered
+            // Silence from an app that has answered before: retry once at delivery.
+            if !retry, !s.available, !s.retryAtDelivery, s.replacing == nil, !appAnswered,
+               !TextInserter.isSecureInputActive, hasAnswered(bundleID: bundle) {
+                s.retryAtDelivery = true
+            }
         }
         let outcome: ReadOutcome = s.available ? .success : (appAnswered ? .failure : .neutral)
         recordReadOutcome(bundleID: bundle, outcome)
@@ -487,6 +567,7 @@ enum InsertionContext {
         } else {
             s = await readSurroundings()
         }
+        if let sel = s.replacing { return adaptReplacing(text, selection: sel) }
         guard s.available, !(s.before.isEmpty && s.after.isEmpty) else { return text }
         return adapt(text, before: s.before, after: s.after)
     }

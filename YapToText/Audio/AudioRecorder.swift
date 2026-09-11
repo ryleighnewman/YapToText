@@ -31,22 +31,24 @@ final class AudioRecorder: @unchecked Sendable {
     }
     func installKeepAlive() {
         guard keepAlive == nil else { return }
+        // queue: nil, then hop to main OURSELVES. With queue: .main, NotificationCenter posts
+        // from AVFAudio's engine queue and WAITS for main to run the block; main meanwhile
+        // calls engine.stop() or releases an engine, both of which dispatch_sync onto that
+        // same engine queue. That is the hang of 2026-09-11 14:39 (1.5.2 dev): both sides
+        // waiting on each other forever, 0% CPU.
         NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main
-        ) { [weak self] _ in
-            // Config changes land mid-transition; give the route a beat to settle first.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil
+        ) { [weak self] note in
+            let sender = note.object as? AVAudioEngine
+            DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if self.isRunning {
-                    // MID-SESSION device change (headset died, default input switched):
-                    // the engine halts silently and the rest of the dictation would be
-                    // lost while the UI still says "Listening". Rebuild the route in
-                    // place and keep capturing - the session's callbacks are still
-                    // plugged in, so audio resumes into the SAME transcription.
-                    self.rebuildRouteMidSession()
-                } else {
-                    self.reviveIfCold("config change")
-                }
+                // Retired engines keep posting after a device change, and the fresh engine
+                // posts once when arm() routes it. Reacting to either rebuilt again, which made
+                // another engine, which posted again: six rebuilds in 250 ms, and a route
+                // declared dead before the hardware had delivered a single buffer.
+                guard sender == nil || sender === self.engine else { return }
+                guard Date().timeIntervalSince(self.lastRouteBuild) > 1.5 else { return }
+                self.scheduleConfigChangeReaction()
             }
         }
         let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -56,23 +58,54 @@ final class AudioRecorder: @unchecked Sendable {
         RunLoop.main.add(timer, forMode: .common)
         keepAlive = timer
     }
+    /// When we last built a route ourselves; a configuration change inside 1.5 s of that is
+    /// our own doing, not the user's device changing.
+    private var _lastRouteBuild = Date.distantPast
+    private var lastRouteBuild: Date {   // written from start()'s task, read on main
+        get { armLock.lock(); defer { armLock.unlock() }; return _lastRouteBuild }
+        set { armLock.lock(); _lastRouteBuild = newValue; armLock.unlock() }
+    }
+    private var configReaction: DispatchWorkItem?
+    private func scheduleConfigChangeReaction() {
+        // Config changes land mid-transition; give the route a beat to settle first, and
+        // coalesce a burst into one reaction.
+        configReaction?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.configReaction = nil
+            if self.isRunning {
+                    // MID-SESSION device change (headset died, default input switched):
+                    // the engine halts silently and the rest of the dictation would be
+                    // lost while the UI still says "Listening". Rebuild the route in
+                    // place and keep capturing - the session's callbacks are still
+                    // plugged in, so audio resumes into the SAME transcription.
+                    self.rebuildRouteMidSession()
+                } else {
+                    self.reviveIfCold("config change")
+                }
+        }
+        configReaction = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: item)
+    }
     /// A device change killed the route while a session is LIVE: bring capture back on
     /// the new device without ending the session. The resident tap is reinstalled at the
     /// new device's format; the whisper/apple engines convert per-buffer, so the session
     /// continues seamlessly. A gap of ~1s of audio (the transition) is the only loss.
     private func rebuildRouteMidSession() {
-        guard isRunning, !armInFlight else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        if engine.isRunning { engine.stop() }
-        invalidateResidentTap()
-        routedDeviceUID = nil
+        controlQueue.async { [weak self] in self?.rebuildRouteMidSessionNow() }
+    }
+    private func rebuildRouteMidSessionNow() {
+        guard isRunning, !armInFlight, !usingDirectInput else { return }   // direct capture owns the route
         // ALWAYS a fresh engine. Reusing the old engine's input node after a route change
         // crashed in the field (1.2 (7), SIGABRT in installTap): the node reports a STALE
         // cached format that passes the >0 guards while the hardware underneath already
         // runs at the new device's rate, and the mismatched tap install raises an
         // NSException Swift cannot catch. A fresh engine re-queries the hardware, so its
         // reported format is consistent with reality by construction.
-        engine = AVAudioEngine()
+        // The old one is retired, not released: `engine = AVAudioEngine()` on its own ran
+        // -[AVAudioEngine dealloc] right here on main, mid device change (see EngineGraveyard).
+        retireEngine()
+        lastRouteBuild = Date()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
@@ -90,7 +123,10 @@ final class AudioRecorder: @unchecked Sendable {
     }
 
     private func reviveIfCold(_ why: String) {
-        guard !isRunning, !prewarmActive, !armInFlight, !engine.isRunning else { return }
+        controlQueue.async { [weak self] in self?.reviveIfColdNow(why) }
+    }
+    private func reviveIfColdNow(_ why: String) {
+        guard !isRunning, !prewarmActive, !armInFlight, !engine.isRunning, engineMayOpenInput else { return }
         // Keep-warm off (or its standby window expired) and nobody at the keyboard: a cold
         // route is the DESIRED state (mic released, indicator off). Reviving here silently
         // defeated the setting.
@@ -103,11 +139,8 @@ final class AudioRecorder: @unchecked Sendable {
             // A wedged graph never recovers by restarting - rebuild fresh, exactly like start()'s
             // fallback, and in retireEngine's order: the tap comes off BEFORE the old engine is
             // dropped (releasing an engine with a live tap is a documented SIGABRT).
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
-            engine = AVAudioEngine()
-            invalidateResidentTap()
-            routedDeviceUID = nil
+            retireEngine()
+            lastRouteBuild = Date()
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
             if format.sampleRate > 0, format.channelCount > 0 { ensureResidentTap(format, on: input) }
@@ -118,6 +151,11 @@ final class AudioRecorder: @unchecked Sendable {
     }
 
     private let processingQueue = DispatchQueue(label: "com.ryleighnewman.YapToText.audio-processing")
+    /// Every engine stop/start/reset that is not part of a session's own arm() runs here, never
+    /// on the main thread. AudioOutputUnitStop waits for CoreAudio's IO thread, and with a
+    /// Bluetooth device mid-connection that wait ran 34 seconds (2026-09-16 16:22, a Phonak
+    /// hearing aid pairing while the idle power-down fired): the whole app froze with it.
+    private let controlQueue = DispatchQueue(label: "com.ryleighnewman.YapToText.audio-control", qos: .userInitiated)
     private var onBuffer: ((AVAudioPCMBuffer) -> Void)?
     private var onLevel: ((Float) -> Void)?
 
@@ -132,8 +170,15 @@ final class AudioRecorder: @unchecked Sendable {
     private var sessionLevelCB: ((Float) -> Void)?
     private var sessionBufferCB: ((AVAudioPCMBuffer) -> Void)?
     private var probeCB: ((Float) -> Void)?
-    private var residentFormat: AVAudioFormat?
+    private var residentFormat: AVAudioFormat?      // what the tap actually delivers; nil until the first buffer
+    private var residentAsked: AVAudioFormat?       // what the node claimed at install time, for the diag line
+    private var residentInstalled = false
     private var residentEngineID: ObjectIdentifier?
+    /// A session's recording file is created from the FIRST live buffer's format, not from a
+    /// queried one, so it can never be written in a format the tap is not delivering.
+    private var pendingFileURL: URL?
+    /// Pre-roll held back until the first live buffer proves it is in the same format.
+    private var pendingRoll: [AVAudioPCMBuffer] = []
     /// PRE-ROLL: the freshest ~0.5s of idle audio, continuously refreshed by the resident
     /// tap. A dictation prepends it, so speech that began a breath BEFORE the press is
     /// still in the recording - the press reaches back in time.
@@ -146,6 +191,8 @@ final class AudioRecorder: @unchecked Sendable {
     /// toggle must invalidate the tracking so the next ensure genuinely reinstalls.
     private func invalidateResidentTap() {
         residentFormat = nil
+        residentAsked = nil
+        residentInstalled = false
         residentEngineID = nil
         // The ring holds buffers in the OLD route's format (and possibly from before a
         // stall) - never let them leak into the next session's prepend.
@@ -153,14 +200,61 @@ final class AudioRecorder: @unchecked Sendable {
     }
 
     private func ensureResidentTap(_ format: AVAudioFormat, on input: AVAudioInputNode) {
-        if residentFormat == format, residentEngineID == ObjectIdentifier(engine) { return }
+        if residentInstalled, residentEngineID == ObjectIdentifier(engine) { return }
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
+        // format: nil. After the input unit is pointed at another device, the node keeps
+        // reporting the PREVIOUS device's format for a while (measured: 8 kHz reported through
+        // prepare() and start() while the unit had moved to a 48 kHz mic). Installing with that
+        // snapshot raises "Failed to create tap due to format mismatch", an NSException Swift
+        // cannot catch, and the app aborts (GitHub issue #6, 1.5.1 (16), 24 kHz snapshot). With
+        // nil, AVFAudio binds to whatever the node actually carries at install time, so there is
+        // no snapshot left to go stale. The bound format is learned from the first buffer.
+        input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
             self?.residentTap(buffer)
         }
-        residentFormat = format
+        residentInstalled = true
+        residentFormat = nil
+        residentAsked = format
         residentEngineID = ObjectIdentifier(engine)
-        yapdiag("recorder: resident tap installed (\(Int(format.sampleRate))Hz) - input pulls continuously")
+        yapdiag("recorder: resident tap installed (asked \(Int(format.sampleRate))Hz, bound on first buffer) - input pulls continuously")
+    }
+
+    /// The first live buffer of a session is the only trustworthy statement of the tap's
+    /// format. Create the recording file from it, and hand over the pre-roll only if the ring
+    /// was captured in the same format; both go onto the processing queue BEFORE this buffer,
+    /// so the order the transcriber sees is still pre-roll, then session.
+    private func bindSession(to bound: AVAudioFormat, onBuffer: @escaping (AVAudioPCMBuffer) -> Void) {
+        sessionLock.lock()
+        let asked = residentAsked
+        residentFormat = bound
+        let url = pendingFileURL
+        pendingFileURL = nil
+        let roll = pendingRoll
+        pendingRoll = []
+        var file: AVAudioFile?
+        if let url {
+            file = try? AVAudioFile(forWriting: url, settings: bound.settings)
+            audioFile = file
+        }
+        sessionLock.unlock()
+        if let asked, asked != bound {
+            yapdiag("recorder: tap bound \(Int(bound.sampleRate))Hz ch\(bound.channelCount), node had claimed \(Int(asked.sampleRate))Hz ch\(asked.channelCount) - snapshot was stale")
+        }
+        guard !roll.isEmpty else { return }
+        guard roll.allSatisfy({ $0.format == bound }) else {
+            yapdiag("recorder: dropped \(roll.count) pre-roll buffers - ring format differs from the live tap")
+            return
+        }
+        let rollGain = max(1, inputGain)
+        let ms = Int(Double(roll.count) * Double(roll[0].frameLength) / bound.sampleRate * 1000)
+        processingQueue.async {
+            for b in roll {
+                AudioRecorder.applyGain(b, rollGain)
+                onBuffer(b)
+                if let file { try? file.write(from: b) }   // crash recovery covers it too
+            }
+        }
+        yapdiag("recorder: prepended \(roll.count) pre-roll buffers (~\(ms)ms of pre-press audio)")
     }
 
     private func residentTap(_ buffer: AVAudioPCMBuffer) {
@@ -168,7 +262,7 @@ final class AudioRecorder: @unchecked Sendable {
         let levelCB = sessionLevelCB
         let bufferCB = sessionBufferCB
         let probe = probeCB
-        let file = audioFile
+        var file = audioFile
         sessionLock.unlock()
         if let probe { probe(AudioRecorder.rawRMS(buffer)) }
         guard let levelCB, let bufferCB else {
@@ -195,6 +289,8 @@ final class AudioRecorder: @unchecked Sendable {
         if bufferCount == 0 {
             let latency = Date().timeIntervalSince(startedAt)
             yapdiag(String(format: "recorder: FIRST buffer after %.0f ms", latency * 1000))
+            bindSession(to: buffer.format, onBuffer: bufferCB)
+            sessionLock.lock(); file = audioFile; sessionLock.unlock()   // created just now, from THIS format
         }
         bufferCount += 1
         let raw = AudioRecorder.rawRMS(buffer)
@@ -304,6 +400,34 @@ final class AudioRecorder: @unchecked Sendable {
     /// UID of the input device to capture from (the user's Input source pick). nil = system
     /// default. Set before start(); applied to the engine's input unit each session.
     var preferredDeviceUID: String?
+    /// False only on the last-resort arm that takes the system default input instead.
+    private var routeToPreferred = true
+    /// Set when the running session is on the system default because the chosen device could
+    /// not be routed; the Dictation page reads it to say so. Cleared on the next clean arm.
+    private(set) var fellBackToDefaultInput = false
+    /// The system default input's UID the last time routing to the chosen device failed.
+    /// While the default is still that device, later starts skip straight to the fallback
+    /// instead of paying for two doomed attempts first.
+    private var fallbackDefaultUID: String?
+    /// True when the engine may open its input node at all. The engine's input node always
+    /// opens the SYSTEM DEFAULT input first, whatever device it is later pointed at, and on a
+    /// Mac whose default is a Bluetooth hearing aid or headset that single open engages the
+    /// device's microphone profile: the aids drop from music quality to 8 kHz phone quality the
+    /// instant it happens (2026-09-16 16:56:44, two failed engine attempts before the direct
+    /// capture took over). So while a chosen microphone is not the default, the engine is not
+    /// touched: not for a session, not for a prewarm, not for a keep-warm revive.
+    var engineMayOpenInput: Bool {
+        guard let preferred = preferredDeviceUID else { return true }
+        let def = AudioInputDevices.defaultInputUID()
+        return def == nil || def == preferred
+    }
+    /// Capture straight from CoreAudio on the chosen device, used when the engine cannot be
+    /// routed to it. Nil whenever the engine is doing the capturing.
+    private var direct: DirectInput?
+    private(set) var usingDirectInput = false
+    /// Read by the Dictation page: the device the last session actually ran on when the chosen
+    /// one could not be routed. Nil whenever the chosen microphone was used.
+    static private(set) var lastFallback: (defaultUID: String, defaultName: String)?
     /// The device the CURRENT engine was last routed to. When the user's pick differs, the
     /// next session must start on a FRESH engine: re-routing a warm engine's input unit
     /// leaves the node reporting a stale cached format, and installing the tap with that
@@ -392,7 +516,7 @@ final class AudioRecorder: @unchecked Sendable {
             // start without holding the whole system in degraded voice mode. With keep-warm
             // OFF and no activity hold, the route is fully released: tap out, engine
             // stopped, and the mic indicator turns off. That is what the setting promises.
-            let wantWarm = (self.keepWarm && !self.warmStandbyExpired) || self.activityHoldActive
+            let wantWarm = ((self.keepWarm && !self.warmStandbyExpired) || self.activityHoldActive) && self.engineMayOpenInput
             if self.engine.isRunning { self.engine.stop() }
             let input = self.engine.inputNode
             if input.isVoiceProcessingEnabled {
@@ -413,10 +537,11 @@ final class AudioRecorder: @unchecked Sendable {
             }
         }
         idlePowerDown = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
+        controlQueue.asyncAfter(deadline: .now() + seconds, execute: item)
     }
 
     func prewarmRoute(withVoiceProcessing: Bool = false) {
+        guard engineMayOpenInput else { yapdiag("recorder: prewarm skipped - chosen input is not the system default"); return }
         guard !isRunning, !prewarmActive else { return }
         idlePowerDown?.cancel()
         let input = engine.inputNode
@@ -544,15 +669,71 @@ final class AudioRecorder: @unchecked Sendable {
         if deviceChanged { yapdiag("recorder: input device changed (\(routedDeviceUID ?? "default") -> \(preferredDeviceUID ?? "default")) - fresh engine") }
         let fresh = forceFreshEngine || startFreshNextSession || deviceChanged
         startFreshNextSession = false
-        for attempt in 1...2 {
-            if attempt == 2 || fresh {
+        routeToPreferred = true
+        let defaultNow = AudioInputDevices.defaultInputUID()
+        // Once the engine has failed to route around the current default device, later starts
+        // skip its two doomed attempts and go straight to the direct unit.
+        var firstAttempt = 1
+        if let preferred = preferredDeviceUID, defaultNow != nil, defaultNow != preferred {
+            // The chosen microphone is not the system default: the engine is not even tried,
+            // because opening its input node would open the default device's microphone.
+            firstAttempt = 3
+            yapdiag("recorder: chosen input (\(preferred)) is not the system default (\(defaultNow ?? "")) - capturing directly, engine untouched")
+        } else if let known = fallbackDefaultUID, known == defaultNow, preferredDeviceUID != nil {
+            firstAttempt = 3
+            yapdiag("recorder: default input is still the device the engine could not route around - capturing directly")
+        } else {
+            fallbackDefaultUID = nil
+        }
+        // Attempts 1 and 2 are the engine pointed at the chosen device (2 on a fresh engine).
+        // When the chosen device and the system default run at different rates (a Bluetooth
+        // hearing aid at 8 kHz as the default, the built-in mic at 48 kHz chosen) the engine
+        // cannot be routed at all: its cached input format belongs to one device and the unit
+        // is pointed at the other, and start() fails with -10868 every time, or starts and
+        // delivers nothing. Attempt 3 therefore captures from the chosen device with a bare
+        // CoreAudio unit (DirectInput), which has no such cache. Attempt 4, the last resort,
+        // is the engine on the system default: a dictation on the wrong microphone beats one
+        // that collapses the moment it starts.
+        for attempt in firstAttempt...4 {
+            if attempt == 2 || (attempt == 1 && fresh) {
                 retireEngine()
                 if attempt == 1 { yapdiag("recorder: fresh engine requested (dead route rebuild)") }
                 else { yapdiag("recorder: arm failed once, retrying on a fresh engine") }
             }
+            if attempt == 3 {
+                guard let uid = preferredDeviceUID, let device = AudioInputDevices.device(forUID: uid) else { continue }
+                do {
+                    try armDirect(uid: uid, deviceID: device.id, url: url, onBuffer: onBuffer, onLevel: onLevel)
+                    lastRouteBuild = Date()
+                    isRunning = true
+                    fallbackDefaultUID = defaultNow
+                    fellBackToDefaultInput = false
+                    AudioRecorder.lastFallback = nil
+                    yapdiag("recorder: capturing directly from \(device.name) at \(Int(direct?.format?.sampleRate ?? 0))Hz - the engine could not route to it")
+                    return
+                } catch {
+                    lastError = error
+                    yapdiag("recorder: direct capture failed (\(error)) - falling back to the system default input")
+                    continue
+                }
+            }
+            if attempt == 4 {
+                guard preferredDeviceUID != nil else { break }
+                retireEngine()
+                routeToPreferred = false
+                yapdiag("recorder: chosen input device cannot be used at all - taking the system default input")
+            }
             do {
                 try arm(url: url, onBuffer: onBuffer, onLevel: onLevel)
+                lastRouteBuild = Date()
                 isRunning = true
+                if !routeToPreferred {
+                    fellBackToDefaultInput = true; fallbackDefaultUID = defaultNow
+                    let name = defaultNow.flatMap { AudioInputDevices.device(forUID: $0)?.name } ?? "the system default input"
+                    AudioRecorder.lastFallback = (defaultNow ?? "", name)
+                } else {
+                    AudioRecorder.lastFallback = nil
+                }
                 return
             } catch {
                 lastError = error
@@ -573,8 +754,46 @@ final class AudioRecorder: @unchecked Sendable {
         engine = AVAudioEngine()
         invalidateResidentTap()
         routedDeviceUID = nil   // a brand-new engine sits on the system default until arm() routes it
-        // Give the old engine's teardown a beat off the hot path before its final release.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { _ = old }
+        // Never release the old engine here, and never on a short delay either: the rebuild
+        // was most likely triggered by a device change, and its notifications keep arriving at
+        // the old IO unit for seconds. Releasing it inside that burst crashed 1.5.1.
+        EngineGraveyard.shared.bury(old)
+    }
+
+    /// The session setup of arm() with the CoreAudio unit doing the capturing instead of the
+    /// engine. No pre-roll ring exists on this path; the file and the callbacks bind on the
+    /// first buffer exactly as they do for the engine.
+    private func armDirect(uid: String, deviceID: AudioDeviceID, url: URL?,
+                           onBuffer: @escaping (AVAudioPCMBuffer) -> Void,
+                           onLevel: @escaping (Float) -> Void) throws {
+        // The engine must not feed the tap path while the unit does. An engine that was ever
+        // armed is retired (which also drops its hold on whatever device it opened); an
+        // untouched engine is left untouched, because `engine.inputNode` itself opens the
+        // system default device.
+        if residentInstalled || engine.isRunning { retireEngine() }
+        invalidateResidentTap()
+        let unit = direct ?? DirectInput()
+        direct = unit
+        sessionLock.lock()
+        pendingFileURL = url
+        audioFile = nil
+        pendingRoll = []
+        preRoll = []
+        sessionLevelCB = onLevel
+        sessionBufferCB = onBuffer
+        probeCB = nil
+        sessionLock.unlock()
+        bufferCount = 0
+        startedAt = Date()
+        routedDeviceUID = uid
+        usingDirectInput = true
+        residentAsked = nil
+        do {
+            try unit.start(deviceUID: uid, deviceID: deviceID) { [weak self] buffer in self?.residentTap(buffer) }
+        } catch {
+            usingDirectInput = false
+            throw error
+        }
     }
 
     /// Configure the current `engine`'s input, install the tap, and start it. Throws on any
@@ -610,14 +829,15 @@ final class AudioRecorder: @unchecked Sendable {
             if engine.isRunning { engine.stop() }
             invalidateResidentTap()
         }
-        if let uid = preferredDeviceUID, let device = AudioInputDevices.device(forUID: uid),
+        if routeToPreferred, let uid = preferredDeviceUID, let device = AudioInputDevices.device(forUID: uid),
            let unit = input.audioUnit {
             var deviceID = device.id
             AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
                                  kAudioUnitScope_Global, 0,
                                  &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
         }
-        routedDeviceUID = preferredDeviceUID
+        routedDeviceUID = routeToPreferred ? preferredDeviceUID : nil
+        if routeToPreferred { fellBackToDefaultInput = false }
         armMark("device routing")
         let format = input.outputFormat(forBus: 0)
         armMark("format read")
@@ -625,35 +845,21 @@ final class AudioRecorder: @unchecked Sendable {
             throw TranscriptionError.unavailable("No microphone input is available.")
         }
 
-        if let url {
-            let f = try? AVAudioFile(forWriting: url, settings: format.settings)
-            sessionLock.lock(); audioFile = f; sessionLock.unlock()
-        }
-
         // Plug this session's callbacks into the RESIDENT tap - no tap churn. Removing and
         // re-installing the tap per session suspended the input stream between sessions,
         // costing the first ~0.4s of the next dictation to hardware wake.
         sessionLock.lock()
-        // Hand the pre-roll to the transcriber FIRST (same serial queue the live buffers
-        // use, enqueued under the lock, so ordering is airtight: pre-roll, then session).
-        let roll = preRoll
-        preRoll = []
+        // The recording file and the pre-roll handoff both wait for the FIRST live buffer.
+        // The queried `format` can be the previous device's; a file created from it is
+        // written in a format the tap never delivers (every write fails, the recording is
+        // empty), and a pre-roll checked against it is checked against the wrong thing.
+        pendingFileURL = url
+        audioFile = nil
         // Stale ring = the engine sat stopped (failed revive, sleep) - prepending it
-        // would transcribe OLD room audio. Only fresh, format-matched audio counts.
+        // would transcribe OLD room audio. Only fresh audio is even considered.
         let ringFresh = Date().timeIntervalSince(preRollLastAppend) < 1.0
-        if !roll.isEmpty, ringFresh, roll.allSatisfy({ $0.format == format }) {
-            let rollGain = max(1, inputGain)
-            let file = audioFile
-            let ms = Int(Double(roll.count) * Double(roll[0].frameLength) / format.sampleRate * 1000)
-            processingQueue.async {
-                for b in roll {
-                    AudioRecorder.applyGain(b, rollGain)
-                    onBuffer(b)
-                    if let file { try? file.write(from: b) }   // crash recovery covers it too
-                }
-            }
-            yapdiag("recorder: prepended \(roll.count) pre-roll buffers (~\(ms)ms of pre-press audio)")
-        }
+        pendingRoll = ringFresh ? preRoll : []
+        preRoll = []
         sessionLevelCB = onLevel
         sessionBufferCB = onBuffer
         probeCB = nil
@@ -739,7 +945,13 @@ final class AudioRecorder: @unchecked Sendable {
         sessionLock.unlock()   // the RESIDENT tap stays installed - the stream keeps pulling
         // Remember the converged gain for the NEXT LAUNCH's first dictation.
         if agcGain > 1.01 { UserDefaults.standard.set(Double(agcGain), forKey: "agc.lastGain") }
-        if keepWarm {
+        if usingDirectInput {
+            // Direct capture has no warm route to keep: the unit is stopped off the main thread
+            // (AudioOutputUnitStop can wait on a Bluetooth device) and the session ends here.
+            usingDirectInput = false
+            let unit = direct
+            controlQueue.async { unit?.stop() }
+        } else if keepWarm {
             scheduleWarmShutdown()   // engine stays running: next session has zero cold-route skip
             scheduleIdlePowerDown()  // ...but VP is still released after the grace (restarts VP-free)
         } else {
@@ -770,6 +982,8 @@ final class AudioRecorder: @unchecked Sendable {
         sessionLock.lock()
         let closing = audioFile
         audioFile = nil
+        pendingFileURL = nil   // a session that never got a buffer must not leave a file to bind
+        pendingRoll = []
         sessionLock.unlock()
         processingQueue.async {
             _ = closing   // retained until every queued write lands, then released

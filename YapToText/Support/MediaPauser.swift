@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreAudio
 
 /// Pauses whatever media is playing when dictation starts and resumes it afterwards, by
@@ -204,9 +205,38 @@ enum MediaPauser {
     /// synchronous call from the main thread froze the whole app at dictation start
     /// (caught live via sample: 2+ minutes inside AESendMessage). Every script therefore
     /// runs on a background thread with an AppleScript-side timeout as the backstop.
+    /// The Automation (Apple Events) consent for Music, asked for ONCE per launch, with no
+    /// timeout. The first script used to carry the 2 s AppleScript timeout into macOS's own
+    /// consent dialog: the event was abandoned before the user could click Allow, so nothing
+    /// was recorded and the dialog came back on every dictation ("it wants to access Music
+    /// every time", 2026-09-16, six prompts in one minute, every one ending in -1712).
+    /// noErr = allowed; -1743 = the user said no, and the scripts stay silent for the rest
+    /// of the launch instead of asking again.
+    nonisolated private static let permissionLock = NSLock()
+    nonisolated(unsafe) private static var musicPermission: OSStatus?
+    nonisolated private static func musicAutomationAllowed() async -> Bool {
+        permissionLock.lock(); let cached = musicPermission; permissionLock.unlock()
+        if let cached { return cached == noErr }
+        let status: OSStatus = await Task.detached(priority: .userInitiated) { () -> OSStatus in
+            let bundleID = "com.apple.Music"
+            var target = AEAddressDesc()
+            let made = bundleID.withCString { ptr in
+                AECreateDesc(typeApplicationBundleID, ptr, strlen(ptr), &target)
+            }
+            guard made == noErr else { return OSStatus(made) }
+            defer { AEDisposeDesc(&target) }
+            // Blocks while the consent dialog is up; that is the point.
+            return AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, true)
+        }.value
+        permissionLock.lock(); musicPermission = status; permissionLock.unlock()
+        yapdiag("media: Music automation permission \(status == noErr ? "granted" : "status \(status)")")
+        return status == noErr
+    }
+
     nonisolated private static func runMusicScript(_ body: String) async -> String? {
         guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music").first != nil
         else { return nil }
+        guard await musicAutomationAllowed() else { return nil }
         let source = "with timeout of 2 seconds\ntell application \"Music\" to \(body)\nend timeout"
         return await Task.detached(priority: .userInitiated) { () -> String? in
             let script = NSAppleScript(source: source)

@@ -28,6 +28,7 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
     /// STALE cached format, and installing a tap with it raises an uncatchable NSException.
     /// A fresh engine re-queries the hardware, so its format is right by construction.
     private var engine = AVAudioEngine()
+    private var engineWasUsed = false
     /// The user's Input source pick (nil = system default), so the meter measures the SAME
     /// microphone dictation will use instead of always showing the system default.
     var deviceUID: String?
@@ -53,7 +54,13 @@ final class InputLevelMonitor: ObservableObject, @unchecked Sendable {
 
     private func startEngine() {
         guard !running else { return }
-        engine = AVAudioEngine()   // fresh: never trust a node that outlived a route change
+        // fresh: never trust a node that outlived a route change. The old engine is retired,
+        // not released: a restart() comes from a device change, and releasing an engine while
+        // its IO unit is still receiving that change's notifications is a crash (see
+        // EngineGraveyard).
+        if engineWasUsed { EngineGraveyard.shared.bury(engine) }
+        engine = AVAudioEngine()
+        engineWasUsed = true
         let input = engine.inputNode
         // Route to the chosen device BEFORE reading the format (engine is not running yet).
         if let uid = deviceUID, let device = AudioInputDevices.device(forUID: uid), let unit = input.audioUnit {

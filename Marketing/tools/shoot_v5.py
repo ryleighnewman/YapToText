@@ -72,7 +72,16 @@ def rect_of(num):
     out = swiftrun("winrect.swift", num)
     return tuple(map(int, out.split()))
 
+def hide_others():
+    """Re-hide everything but Finder and the app. Once at the start is not enough: a game or
+    a dev build relaunching itself mid-shoot (Minecraft, 2026-09-16) reads straight through
+    the glass. Runs before every capture; it costs nothing when nothing has appeared."""
+    osa('tell application "System Events" to set visible of (every process whose visible is true and name is not "Finder" and name is not "YapToText") to false')
+    osa('tell application "YapToText" to activate')
+    time.sleep(0.6)
+
 def capture(name, rect, win_id, radius=None, solid=False):
+    hide_others()
     """Region capture (keeps glass) + the window's own alpha from a -l capture.
     solid=True lifts a material window's partial interior alpha to opaque (edges stay soft),
     so a translucent card is captured exactly as it looks over the studio wallpaper."""
@@ -103,6 +112,40 @@ def capture(name, rect, win_id, radius=None, solid=False):
     print("captured", name, img.size)
 
 state = {}
+def wave_match(path, ref, band=(0.04, 0.45)):
+    """How close a capture's wave band is to the reference capture (the one that was approved):
+    mean absolute pixel difference, lower is closer."""
+    a = Image.open(path).convert("RGBA"); b = Image.open(ref).convert("RGBA")
+    if a.size != b.size: b = b.resize(a.size)
+    w, h = a.size; y0, y1 = int(h * band[0]), int(h * band[1])
+    a = a.crop((0, y0, w, y1)).convert("L"); b = b.crop((0, y0, w, y1)).convert("L")
+    pa, pb = a.tobytes(), b.tobytes()
+    return sum(abs(x - y) for x, y in zip(pa, pb)) / len(pa)
+
+def capture_wave(name, style, look, energy, win_finder):
+    """Hold the synthetic wave at a fixed time and capture; scan a few times and keep the frame
+    closest to the approved capture in git, so every shoot reproduces the look that was signed
+    off instead of a random frame. The chosen t is printed for the record."""
+    ref = os.path.join(OUT, f"_ref-{name}.png")
+    r = subprocess.run(f'git -C "{MK}" show HEAD:Marketing/shots-v5/{name}.png', shell=True, capture_output=True)
+    have_ref = r.returncode == 0 and len(r.stdout) > 1000
+    if have_ref: open(ref, "wb").write(r.stdout)
+    best = None
+    for t in [round(0.8 + 0.6 * i, 1) for i in range(20)]:   # 0.8 .. 12.2 s
+        note("yap.debug.stagepanel", f"{style}|{SENTENCE}|{energy}|recording|{t}"); time.sleep(0.9)
+        pw = win_finder()
+        if not pw: continue
+        tmp = f"_t{int(t*10)}-{name}"
+        capture(tmp, rect_of(pw[0]), pw[0])
+        score = wave_match(os.path.join(OUT, f"{tmp}.png"), ref) if have_ref else -t
+        print(f"  {name} t={t}: diff {score:.1f}")
+        if best is None or score < best[0]: best = (score, tmp, t)
+    if best is None: print("no panel window for", style); return
+    os.replace(os.path.join(OUT, f"{best[1]}.png"), os.path.join(OUT, f"{name}.png"))
+    for f in os.listdir(OUT):
+        if f.startswith("_t") and f.endswith(f"-{name}.png") or f == f"_ref-{name}.png": os.remove(os.path.join(OUT, f))
+    print(f"  kept {name} at t={best[2]} (diff {best[0]:.1f})")
+
 def capture_on_backdrop(name, win_id):
     """Translucent card: its own alpha capture over a synthetic dark glass gradient, so
     nothing behind it (wallpaper brightness, icons) decides how it looks."""
@@ -227,7 +270,23 @@ def main():
         sh(f"swift {os.path.join(TOOLS, 'click.swift')} {x + 113} {y + 179}", check=False); time.sleep(1.2)
         # 3. pages
         pages = ["home", "dictation", "quickEdit", "modes", "models", "dictionaries", "commands", "history", "stats", "settings"]
+        def seed_intact():
+            live = json.load(open(os.path.join(DATA, "history.json")))
+            return len(live) == 48 and "mockups" in json.dumps(live)
+        def reseed_live():
+            """A real dictation landed on top of the demo data mid-shoot (the user talked to
+            the app while it was staged, 2026-09-16, and their sentence became the top row of
+            the History poster). Put the demo set back and relaunch before capturing."""
+            print("seed disturbed - re-seeding before capture")
+            quit_app(); time.sleep(2)
+            sh(f'python3 "{os.path.join(TOOLS, "seed_demo_data.py")}" "{DATA}"')
+            launch_app(); time.sleep(9)
+            note("yap.debug.whatsnew", "close"); note("yap.debug.welcome", "close"); time.sleep(1.5)
+            osa('tell application "YapToText" to activate'); time.sleep(1)
         for pg in pages:
+            if pg in ("home", "history", "stats") and not seed_intact():
+                reseed_live()
+                if not seed_intact(): raise SystemExit("seed did not take - aborting")
             note("yap.debug.goto", pg); time.sleep(2.6)
             if has_sheet():
                 note("yap.debug.whatsnew", "close"); note("yap.debug.welcome", "close"); time.sleep(1.5)
@@ -236,6 +295,7 @@ def main():
             if not mw: raise SystemExit(f"no main window for {pg}")
             wid = window_id(800, 4000, 4000)
             capture(f"page-{pg}", mw, wid[0] if wid else 0, radius=26)
+        if not seed_intact(): reseed_live()
         note("yap.debug.goto", "history"); time.sleep(2); ensure_main("history")
         note("yap.debug.historyexpand"); time.sleep(1.8)
         mw = main_window(); wid = window_id(800, 4000, 4000)
@@ -252,10 +312,9 @@ def main():
         for style in ("expanded", "compact", "mini"):
             note("yap.debug.waveboost", BOOST[style])
             note("yap.debug.panellook", PANEL_LOOKS[style]); time.sleep(0.5)
-            note("yap.debug.stagepanel", f"{style}|{SENTENCE}|1.7"); time.sleep(3.4)
-            pw = window_id(280, 620, 420, layer_min=1)
-            if not pw: print("no panel window for", style); continue
-            capture(f"panel-{style}", rect_of(pw[0]), pw[0])
+            note("yap.debug.stagepanel", f"{style}|{SENTENCE}|1.7"); time.sleep(3.0)
+            capture_wave(f"panel-{style}", style, PANEL_LOOKS[style], "1.7",
+                         lambda: window_id(280, 620, 420, layer_min=1))
             note("yap.debug.stagepanel", "off"); time.sleep(1.4)
         note("yap.debug.waveboost", "1")
         # 5. Quick Edit card in each stage, over a flat deep-violet desktop so the material

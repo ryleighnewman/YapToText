@@ -22,7 +22,11 @@ struct HomeView: View {
                 if !state.settings.hasDismissedHomeNote { funNote }
                 if needsSetup { setupCard }
                 primaryActions
-                quickControls
+                keysCard
+                intelligentInsertCard
+                afterTranscriptionCard
+                iconsCard
+                if !state.settings.hasDismissedDictionaryTip { dictionaryTip }
                 if !state.history.records.isEmpty { statsCard }
                 footer
             }
@@ -53,7 +57,7 @@ struct HomeView: View {
                 .help("What's new in this version")
                 .popover(isPresented: $showChangelog, arrowEdge: .bottom) { changelogPopover }
             }
-            Text("Local Powerful Dictation")
+            Text("Powerful Local Dictation")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -216,13 +220,15 @@ struct HomeView: View {
         .help(help)
     }
 
-    private var quickControls: some View {
+    // THE HOME CONTROLS, in four small cards instead of one long one. Same controls,
+    // same explanations, same links as before; the page read as a wall because keys,
+    // insert behaviour, AI stages, and app icons all sat in one card with no breaks
+    // between them (2026-09-16). Each card now has a title that says what it is for,
+    // and one short line under each control.
+
+    private var keysCard: some View {
         @Bindable var settings = state.settings
-        return CardSection("Quick controls") {
-            // One line each, with the ACTUAL binding editors inline - no trip to Settings.
-            // Exactly like the "Menu bar icon | Capybara" row: label, then the picker
-            // right beside it (same standard popup style, natural width) - and the key
-            // recorder field alone on the far right.
+        return CardSection("Keys") {
             HStack(spacing: 8) {
                 Image(systemName: "mic.fill").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Dictation key")
@@ -239,18 +245,10 @@ struct HomeView: View {
                     .frame(width: 110, height: 24)
                     .onChange(of: settings.primaryTriggerKey) { AppDelegate.shared?.reloadRightCommandTrigger() }
             }
-            // Intelligent Insert rides right under its key: the context-aware step that
-            // fits mid-sentence dictation into the text around the cursor.
-            SubOptions {
-                Toggle("Intelligent Insert", isOn: $settings.adaptToSurroundings)
-                    .toggleStyle(.switch).controlSize(.small)
-                Caption("Mid-sentence dictation matches the spacing and capitalization around your cursor.")
-                if settings.adaptToSurroundings { BeepNotice(brief: true) }
-            }
+            SubOptions { Caption("Tap the key to talk; tap again to process and insert your words.") }
             HStack(spacing: 8) {
                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Quick Edit key")
-                    .help("Select text, press the key, say the change.")
                 Picker("", selection: $settings.quickEditTrigger) {
                     ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
                 }
@@ -264,15 +262,41 @@ struct HomeView: View {
                     .frame(width: 110, height: 24)
                     .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
             }
-            // A breath of padding separates the key bindings (above) from the system looks (below).
+            SubOptions { Caption("Select some text, then press this key and say what you want to change.") }
+        }
+    }
+
+    private var intelligentInsertCard: some View {
+        @Bindable var settings = state.settings
+        return CardSection("Intelligent Insert") {
+            Toggle("Intelligent Insert", isOn: $settings.adaptToSurroundings)
+                .toggleStyle(.switch).controlSize(.small)
+            if settings.adaptToSurroundings {
+                SubOptions {
+                    Caption("Mid-sentence dictation matches the spacing and capitalization around your cursor.")
+                    Text("It reads around the cursor with hidden keystrokes. If an app misbehaves, turn it off here or per app on the [Dictation page](yap://dictation). Some apps beep when it reads your cursor; turning Alert volume down in Sound settings silences that.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Sound Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var afterTranscriptionCard: some View {
+        @Bindable var settings = state.settings
+        return CardSection("After transcription") {
             // MASTER SWITCH for the whole mode/AI system. Off = extremely rapid transcription:
             // your words typed exactly as spoken, no AI stage at all.
             Toggle("Post-transcription analysis", isOn: $settings.aiCleanupEnabled)
                 .toggleStyle(.switch).controlSize(.small)
-            SubOptions {
-                Caption(settings.aiCleanupEnabled
-                    ? "Modes, Auto, and AI cleanup run after each transcription."
-                    : "Off: your words land exactly as spoken, with no AI.")
+            if settings.aiCleanupEnabled {
+                SubOptions { Caption("Modes, Auto, and AI cleanup run after each transcription.") }
             }
             Toggle("Auto mode", isOn: $settings.autoContextMode)
                 .toggleStyle(.switch).controlSize(.small)
@@ -288,7 +312,12 @@ struct HomeView: View {
                     }
                 }
             }
-            if !settings.hasDismissedDictionaryTip { dictionaryTip }
+        }
+    }
+
+    private var iconsCard: some View {
+        @Bindable var settings = state.settings
+        return CardSection("Icons") {
             HStack(spacing: 8) {
                 Image(systemName: "menubar.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Menu bar icon")
@@ -303,7 +332,6 @@ struct HomeView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.top, 10)
             HStack(spacing: 8) {
                 Image(systemName: "dock.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Dock icon")

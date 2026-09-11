@@ -454,8 +454,9 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // Whisper was trained on captioned media, so on noisy or thin audio it narrates the
         // SPEAKER as well as the sound ("Male speaker: ...", "[Speaker 1]"). Nobody dictates
         // their own gender tag; a label at a line start is never the user's words.
+        text = Self.stripLeadingStageDirection(text)
         text = Self.stripSpeakerLabels(text)
-        text = Self.stripNameLabels(text)
+        text = Self.stripNameLabels(text, knownNames: Self.primeNames(bias))
         // WRAPPING QUOTES: when an utterance sounds like reported speech the decoder can
         // print a matching pair of quotation marks around the whole thing ("I saw your new
         // video and I wanted to reach out."). Nobody dictates an entire message inside
@@ -620,7 +621,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// dictated sentence that merely contains the word speaker is left alone.
     static func stripSpeakerLabels(_ text: String) -> String {
         // Dash class covers hyphen, en dash, em dash.
-        let pattern = #"(?im)^[ \t]*\[?[ \t]*(?:male|female|unknown|first|second)?[ \t]*speaker(?:[ \t]*(?:\d+|one|two|three|[a-d]))?[ \t]*\]?[ \t]*[:\-\x{2013}\x{2014}][ \t]*"#
+        let pattern = #"(?im)(?:^|(?<=[.!?][ \t]))[ \t]*\[?[ \t]*(?:male|female|unknown|first|second)?[ \t]*speaker(?:[ \t]*(?:\d+|one|two|three|[a-d]))?[ \t]*\]?[ \t]*[:\-\x{2013}\x{2014}][ \t]*"#
         guard let re = try? NSRegularExpression(pattern: pattern) else { assertionFailure("speaker-label regex failed to compile"); return text }
         var out = re.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
         // A bare bracketed tag anywhere ("[male speaker]") is a caption too.
@@ -636,15 +637,55 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// words, a colon, then at least three more words. Common dictated headings ("Meeting
     /// Notes:", "Action Item:", "Dear Sarah:") are kept, and nothing past the first line is
     /// touched, so a name someone actually dictates mid-text survives.
-    static func stripNameLabels(_ text: String) -> String {
-        let pattern = #"^[ \t]*(?:>>|[\-\x{2013}\x{2014}])?[ \t]*((?:[A-Z][a-z]*(?:['\x{2019}\-][A-Za-z]+)?|[A-Z]{2,})(?:[ \t]+(?:[A-Z][a-z]*(?:['\x{2019}\-][A-Za-z]+)?|[A-Z]{2,})){1,2})[ \t]*:[ \t]+(?=(?:\S+[ \t]+){2}\S)"#
+    /// Remove a hallucinated speaker label: a short capitalised name, optionally with a digit
+    /// ("Guy 2"), a mid-word capital ("DeGrasse") or an apostrophe ("O'Brien"), followed by a
+    /// colon and at least two more words. Whisper learned "Name: speech" from captioned media,
+    /// and it reaches for the pattern hardest when the vocabulary prime hands it a name. The
+    /// label is looked for at the start of the text AND after any sentence end, because the
+    /// decoder relabels mid-transcript too ("I am not greedy. Speaker 1: Accessibility…").
+    /// Heading-shaped dictation ("Note: buy milk", "Step 2: …") is left alone, unless the label
+    /// is one of `knownNames` (the user's own name, the priming vocabulary), which can only
+    /// ever be the prime echoing.
+    static func stripNameLabels(_ text: String, knownNames: Set<String> = []) -> String {
+        let token = #"(?:[A-Z][A-Za-z'\x{2019}\-]*|[A-Z]{2,}|\d{1,2})"#
+        let pattern = #"(?:^|(?<=[.!?][ \t]))[ \t]*(?:>>|[\-\x{2013}\x{2014}])?[ \t]*("# + token + #"(?:[ \t]+"# + token + #"){0,2})[ \t]*:[ \t]+(?=(?:\S+[ \t]+)\S)"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { assertionFailure("name-label regex failed to compile"); return text }
+        var out = text
+        var searchFrom = 0
+        while let m = re.firstMatch(in: out, range: NSRange(location: searchFrom, length: (out as NSString).length - searchFrom)),
+              let labelRange = Range(m.range(at: 1), in: out), let whole = Range(m.range, in: out) {
+            let label = String(out[labelRange])
+            let words = label.lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            let known = knownNames.contains(label.lowercased()) || words.contains(where: { knownNames.contains($0) })
+            // A label made only of digits or a lone initial is not a name; a heading word is
+            // dictation. Either way it stays, and the search moves past it.
+            let looksLikeName = words.contains(where: { $0.first?.isLetter == true && $0.count > 1 })
+            if !known, (!looksLikeName || words.contains(where: { Self.headingWords.contains($0) })) {
+                searchFrom = m.range.location + m.range.length
+                continue
+            }
+            yapdiag("whisper: dropped name label \(label.debugDescription)")
+            let at = m.range.location
+            out.removeSubrange(whole.lowerBound..<whole.upperBound)
+            searchFrom = at   // the text after the removal may open with another label
+        }
+        return out
+    }
+
+    /// Whisper opening a transcript with a stage direction: "*computer voice* You must…",
+    /// "*Glielp* I made…", "[inaudible] the next…". Nobody starts dictation with a bracketed
+    /// aside, so a short bracketed or starred span at the very start is removed whatever
+    /// words it holds, provided real words follow it. A span with digits in it is kept: a
+    /// dictated "(555) 123 4567" is not a caption.
+    static func stripLeadingStageDirection(_ text: String) -> String {
+        let pattern = #"^[ \t]*(\*[^*\n]{1,60}\*|\[[^\]\n]{1,60}\]|\([^)\n]{1,60}\))[ \t]*(?=(?:\S+[ \t]+)\S)"#
         guard let re = try? NSRegularExpression(pattern: pattern),
               let m = re.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)),
-              let labelRange = Range(m.range(at: 1), in: text) else { return text }
-        let words = text[labelRange].lowercased().split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-        if words.contains(where: { Self.headingWords.contains($0) }) { return text }
-        guard let whole = Range(m.range, in: text) else { return text }
-        yapdiag("whisper: dropped name label \(String(text[labelRange]).debugDescription)")
+              let span = Range(m.range(at: 1), in: text), let whole = Range(m.range, in: text) else { return text }
+        let inner = String(text[span]).dropFirst().dropLast()
+        let words = inner.split { !$0.isLetter && $0 != "'" }
+        guard !words.isEmpty, words.count <= 6, !inner.contains(where: { $0.isNumber }) else { return text }
+        yapdiag("whisper: dropped leading stage direction \(String(text[span]).debugDescription)")
         return String(text[whole.upperBound...])
     }
 
@@ -698,6 +739,12 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         let spoken = words(text)
         guard !spoken.isEmpty, spoken.count <= 8, !glossary.isEmpty else { return false }
         return spoken.allSatisfy { glossary.contains($0) }
+    }
+
+    /// The priming vocabulary as lowercased words, so an echoed name can be recognised.
+    static func primeNames(_ prompt: String?) -> Set<String> {
+        guard let prompt else { return [] }
+        return Set(prompt.lowercased().split { !$0.isLetter && $0 != "'" }.map(String.init).filter { $0.count > 1 })
     }
 
     static func isSilenceHallucination(_ text: String) -> Bool {
@@ -1013,6 +1060,11 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         params.print_special = false
         params.print_timestamps = false
         params.suppress_blank = true
+        // The tokens whisper uses to caption sound rather than transcribe speech: "*", "[",
+        // "(", "\u{266A}" and friends. With them suppressed, "*computer voice*" cannot be
+        // generated in the first place. Spoken punctuation is words at this stage ("open
+        // paren"), so nothing a user dictates is lost.
+        params.suppress_nst = true
         params.no_timestamps = true
         params.n_threads = Int32(max(2, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
 

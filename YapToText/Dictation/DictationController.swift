@@ -1165,6 +1165,15 @@ final class DictationController {
                         presurround = await task.value
                     } else { task.cancel() }
                 }
+                // The pre-read ran alongside the decode, and a web editor starved by it can
+                // answer the copy before it has moved its selection: an EMPTY read, and the
+                // dictation lands unadapted mid-sentence ("system I'm going to..." in Gmail,
+                // caught live 2026-09-16). The Mac is quiet now, so read once more, without
+                // the probe and with a short settle: about 150ms when the app answers.
+                if let p = presurround, p.retryAtDelivery, deliveryTargetIsFrontmost() {
+                    yapdiag("insertctx: pre-read got no usable answer during the decode - reading again now that the Mac is quiet")
+                    presurround = await InsertionContext.readSurroundings(retry: true)
+                }
                 // No usable pre-read: the user switched apps mid-dictation (the read never
                 // started, or ran in the wrong app). Read the app that is in front NOW, before
                 // the clipboard is loaded, so a switched-to app still gets its spacing and
@@ -1268,6 +1277,7 @@ final class DictationController {
                 deliverySeconds: sessionDeliverySeconds,
                 autoVerdict: sessionAutoVerdict))
             if !keepSessionAudio { AudioStore.delete(sessionAudioFileName) }   // recovery-only file
+            RatingPrompt.considerAfterDictation(history: history, controller: self)
         } else {
             AudioStore.delete(sessionAudioFileName)   // no record kept: don't orphan the audio
         }
@@ -1541,7 +1551,11 @@ final class DictationController {
                     if budget + cost > 200 { break }
                     kept.append(t); budget += cost
                 }
-                let bias: String? = kept.isEmpty ? nil : "Glossary: " + kept.joined(separator: ", ") + "."
+                // No "Glossary:" prefix. A "Label: words" prime taught the decoder that shape,
+                // and with the user's name in the list it opened dictations with "Ryleigh:",
+                // "Ryannick:", "Reinhardt:" (Sep 12 to 16, 2026). A plain comma list reads as a
+                // prior sentence, which is all the prime is meant to be.
+                let bias: String? = kept.isEmpty ? nil : kept.joined(separator: ", ") + "."
                 engine.promptBias = bias
                 if let bias { yapdiag("makeEngine: primed \(bias.count) chars (recent: \(recent.joined(separator: "|")))") }
                 return engine
@@ -1995,6 +2009,89 @@ final class DictationController {
     }
 #endif
 
+    /// Fillers a cleanup is allowed to remove. Anything else the user said is content and comes
+    /// back if the model dropped it.
+    nonisolated static let cleanupFillers: Set<String> = [
+        "um", "uh", "uhm", "umm", "er", "ah", "hmm", "mm", "mhm", "oh", "like", "basically",
+        "actually", "literally", "okay", "ok", "well", "yeah", "anyway", "so", "right",
+    ]
+    nonisolated static let cleanupFillerPhrases: Set<String> = [
+        "you know", "i mean", "sort of", "kind of", "or whatever", "and stuff", "you know what i mean",
+    ]
+
+    /// Put back the words a cleanup DROPPED. Clean Up is allowed to remove fillers, false starts
+    /// and stutters and to correct recognition errors; it is not allowed to lose anything else,
+    /// and the small model does: "for example" gone from a 36-word dictation, a whole sentence
+    /// gone from a 49-word one, "fucking" removed twice (all 2026-09-16, all under the 25%
+    /// sentence-loss threshold). The raw and cleaned texts are aligned word by word; every
+    /// deleted run that is not filler or a stutter, and every replacement that shrinks the
+    /// run by two or more words, is spliced back from the raw transcript's own tokens, so the
+    /// punctuation the user got around those words is theirs. A run whose words the model
+    /// moved elsewhere is not a deletion and is left alone. Returns the text and what it put
+    /// back, for the log.
+    nonisolated static func restoreDroppedWords(in cleaned: String, from raw: String) -> (text: String, restored: [String]) {
+        let rawTok = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        let outTok = cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
+        func norm(_ t: String) -> String {
+            String(t.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == "'" })
+        }
+        let a = rawTok.map(norm), b = outTok.map(norm)
+        guard !a.isEmpty, !b.isEmpty, a.count <= 3000, b.count <= 3000 else { return (cleaned, []) }
+        // LCS table for the alignment.
+        var dp = [[Int]](repeating: [Int](repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in stride(from: a.count - 1, through: 0, by: -1) {
+            for j in stride(from: b.count - 1, through: 0, by: -1) {
+                dp[i][j] = (a[i] == b[j] && !a[i].isEmpty) ? dp[i + 1][j + 1] + 1 : max(dp[i + 1][j], dp[i][j + 1])
+            }
+        }
+        // Walk it into ops: (deleted raw range, inserted out range) at each divergence.
+        var ops: [(del: Range<Int>, ins: Range<Int>)] = []
+        var i = 0, j = 0, di = 0, dj = 0
+        func flush() { if di < i || dj < j { ops.append((di..<i, dj..<j)) }; di = i; dj = j }
+        while i < a.count, j < b.count {
+            if a[i] == b[j], !a[i].isEmpty { flush(); i += 1; j += 1; di = i; dj = j }
+            else if dp[i + 1][j] >= dp[i][j + 1] { i += 1 }
+            else { j += 1 }
+        }
+        i = a.count; j = b.count; flush()
+        let insertedWords = Set(ops.flatMap { b[$0.ins] }.filter { !$0.isEmpty })
+        func isAllowedDrop(_ run: Range<Int>) -> Bool {
+            let words = a[run].filter { !$0.isEmpty }
+            if words.isEmpty { return true }
+            if cleanupFillerPhrases.contains(words.joined(separator: " ")) { return true }
+            if words.allSatisfy({ cleanupFillers.contains($0) }) { return true }
+            // A stutter or false start: the run repeats what immediately follows or precedes it
+            // (the alignment may keep either twin).
+            let after = Array(a[run.upperBound..<min(a.count, run.upperBound + words.count)]).filter { !$0.isEmpty }
+            if !after.isEmpty, Array(words.suffix(after.count)) == after { return true }
+            let before = Array(a[max(0, run.lowerBound - words.count)..<run.lowerBound]).filter { !$0.isEmpty }
+            if !before.isEmpty, Array(words.prefix(before.count)) == before { return true }
+            // The words were moved, not lost.
+            if words.allSatisfy({ insertedWords.contains($0) }) { return true }
+            return false
+        }
+        var restored: [String] = []
+        var result = outTok
+        // Apply from the end so earlier indices stay valid.
+        for op in ops.reversed() {
+            let deleted = a[op.del].filter { !$0.isEmpty }
+            let inserted = b[op.ins].filter { !$0.isEmpty }
+            if inserted.isEmpty {
+                if isAllowedDrop(op.del) { continue }
+                let back = Array(rawTok[op.del])
+                result.replaceSubrange(op.ins.lowerBound..<op.ins.lowerBound, with: back)
+                restored.append(back.joined(separator: " "))
+            } else if deleted.count - inserted.count >= 2, !isAllowedDrop(op.del) {
+                // A "correction" that swallowed two or more words is a deletion in disguise.
+                let back = Array(rawTok[op.del])
+                result.replaceSubrange(op.ins, with: back)
+                restored.append(back.joined(separator: " "))
+            }
+        }
+        guard !restored.isEmpty else { return (cleaned, []) }
+        return (result.joined(separator: " "), restored.reversed())
+    }
+
     static func restoreCensoredWords(in cleaned: String, from raw: String) -> String {
         guard cleaned.contains("*"), !raw.contains("*") else { return cleaned }
         let rawWords = raw.split { !$0.isLetter && $0 != "'" }.map(String.init)
@@ -2105,10 +2202,18 @@ final class DictationController {
                 }
             }
         }
-        if context.userName == nil {
-            return stripUnauthorizedSignoff(cleaned, raw: text)
+        var kept = cleaned
+        if preserving {
+            let (patched, restored) = Self.restoreDroppedWords(in: cleaned, from: text)
+            if !restored.isEmpty {
+                yapdiag("cleanup: restored \(restored.count) dropped run(s): \(restored.map { $0.debugDescription }.joined(separator: ", "))")
+                kept = patched
+            }
         }
-        return cleaned
+        if context.userName == nil {
+            return stripUnauthorizedSignoff(kept, raw: text)
+        }
+        return kept
     }
 
     // MARK: Transcribe a file

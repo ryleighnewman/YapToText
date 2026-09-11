@@ -76,6 +76,14 @@ enum InputHealth {
 
     /// The comparison itself, with no once-a-day gate, so Diagnostics and tests can read it.
     static func diagnose() -> Diagnosis? {
+        // A route that could not be honoured outranks any signal statistic: the user chose one
+        // microphone and is being recorded by another.
+        if let fallback = AudioRecorder.lastFallback {
+            return Diagnosis(
+                headline: "Dictation is using \(fallback.defaultName), not the microphone you chose.",
+                detail: "The chosen microphone and \(fallback.defaultName) run at different rates, and macOS's audio engine cannot switch between them while \(fallback.defaultName) is the system default input. To dictate on the chosen microphone, make it the default in System Settings under Sound, or disconnect \(fallback.defaultName).",
+                recentSNR: 0, baselineSNR: 0)
+        }
         let s = load()
         guard s.count >= recentCount + baselineCount else { return nil }
         let recent = Array(s.suffix(recentCount))

@@ -74,6 +74,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Fires on system memory pressure so the cached speech/cleanup models can be dropped.
     private let memoryPressureSource = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
 
+    /// ONE COPY AT A TIME. Two YapToTexts with the same bundle identifier (the App Store copy
+    /// in /Applications and a development build, or a stale copy still running after a
+    /// reinstall) both answer the dictation key, both open the microphone, and macOS keeps
+    /// one Accessibility grant per bundle: the moment the second copy launched, the first
+    /// began delivering to the clipboard "because it had no Accessibility permission"
+    /// (2026-09-16 16:22). The later launch steps aside and brings the running copy forward,
+    /// before it has initialised anything that could take that grant.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // The unit-test host is this same bundle launched next to the real app; it must run.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let bid = Bundle.main.bundleIdentifier else { return }
+        func other() -> NSRunningApplication? {
+            NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+                .first(where: { $0.processIdentifier != me && !$0.isTerminated })
+        }
+        // A relaunch (build script, App Store update) kills the old copy and opens the new one
+        // within a second; the old one can still be listed while it exits. Give it a moment.
+        var found = other()
+        let deadline = Date().addingTimeInterval(2.0)
+        while let o = found, Date() < deadline, o.bundleURL == Bundle.main.bundleURL {
+            Thread.sleep(forTimeInterval: 0.1)
+            found = other()
+        }
+        guard let running = found else { return }
+        yapdiag("launch: another YapToText is already running (pid \(running.processIdentifier), \(running.bundleURL?.path ?? "?")) - quitting this one")
+        running.activate(options: [])
+        exit(0)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // CRASH BREADCRUMBS for the diagnostics report (the sandbox cannot read macOS's
         // own crash logs, so the app keeps its own count): if the previous run never
@@ -253,6 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        dnc.addObserver(forName: .init("yap.debug.rating"), object: nil, queue: .main) { note in
+            if (note.object as? String) == "close" { RatingPrompt.close() } else { RatingPrompt.present() }
+        }
         dnc.addObserver(forName: .init("yap.debug.whatsnew"), object: nil, queue: .main) { note in
             let raw = note.object as? String
             NotificationCenter.default.post(name: .init("yapDebugShowWhatsNew"), object: raw)
@@ -311,8 +344,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.stagingFeed = Task { @MainActor in
                 var t = 0.0
                 let energy = parts.count > 2 ? (Double(parts[2]) ?? 1) : 1   // "style|text|energy"
+                // "style|text|energy|phase|t": a fixed t holds ONE frame of the synthetic
+                // wave, so a screenshot is the same picture every time instead of whatever
+                // frame the capture happened to land on (a tangled one, 2026-09-16).
+                let hold = parts.count > 4 ? Double(parts[4]) : nil
                 while !Task.isCancelled {
-                    PreviewSpeech.fill(c.visualData, t: t, energy: energy)
+                    PreviewSpeech.fill(c.visualData, t: hold ?? t, energy: energy)
                     try? await Task.sleep(nanoseconds: 33_000_000)
                     t += 0.033
                 }
@@ -1325,6 +1362,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if Self.isAddToDictionary(trimmed) {
                     self.addSelectionToDictionary(text)
                     QuickEditWindow.shared.showResult("Added \u{201C}\(text.prefix(30))\u{201D} to your dictionary")
+                    return
+                }
+                // A literal swap never needs the model either: "change this to named" is "named".
+                if let literal = ReplaceEdit.apply(instruction: trimmed, to: text) {
+                    yapdiag("quickEdit: deterministic replacement -> \(literal.prefix(60).debugDescription)")
+                    QuickEditWindow.shared.showWorking(trimmed)
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if literal == text {
+                            QuickEditWindow.shared.showResult("Already like that", success: false)
+                        } else {
+                            await self.paste(literal, into: target)
+                            QuickEditWindow.shared.showResult("Done")
+                        }
+                    }
                     return
                 }
                 // Plain case changes never need the model: instant, exact, and immune to a

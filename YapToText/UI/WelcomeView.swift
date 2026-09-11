@@ -12,7 +12,7 @@ struct WelcomeView: View {
     @Binding var isPresented: Bool
 
     enum Step: Int, CaseIterable, Identifiable {
-        case welcome, permissions, controls, demo, quickEdit, appearance, privacy, ready
+        case welcome, permissions, controls, demo, quickEdit, appearance, privacy, support, ready
         var id: Int { rawValue }
     }
 
@@ -20,6 +20,7 @@ struct WelcomeView: View {
     /// Debug-only: jump to a step by name (yap.debug.welcome <step>) for screenshots.
     private let debugStep = NotificationCenter.default.publisher(for: .init("yapDebugWelcomeStep"))
     @State private var forward = true
+    @Environment(\.colorScheme) private var scheme
 
     // Choices made during setup.
     @State private var pushToTalk = false
@@ -37,6 +38,10 @@ struct WelcomeView: View {
 
     private var bodyContent: some View {
         ZStack {
+            // A firmer ground under the aurora. The window material lets the desktop
+            // through, and over a bright wallpaper the whole welcome went pale and the
+            // text lost its contrast. A solid shade first, then the aurora on top of it.
+            Color.black.opacity(scheme == .dark ? 0.48 : 0.34).ignoresSafeArea()
             AuroraBackground(reduceMotion: reduceMotion)
 
             // The page content, vertically centered, clear of the bottom chrome.
@@ -130,6 +135,7 @@ struct WelcomeView: View {
         case .appearance: appearanceStep
         case .controls: controlsStep
         case .privacy: privacyStep
+        case .support: supportStep
         case .ready: readyStep
         }
     }
@@ -392,6 +398,25 @@ struct WelcomeView: View {
                 Link("here", destination: SupportLinks.privacy)
                     .font(.caption.weight(.medium))
             }
+        }
+    }
+
+    @State private var welcomeDiagnosticsCopied = false
+    private var supportStep: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "heart.text.clipboard")
+                .font(.system(size: 40, weight: .semibold))
+                .iconTint(Color.accentColor)
+                .frame(width: 74, height: 74)
+            Text("Here for you!").font(.title.weight(.bold)).multilineTextAlignment(.center)
+            Text("If you run into a bug or something that doesn't feel right, please reach out so it can be fixed. YapToText is built by one person who depends on hearing from you, and your experience means a lot.")
+                .font(.body).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 470)
+            Text("Help is always at the bottom of the sidebar.")
+                .font(.callout).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 6)
         }
     }
 

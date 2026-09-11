@@ -54,7 +54,7 @@ struct SupportSettingsView: View {
             Image(systemName: "heart.fill")
                 .font(.system(size: 36))
                 .iconTint(.pink)
-            Text("Support YapToText")
+            Text("Donate to YapToText")
                 .font(.title2.weight(.semibold))
             Text("YapToText is free forever. If it makes your day easier, a tip helps fund continued development.")
                 .font(.caption)
