@@ -22,10 +22,15 @@ SENTENCE = "Accessibility made free and beautiful."
 BLUE = "accent||0.35|accent|"          # tint style|hex|strength|wave style|hex
 BOOST = {"expanded": "2.3", "compact": "1.6", "mini": "1.6"}
 
+# Hold points for the live wave, chosen by eye from tools/shoot_wave.py's contact sheet
+# (2026-09-17, expanded = frame 14). A held frame makes the capture the same every run.
+HOLD = {"expanded": 8.6, "compact": 6.2, "mini": 6.2}
+
 def panel(name, style, phase="recording", text=SENTENCE, energy="1.7", settle=3.4):
     r.note("yap.debug.waveboost", BOOST[style])
     r.note("yap.debug.panellook", BLUE); time.sleep(0.4)
-    r.note("yap.debug.stagepanel", f"{style}|{text}|{energy}|{phase}"); time.sleep(settle)
+    hold = f"|{HOLD[style]}" if phase == "recording" and style in HOLD else ""
+    r.note("yap.debug.stagepanel", f"{style}|{text}|{energy}|{phase}{hold}"); time.sleep(settle)
     pw = r.window_id(280, 620, 420, layer_min=1)
     if not pw:
         print("  no panel window for", name); return
