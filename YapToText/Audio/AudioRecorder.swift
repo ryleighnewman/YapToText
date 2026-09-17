@@ -518,6 +518,10 @@ final class AudioRecorder: @unchecked Sendable {
             // stopped, and the mic indicator turns off. That is what the setting promises.
             let wantWarm = ((self.keepWarm && !self.warmStandbyExpired) || self.activityHoldActive) && self.engineMayOpenInput
             if self.engine.isRunning { self.engine.stop() }
+            // Same rule as releaseVoiceProcessingNow: never create the input node on an
+            // engine that never opened its input, or the default device (a Bluetooth
+            // hearing aid) gets opened by a power-DOWN.
+            guard self.residentInstalled || wantWarm else { return }
             let input = self.engine.inputNode
             if input.isVoiceProcessingEnabled {
                 try? input.setVoiceProcessingEnabled(false)
@@ -914,6 +918,13 @@ final class AudioRecorder: @unchecked Sendable {
     func releaseVoiceProcessingNow() {
         guard !isRunning else { return }
         vpPrewarmSuppressed = true
+        // Only an engine that actually opened its input can have anything to release.
+        // Reading `engine.inputNode` on an untouched engine CREATES the node, which opens
+        // the system default input: with a Bluetooth hearing aid as the default, that put
+        // the aid into its phone-call mode a few milliseconds before Music was resumed, so
+        // every dictation ended with playback at 8 kHz (measured 2026-09-17: aids at
+        // 44.1 kHz through the whole capture, 8 kHz at the instant of this call).
+        guard residentInstalled || engine.isRunning else { return }
         let input = engine.inputNode
         // The early return must leave the pending idle power-down INTACT: cancelling it
         // first and then returning (voice processing is permanently off in this build, so

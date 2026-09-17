@@ -23,7 +23,7 @@ everything else in the sidebar is optional.
 
 ## What's new in 1.5.2
 
-- Bluetooth hearing aids and headsets keep their full sound quality: the app uses the microphone you chose instead of switching to the Bluetooth one
+- Bluetooth hearing aids and headsets keep their full sound quality: the app uses the microphone you chose instead of switching to the Bluetooth one, and Music comes back at full quality after every dictation
 - Fixed a crash and a freeze when a Bluetooth device connected mid-dictation
 - Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps, and dictating over a selection now replaces it the way it was written
 - Quick Edit swaps a word or phrase exactly as you say it, instantly
