@@ -3,23 +3,97 @@
 **Yap it. Bam. It's typed.**
 
 YapToText is a free, open-source dictation app for macOS that runs entirely on your Mac.
-It is a no-subscription alternative to Wispr Flow, superwhisper, and MacWhisper: Whisper
-speech to text plus local AI cleanup, with no account and no cloud.
+Press one key, talk, and your words land wherever your cursor is, cleaned up and
+punctuated. Nothing ever leaves your machine: no account, no cloud, no subscription.
 
-Press one key, talk, and your words land wherever your cursor is. Nothing ever leaves your
-machine.
+It is the no-subscription alternative to Wispr Flow, superwhisper, and MacWhisper, built
+by someone who cannot type and dictates everything, including this.
 
 [<img src=".github/assets/mac-app-store-badge.svg" alt="Download on the Mac App Store" height="48">](https://apps.apple.com/us/app/yaptotext/id6786382289?mt=12)
 
 Website: [yaptotext.com](https://yaptotext.com) (help, install, release notes)
 
-![YapToText](Marketing/posters-v5/01-hero.jpg)
+## Overview
 
-## Why it exists
+Tap Right Command anywhere on your Mac, say what you want to write, and tap again. The
+speech model (Whisper Large v3 Turbo) and the cleanup model (Phi-3.5 Mini) both ship
+inside the app, so it works offline from the first launch. Auto mode reads each dictation
+and shapes it for where it is going, Quick Edit rewrites any selected text by voice, and
+everything else in the sidebar is optional.
 
-I built YapToText because I need it. My hands make typing difficult, so I dictate
-everything. The good dictation apps all wanted a subscription and sent my voice to their
-servers. I didn't want either, so I made my own, and I'm giving it away.
+## What's new in 1.5.2
+
+- Bluetooth hearing aids and headsets keep their full sound quality: the app uses the microphone you chose instead of switching to the Bluetooth one
+- Fixed a crash and a freeze when a Bluetooth device connected mid-dictation
+- Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps, and dictating over a selection now replaces it the way it was written
+- Quick Edit swaps a word or phrase exactly as you say it, instantly
+- Cleanup no longer drops words you said
+- Hallucinated speaker labels like "Name:" and stage directions are gone
+- Miscellaneous bug fixes
+
+Full release history in [CHANGELOG.md](CHANGELOG.md). This section tracks the latest release.
+
+## A tour
+
+![Yap it. Bam. It's typed!](Marketing/posters-v5/01-hero.jpg)
+
+Open YapToText and the whole app is on one screen: your dictation and Quick Edit keys,
+Intelligent Insert, the after-transcription switches, and your stats. The floating panel
+shows your voice as a live wave while you talk, in whichever size and colour you like.
+
+![I created this because my hands don't work](Marketing/posters-v5/02-punchline.jpg)
+
+YapToText is an accessibility tool first. One key runs everything, that key can be any
+key, and dictation can fully replace typing. It works alongside VoiceOver and Voice
+Control, and it was built by someone who depends on it every day.
+
+![Edit anything by voice](Marketing/posters-v5/03-quick-edit.jpg)
+
+Select some text in any app, tap your Quick Edit key, and say the change: shorten it,
+fix the tone, capitalize it, translate it. The result lands right where the selection
+was. Small, exact requests like "change this to hearing aids" are instant and skip the AI.
+
+![It hears you through anything](Marketing/posters-v5/04-listening-engine.jpg)
+
+Background noise is removed before transcription, quiet voices are lifted to full
+clarity by measuring your voice against the room, and the decoder digs deeper when the
+room gets loud. Whispering next to a running 3D printer transcribes cleanly.
+
+![The whole app, right in your menu bar](Marketing/posters-v5/05-menubar.jpg)
+
+Click the capybara to start a dictation, switch mode or microphone, transcribe a file,
+regenerate your last dictation as any mode, or insert it again. His speech bubble turns
+red while recording, spins while transcribing, and flashes green when your text lands.
+
+![AI pipelines, tuned your way](Marketing/posters-v5/06-ai-pipelines.jpg)
+
+Every mode is its own pipeline: transcription, dictionaries, cleanup model, output style.
+Raw Transcription, Clean Up, Note, Email, Message, and Code are built in, every one is
+editable in plain language, and you can press 1 to 9 mid-dictation to switch, or let
+Auto pick for you.
+
+![Watch the pipeline work](Marketing/posters-v5/07-pipeline-live.jpg)
+
+Every dictation keeps its receipts: the audio, what the speech model heard, what the AI
+delivered, and the model, mode, and timings behind it. Nothing is a mystery.
+
+![Nothing leaves your Mac](Marketing/posters-v5/08-privacy.jpg)
+
+On-device speech recognition, local AI models built in, no analytics, no tracking, no
+accounts. The code is open source under GPL-3.0, so every one of those claims can be
+checked instead of trusted.
+
+![Teach it your words](Marketing/posters-v5/09-personalize.jpg)
+
+Dictionaries fix the names it mishears, and fixing the same word twice makes the app
+offer to remember it. Commands type anything you say: "insert phone number" types your
+real number, "insert smiley face" types the emoji.
+
+![Never lose a word. Ever.](Marketing/posters-v5/10-history.jpg)
+
+Every dictation is saved on your Mac with playback, search, editing, and export. If the
+app or the Mac dies mid-sentence, the audio survives and is transcribed on the next
+launch, so the words are waiting for you in History.
 
 ## How it compares
 
@@ -37,138 +111,37 @@ servers. I didn't want either, so I made my own, and I'm giving it away.
 Checked August 2026. The paid apps are good software and some of them do things I don't
 do yet. Prices and features change, so check for yourself before you switch.
 
-## What it does
+## Everything it does
 
-- **Dictate anywhere.** One tap of Right Command starts dictation in any app. Your text is
-  typed right at the cursor.
-- **Quick Edit (new in 1.1).** Select text in any app, press your Quick Edit key, and say
-  the change. Rewrite, shorten, fix tone, translate: it lands right where the selection was.
-- **Hears you through anything (new in 1.1).** A rebuilt listening engine: background-noise
-  removal, adaptive normalization, and deeper decoding when the room gets loud. Whispering
-  next to a running 3D printer transcribes cleanly.
-- **Fully on device.** The speech model and the AI cleanup model ship inside the app. It
-  works offline from the first launch. No account, no cloud, no analytics.
-- **Auto mode.** It reads each dictation and picks the right format on its own. An email
-  comes out as an email, a quick message stays casual, everything else just gets cleaned up.
+- **Dictate anywhere.** One tap of Right Command starts dictation in any app, and the
+  text is typed right at the cursor. Tap to toggle or hold to talk, pause with Space,
+  cancel with Esc, and remap the key to anything.
+- **Intelligent Insert.** Dictate into the middle of a sentence and the case, spacing,
+  and punctuation adapt to the text around your cursor. Dictate over a selection and the
+  replacement takes its shape. Turn it off per app if an app dislikes it.
+- **Quick Edit.** Select text in any app, tap your Quick Edit key, and say the change.
+  Rewrite, shorten, fix tone, translate, or swap a word exactly as you say it.
+- **Auto mode.** It reads each dictation and picks the right format on its own: an email
+  comes out as an email, a quick message stays casual, everything else is cleaned up.
+  End with "make that formal" or "as a bullet list" and it follows the instruction.
 - **Modes for everything.** Raw Transcription, Clean Up, Email, Note, Message, Code, or
-  write your own with custom instructions. Press 1 through 9 mid-dictation to switch.
+  write your own with custom instructions and give each app its own default. Press 1
+  through 9 mid-dictation to switch.
+- **Send it for me.** Choose a key per app (Return or Command Return) that is pressed the
+  moment your words land, so a dictated message goes out on its own.
+- **Hears you through anything.** Background-noise removal, adaptive amplification that
+  measures your voice against the room, and deeper decoding when it gets loud. Bluetooth
+  hearing aids and headsets keep their full sound quality.
+- **Fully on device.** The speech model and the cleanup model ship inside the app. It
+  works offline from the first launch. Bring your own Whisper or GGUF model if you like,
+  and let the models follow your power source on the Energy page.
 - **Teach it your words.** Dictionaries fix the names it mishears. Commands type anything
-  you say: "insert phone number" types your real number.
+  you say. Say "add this to my dictionary" over a selection and it is learned.
 - **Never lose a word.** Crash recovery rescues interrupted dictations. Full history with
-  playback, search, editing, and export.
+  playback, search, editing, export, and statistics, all computed locally.
 - **Transcribe any file.** Drop in audio or video, get the text.
 - **Built for accessibility.** Works with VoiceOver and Voice Control, one key runs
   everything, and dictation can fully replace typing.
-
-![Quick Edit](Marketing/posters-v5/03-quick-edit.jpg)
-
-![The listening engine](Marketing/posters-v5/04-listening-engine.jpg)
-
-![AI pipelines](Marketing/posters-v5/06-ai-pipelines.jpg)
-
-![Menu bar](Marketing/posters-v5/05-menubar.jpg)
-
-![Watch the pipeline work](Marketing/posters-v5/07-pipeline-live.jpg)
-
-![Teach it your words](Marketing/posters-v5/09-personalize.jpg)
-
-![Privacy](Marketing/posters-v5/08-privacy.jpg)
-
-## What's new in 1.5.2
-
-- Bluetooth hearing aids and headsets keep their full sound quality: the app uses the microphone you chose instead of switching to the Bluetooth one
-- Fixed a crash and a freeze when a Bluetooth device connected mid-dictation
-- Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps, and dictating over a selection now replaces it the way it was written
-- Quick Edit swaps a word or phrase exactly as you say it, instantly
-- Cleanup no longer drops words you said
-- Hallucinated speaker labels like "Name:" and stage directions are gone
-- Miscellaneous bug fixes
-
-## What's new in 1.5.1
-
-- Dictating into a terminal works better: reading the text around your cursor uses invisible keystrokes that a terminal treats as its own shortcuts, so that read is now skipped there instead of triggering commands and losing the text
-- Intelligent Insert can be turned off for particular apps: the list sits right under its switch on the Dictation page, with terminals already in it
-- Cancelling a dictation no longer throws it away: it is still transcribed and saved to History, marked as cancelled, so a stray Escape cannot lose what you said. It is never inserted anywhere
-- Keeping cancelled dictations is on by default, alongside the other saving options in Settings > History & audio
-- The app watches how well it can actually hear you: if the microphone signal drops well below your own normal, the Dictation page says so and names the likely cause, instead of quietly mishearing more and more
-
-## What's new in 1.5
-
-- Send it for me: choose a key per app (Return or ⌘Return) that is pressed the moment your words land, so a dictated message or prompt goes out on its own
-- Quick Edit follows your request: rewrite, change tone, translate, capitalize. Case changes apply instantly, and it says so when nothing changed or when what you said was not an edit
-- Quick Edit has its own pop-up: pick where it opens, drag it anywhere and it stays, and give it its own colors. The key taps to start and stop by default
-- The dictation pop-up stays wherever you drag it; layout, position, snap-back, and colors live on the Dictation page with a live preview
-- Cancelling a dictation closes the pop-up in one motion, the same way every time
-- Intelligent Insert follows you when you switch apps mid-dictation, keeps working in chat apps, and closes the previous sentence when you dictate just before its period
-- Dictionaries group every spelling of a word into one folder, the app's own name is recognized however it is heard, and suggested sound-alikes never include plurals, truncations, or real words
-- A sign-off is spelled the way you gave the app your name
-- Cleanup never bleeps a word you said or adds a label or a copy of the original; invented speaker names, wrapping quotes, and silent-clip phrases are removed
-- Erase All Data in Settings > Advanced starts the app over from the welcome screen
-- Every setting has one home, and onboarding shows the real pop-ups with their controls
-
-## What's new in 1.4
-
-- Spoken punctuation follows the standard dictation convention: say “is it working now, question mark” and get “is it working now?” with no stray mark left behind
-- Punctuation names spoken in the middle of a sentence stay as words; they become the mark only at the end of a clause
-- Quiet speech: auto-amplify now measures your voice against the room instead of a fixed level, and the app warns when the Mac’s input volume is low and can raise it for you
-- Cleanup can no longer drop a sentence or add an ellipsis you did not say
-- A long dictation that ends in silence no longer repeats its last sentence over and over, and long dictations clean up faster
-- Fixed a crash when changing the input device; the microphone meter in Settings now follows the chosen input
-- Fixed hallucinated speaker labels such as “Male speaker:” appearing in transcripts and being learned as vocabulary
-- Intelligent Insert reads around the cursor more reliably in web and Electron apps, with fewer keystrokes and fewer system beeps
-- A notice under Intelligent Insert explains the beep and how to silence it in Sound settings
-- The menu bar spinner is visible on a light menu bar
-- Light mode has a firmer window background and clearer card edges
-- The first dictation after idle is faster, and the microphone lets go properly after every dictation
-- Restore Defaults in Settings > Advanced puts every setting back, with a confirmation and an Undo button
-- The Homebrew build can use the microphone
-
-## What's new in 1.3.1
-
-- Dictation is over twice as fast, with a new default speech model
-- The app is about a gigabyte smaller
-- Intelligent Insert is faster and now works in far more apps
-- Your clipboard is handed back right after a dictation is pasted
-- Auto mode no longer turns what you say into a list on its own
-- Energy settings now switch the cleanup model with the power source, not just the dictation model
-- The AI Models page shows what each model is for, with accuracy and speed ratings
-- A rewritten in-app Help covering Quick Edit, Intelligent Insert, and energy
-- Bug fixes, including the menu bar spinner running backwards
-
-1.3 shipped this same work but bundled the wrong speech model, so the speed and size
-gains only actually arrive in 1.3.1.
-
-## What's new in 1.2
-
-- Dramatically faster from stop to text: models warm at launch, the AI cleanup reuses its work between dictations, and needless extra passes were trimmed
-- New master switch: turn off post-transcription analysis for the fastest possible raw transcription
-- Your dictionary now shapes what the app hears, not just what it types; fix the same misheard word twice and it offers to remember it for good
-- Energy-aware transcription: the full model plugged in, a lighter one on battery, automatically or per mode, with an Energy page that reads your Mac and recommends the right models
-- A diagnostic history: raw transcript, cleaned text, delivered text, delivery outcome, processing time, and optional audio playback for every dictation
-- A microphone health check in Settings with specific tips
-- Long recordings stream out as you go, cut at natural pauses
-- Better accuracy in noisy rooms and for fast speech; words finished right at the stop key are no longer clipped
-- Ending a dictation never starts audio that was not already playing; a paused player is only resumed if the app paused it
-- Fixed a rare crash when the audio device changed mid-dictation, and a freeze at dictation start while checking Music
-
-## What's new in 1.1.1
-
-- The microphone releases as soon as a dictation ends; the recording indicator only shows while you dictate
-- The Quick Edit key is consistent: press on / press off in toggle mode, press on / release off in hold mode
-- The recording pop-up opens the same way every time, and inserting text no longer stalls its closing animation
-- Intelligent Insert reads the surrounding text more reliably
-
-## What's new in 1.1
-
-- Quick Edit: edit any selected text by voice, in any app
-- Rebuilt listening engine: noise removal, adaptive normalization, deep decoding in noise
-- Voice corrections: "scratch that", "replace X with Y", "add this to my dictionary"
-- Any key can be a trigger, not just modifiers
-- Intelligent Insert adapts mid-sentence dictation to the surrounding text
-- Re-choreographed recording pop-up; the wave condenses into a spinning ring
-- Faster AI cleanup (GPU context reused), lower idle CPU
-- Custom colors with a full RGB mode; bring your own Whisper or GGUF models
-- Dozens of fixes; the full changelog lives in the app under About
 
 ## Requirements
 
