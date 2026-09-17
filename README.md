@@ -1,10 +1,11 @@
 # YapToText
 
-**Yap it. Bam. It's typed.**
+**Free, open source speech to text for Mac. Runs entirely on your Mac, with on-device AI cleanup.**
 
-YapToText is a free, open-source dictation app for macOS that runs entirely on your Mac.
-Press one key, talk, and your words land wherever your cursor is, cleaned up and
-punctuated. Nothing ever leaves your machine: no account, no cloud, no subscription.
+YapToText turns your voice into text in any app on your Mac. Press one key, talk, and
+your words land wherever your cursor is, cleaned up and punctuated, with the speech model
+and the cleanup model running on the Mac itself. Nothing ever leaves your machine: no
+account, no cloud, no subscription, no word cap.
 
 It is the no-subscription alternative to Wispr Flow, superwhisper, and MacWhisper, built
 by someone who cannot type and dictates everything, including this.
