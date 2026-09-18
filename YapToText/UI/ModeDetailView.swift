@@ -255,16 +255,24 @@ struct ModeDetailView: View {
 
     // MARK: 2b. Recording (per-mode preferences)
 
-    private static let locales = ["en_US", "en_GB", "en_AU", "es_ES", "es_MX", "fr_FR", "de_DE",
-                                  "it_IT", "pt_BR", "nl_NL", "sv_SE", "ja_JP", "zh_CN", "ko_KR",
-                                  "ru_RU", "hi_IN", "ar_SA"]
+    static let supportedLocales = [
+        "en_US", "en_GB", "en_AU", "es_ES", "es_MX", "fr_FR", "de_DE",
+        "it_IT", "pt_BR", "nl_NL", "pl_PL", "uk_UA", "cs_CZ", "da_DK",
+        "fi_FI", "el_GR", "he_IL", "hu_HU", "id_ID", "nb_NO", "ro_RO",
+        "sk_SK", "sv_SE", "th_TH", "tr_TR", "vi_VN", "ja_JP", "zh_CN",
+        "ko_KR", "ru_RU", "hi_IN", "ar_SA"
+    ]
 
     private var recording: some View {
         CardSection("Recording & language",
                     subtitle: "The spoken language and when recording stops.") {
             Picker("Language", selection: $draft.localeIdentifier) {
                 Text("Default (system language)").tag(String?.none)
-                ForEach(Self.locales, id: \.self) { id in
+                Text("Auto-detect language").tag(Optional("auto"))
+                ForEach(Self.supportedLocales.sorted {
+                    (Locale.current.localizedString(forIdentifier: $0) ?? $0)
+                        .localizedCaseInsensitiveCompare(Locale.current.localizedString(forIdentifier: $1) ?? $1) == .orderedAscending
+                }, id: \.self) { id in
                     Text(Locale.current.localizedString(forIdentifier: id) ?? id).tag(Optional(id))
                 }
             }

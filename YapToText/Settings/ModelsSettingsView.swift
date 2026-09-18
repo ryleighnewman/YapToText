@@ -294,13 +294,29 @@ struct ModelsSettingsView: View {
 
     private var localeOptions: [(String, String)] {
         let current = Locale.current
-        let options = locales.map { loc -> (String, String) in
+        var options: [(String, String)] = [("auto", "Auto-detect language")]
+
+        var seenIDs = Set<String>()
+        var allIDs: [String] = []
+        for loc in locales {
             let id = loc.identifier(.bcp47)
-            let name = current.localizedString(forIdentifier: loc.identifier) ?? id
+            if seenIDs.insert(id).inserted { allIDs.append(id) }
+        }
+        for locID in ModeDetailView.supportedLocales {
+            let id = Locale(identifier: locID).identifier(.bcp47)
+            if seenIDs.insert(id).inserted { allIDs.append(id) }
+        }
+
+        let mapped = allIDs.map { id -> (String, String) in
+            let name = current.localizedString(forIdentifier: id) ?? id
             return (id, name)
         }
-        .sorted { $0.1 < $1.1 }
+        .sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
+
+        options.append(contentsOf: mapped)
+
         if options.contains(where: { $0.0 == state.settings.localeIdentifier }) { return options }
-        return [(state.settings.localeIdentifier, state.settings.localeIdentifier)] + options
+        let customName = state.settings.localeIdentifier == "auto" ? "Auto-detect language" : (current.localizedString(forIdentifier: state.settings.localeIdentifier) ?? state.settings.localeIdentifier)
+        return options + [(state.settings.localeIdentifier, customName)]
     }
 }
