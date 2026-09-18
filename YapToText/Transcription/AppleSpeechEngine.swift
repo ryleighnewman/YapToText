@@ -35,10 +35,11 @@ final class AppleSpeechEngine: TranscriptionEngine, @unchecked Sendable {
     }
 
     private func makeTranscriber(_ localeIdentifier: String) -> SpeechTranscriber {
-        SpeechTranscriber(locale: Locale(identifier: localeIdentifier),
-                          transcriptionOptions: [],
-                          reportingOptions: [.volatileResults],
-                          attributeOptions: [])
+        let loc = (localeIdentifier == "auto" || localeIdentifier.isEmpty) ? Locale.current : Locale(identifier: localeIdentifier)
+        return SpeechTranscriber(locale: loc,
+                                 transcriptionOptions: [],
+                                 reportingOptions: [.volatileResults],
+                                 attributeOptions: [])
     }
 
     func prepare(localeIdentifier: String, progress: (@Sendable (Double) -> Void)?) async throws {
