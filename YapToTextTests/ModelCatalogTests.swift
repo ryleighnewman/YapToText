@@ -8,7 +8,11 @@ final class ModelCatalogTests: XCTestCase {
     }
 
     func testBuiltInsPresentAndWellFormed() {
-        for id in ["apple", "apple-foundation"] {
+        // Apple Speech ("apple") was removed in 1.5.2: Whisper is the only speech engine.
+        // Apple Intelligence stays as the cleanup fallback.
+        XCTAssertNil(ModelCatalog.all.first(where: { $0.id == "apple" }), "Apple Speech must stay removed")
+        XCTAssertTrue(ModelCatalog.all.filter { $0.kind == .speech }.allSatisfy { $0.runtime != .apple })
+        for id in ["apple-foundation"] {
             guard let model = ModelCatalog.all.first(where: { $0.id == id }) else {
                 return XCTFail("Missing built-in \(id)")
             }

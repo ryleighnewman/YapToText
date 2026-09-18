@@ -4,7 +4,6 @@ import AppKit
 struct ModelsSettingsView: View {
     @Environment(AppState.self) private var state
     @State private var ratingsShown: Set<String> = []
-    @State private var locales: [Locale] = []
     @State private var addModelError: String?
 
     /// Pick a .gguf / .bin from disk; format is validated by magic bytes and the kind inferred.
@@ -69,7 +68,7 @@ struct ModelsSettingsView: View {
                     HStack(spacing: 8) {
                         modelRow(model)
                         Button {
-                            if state.settings.selectedSpeechModelID == model.id { state.settings.selectedSpeechModelID = "apple" }
+                            if state.settings.selectedSpeechModelID == model.id { state.settings.selectedSpeechModelID = "whisper-large-v3-turbo-q5" }
                             if state.settings.selectedLanguageModelID == model.id { state.settings.selectedLanguageModelID = "apple-foundation" }
                             state.models.removeUserModel(model)
                         } label: {
@@ -109,14 +108,6 @@ struct ModelsSettingsView: View {
             }
         }
         .navigationTitle("Models")
-        .task {
-            if #available(macOS 26.0, *) {
-                locales = await AppleSpeechEngine.supportedLocales()
-            } else {
-                // No SpeechAnalyzer locale list pre-26; Whisper models are multilingual anyway.
-                locales = []
-            }
-        }
     }
 
     private func modelRow(_ model: ModelInfo) -> some View {
@@ -265,7 +256,6 @@ struct ModelsSettingsView: View {
     private func select(_ model: ModelInfo) {
         if model.kind == .speech {
             state.settings.selectedSpeechModelID = model.id
-            state.settings.engine = model.runtime == .apple ? .appleSpeech : .whisper
         } else {
             state.settings.selectedLanguageModelID = model.id
         }
@@ -298,10 +288,6 @@ struct ModelsSettingsView: View {
 
         var seenIDs = Set<String>()
         var allIDs: [String] = []
-        for loc in locales {
-            let id = loc.identifier(.bcp47)
-            if seenIDs.insert(id).inserted { allIDs.append(id) }
-        }
         for locID in ModeDetailView.supportedLocales {
             let id = Locale(identifier: locID).identifier(.bcp47)
             if seenIDs.insert(id).inserted { allIDs.append(id) }
@@ -315,8 +301,17 @@ struct ModelsSettingsView: View {
 
         options.append(contentsOf: mapped)
 
-        if options.contains(where: { $0.0 == state.settings.localeIdentifier }) { return options }
-        let customName = state.settings.localeIdentifier == "auto" ? "Auto-detect language" : (current.localizedString(forIdentifier: state.settings.localeIdentifier) ?? state.settings.localeIdentifier)
-        return options + [(state.settings.localeIdentifier, customName)]
+        let stored = state.settings.localeIdentifier
+        if options.contains(where: { $0.0 == stored }) { return options }
+        // The stored value is the system form ("en_US") while the list uses BCP 47 ("en-US"):
+        // the same language twice, once at the bottom. Give the listed row the stored tag
+        // instead, so the picker shows one row and selects it.
+        let storedBCP = Locale(identifier: stored).identifier(.bcp47)
+        if let i = options.firstIndex(where: { $0.0 == storedBCP }) {
+            options[i] = (stored, options[i].1)
+            return options
+        }
+        let customName = stored == "auto" ? "Auto-detect language" : (current.localizedString(forIdentifier: stored) ?? stored)
+        return options + [(stored, customName)]
     }
 }

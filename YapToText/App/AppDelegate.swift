@@ -135,13 +135,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // "Keep" is a full answer, and the AI Models page always has both.
         // Only offer the switch when the Q5 file is actually on disk: the Homebrew build
         // ships no models, and selecting an absent model would silently drop the user
-        // onto the Apple Speech fallback (or nothing at all on macOS 14 and 15).
+        // onto whatever other Whisper file exists, or nothing at all.
         let q5OnDisk = state.models.model(id: "whisper-large-v3-turbo-q5").flatMap { state.models.downloads.localURL(for: $0) } != nil
         if !state.settings.q5SwitchOfferShown, q5OnDisk,
            state.settings.selectedSpeechModelID != "whisper-large-v3-turbo-q5" {
             state.settings.q5SwitchOfferShown = true
             let current = state.models.model(id: state.settings.selectedSpeechModelID)?.displayName
-                ?? (state.settings.selectedSpeechModelID == "apple" ? "Apple Speech" : "your current model")
+                ?? "your current model"
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 guard let self else { return }
                 let alert = NSAlert()
@@ -722,9 +722,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if state.settings.launchAtLogin { LaunchAtLogin.set(true) }
-        yapdiag("launch: AXIsProcessTrusted=\(AXIsProcessTrusted()) rightCmd=\(state.settings.rightCommandTrigger.rawValue) hotkeyBehavior=\(state.settings.hotkeyBehavior.rawValue) engine=\(state.controller.usesAppleSpeechEngine ? "appleSpeech" : "whisper")/setting:\(state.settings.engine.rawValue) speech=\(state.settings.selectedSpeechModelID) aiCleanup=\(state.settings.aiCleanupEnabled)")
+        yapdiag("launch: AXIsProcessTrusted=\(AXIsProcessTrusted()) rightCmd=\(state.settings.rightCommandTrigger.rawValue) hotkeyBehavior=\(state.settings.hotkeyBehavior.rawValue) engine=\(state.controller.resolvedSpeechEngineDescription) speech=\(state.settings.selectedSpeechModelID) aiCleanup=\(state.settings.aiCleanupEnabled)")
         state.history.pruneOlderThan(days: state.settings.autoDeleteDays)
-        prepareSpeechModel()
         // If the last session died mid-dictation, rescue whatever audio made it to disk.
         state.controller.recoverCrashedSessionIfNeeded()
         // Orphaned recordings (no history record points at them) are swept a beat after
@@ -1949,19 +1948,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Setup lives inline on the Home screen; there is deliberately no setup popup window.
 
-    private func prepareSpeechModel() {
-        guard #available(macOS 26.0, *) else { return }
-        // Only touch Apple's speech stack if it is ACTUALLY going to transcribe. The old
-        // guard trusted the `engine` setting alone, which goes stale the moment a Whisper
-        // model is selected - so a Whisper user still spun up SpeechTranscriber and
-        // AssetInventory at every launch, waking com.apple.SpeechRecognitionCore.brokerd
-        // and Dictation. They then sat in Control Center's privacy list next to this app,
-        // implying it was listening through Apple's services when it never was. Ask the
-        // controller which engine really runs instead of guessing from a setting.
-        guard state.controller.usesAppleSpeechEngine else { return }
-        let locale = state.settings.localeIdentifier
-        Task.detached(priority: .utility) {
-            try? await AppleSpeechEngine().prepare(localeIdentifier: locale, progress: nil)
-        }
-    }
 }

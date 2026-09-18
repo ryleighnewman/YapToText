@@ -27,7 +27,7 @@ enum TranscriptionError: LocalizedError {
 protocol TranscriptionEngine: AnyObject {
     var displayName: String { get }
     /// A short status shown in the panel if this engine will need to LOAD a model before it can
-    /// transcribe (e.g. a cold Whisper context). nil = nothing heavy to load (Apple Speech), so the
+    /// transcribe (e.g. a cold Whisper context). nil = nothing heavy to load, so the
     /// normal "Transcribing…" label shows. Lets a slow first transcribe read as loading, not stuck.
     var modelLoadingDetail: String? { get }
     func isAvailable() async -> Bool
@@ -44,6 +44,6 @@ protocol TranscriptionEngine: AnyObject {
 }
 
 extension TranscriptionEngine {
-    /// Default: no heavy model to load (Apple Speech). Whisper overrides this.
+    /// Default: no heavy model to load. Whisper overrides this.
     var modelLoadingDetail: String? { nil }
 }

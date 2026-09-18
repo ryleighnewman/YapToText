@@ -27,7 +27,7 @@ struct ModeDetailView: View {
     private var isActive: Bool { state.settings.activeModeID == mode.id }
     private var isBuiltIn: Bool { BuiltInModes.isBuiltIn(mode.id) }
     private var defaultSpeechName: String {
-        state.models.model(id: state.settings.selectedSpeechModelID)?.displayName ?? "Apple Speech"
+        state.models.model(id: state.settings.selectedSpeechModelID)?.displayName ?? "Whisper"
     }
 
     var body: some View {
@@ -244,8 +244,7 @@ struct ModeDetailView: View {
             // The per-mode half of the energy system: this mode's lighter on-battery model.
             Picker("On battery", selection: $draft.speechModelIDBattery) {
                 Text("Same as plugged in").tag(String?.none)
-                Text("Apple Speech (lightest)").tag(String?.some("apple"))
-                ForEach(state.models.speechModels.filter { state.models.isSelectable($0) && $0.runtime != .apple }) { model in
+                ForEach(state.models.speechModels.filter { state.models.isSelectable($0) }) { model in
                     Text(model.displayName).tag(Optional(model.id))
                 }
             }

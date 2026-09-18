@@ -304,6 +304,37 @@ enum InsertionContext {
                     yapdiag("insertctx: before-read answered on the late copy")
                     before = again
                 }
+                // The pre-read runs beside the decode, which takes seconds anyway, so waiting
+                // here costs no delivery time. A loaded Mac (every core busy, load 15,
+                // 2026-09-18) had Gmail in Safari applying the selection keys well over a
+                // second after they were sent; keep copying, and time it, so the lag is known.
+                if isBlank(before), hasAnswered(bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) {
+                    let started = Date()
+                    for _ in 0..<4 where isBlank(before) {
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        lastSyntheticKeyAt = Date()
+                        if let again = await copyChanged(0.3), !isBlank(again) {
+                            yapdiag(String(format: "insertctx: pre-read answered after %.1fs of extra waiting", Date().timeIntervalSince(started)))
+                            before = again
+                        }
+                    }
+                }
+            }
+            // The delivery-time retry exists for an editor that was too busy the first time.
+            // On a loaded Mac (every core busy, 2026-09-18 10:51, Gmail in Safari) it was still
+            // too busy 340 ms later and answered empty again, so the words went in raw. Keep
+            // asking, up to three more copies over about a second, with no further selection
+            // keys: the ones already sent are queued and land when the editor catches up.
+            if retry, before == "" {
+                let started = Date()
+                for _ in 0..<4 where isBlank(before) {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    lastSyntheticKeyAt = Date()
+                    if let again = await copyChanged(0.25), !isBlank(again) {
+                        yapdiag(String(format: "insertctx: retry answered after %.1fs", Date().timeIntervalSince(started)))
+                        before = again
+                    }
+                }
             }
             // Collapse ONLY when the copy answered - a non-answer means we cannot tell
             // whether anything got selected, and a bare Right with NO selection WALKS the
@@ -337,6 +368,21 @@ enum InsertionContext {
                 try? await Task.sleep(nanoseconds: settle)
                 lastSyntheticKeyAt = Date()
                 after = await copyChanged(copyWait)
+                // The AFTER side gets the same patience as the before side: on a loaded Mac
+                // the before-read answered after half a second of extra waiting while the
+                // after-read still came back empty, and the dictation kept its period in the
+                // middle of the sentence it was dropped into (Gmail in Safari, 2026-09-18 11:05).
+                if after == "", (patient || retry) {
+                    let started = Date()
+                    for _ in 0..<(patient && !retry ? 4 : 3) where isBlank(after) {
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                        lastSyntheticKeyAt = Date()
+                        if let again = await copyChanged(0.25), !isBlank(again) {
+                            yapdiag(String(format: "insertctx: after-read answered after %.1fs of extra waiting", Date().timeIntervalSince(started)))
+                            after = again
+                        }
+                    }
+                }
                 if after != nil { TextInserter.postKey(0x7B, flags: []); lastSyntheticKeyAt = Date() }   // Left: restore caret
                 try? await Task.sleep(nanoseconds: 20_000_000)
             }
@@ -362,6 +408,7 @@ enum InsertionContext {
             yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after answered empty - will retry at delivery")
             return (s, true)
         }
+        unansweredRead = before == nil ? (snapshot, Date()) : nil
         guard !isBlank(before) || !isBlank(after) else {
             // Reported as UNANSWERED on purpose, so a blank read scores neutral and never
             // accrues strikes: a slow web editor that gave nothing this time is not an app
@@ -372,6 +419,7 @@ enum InsertionContext {
             none.retryAtDelivery = before != nil && !retry
             return (none, false)
         }
+        unansweredRead = nil
         yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after=\((after ?? "").prefix(30).debugDescription)")
         return (Surround(before: before ?? "", after: after ?? "", available: true), true)
     }
@@ -515,6 +563,12 @@ enum InsertionContext {
     /// remainder of the settle window instead of a fixed 140ms - and nothing at all when
     /// the read never posted (skipped app, Secure Input, AX answered). Main actor only.
     static private(set) var lastSyntheticKeyAt: Date?
+    /// The last key-sim read ended with its Cmd+C still unanswered: the target has our
+    /// selection keys and copy queued and may service them any moment. Delivery must wait
+    /// for that before it loads the clipboard, or the late copy overwrites the dictation and
+    /// the paste puts the target's own words back (Gmail in Safari under load, 2026-09-18
+    /// 10:59: "nothing happened"). `snapshot` is the user's clipboard from before the read.
+    static private(set) var unansweredRead: (snapshot: PasteboardSnapshot, at: Date)?
 
     /// Read the surroundings NOW (AX when the process may, key-simulation inside the
     /// sandbox), with the per-app skip. Separated from adapt() so the read can run
@@ -545,6 +599,37 @@ enum InsertionContext {
         let outcome: ReadOutcome = s.available ? .success : (appAnswered ? .failure : .neutral)
         recordReadOutcome(bundleID: bundle, outcome)
         return s
+    }
+
+    /// Delivery-time guard for a read the target never answered: watch the clipboard for
+    /// the late copy for up to `budget` seconds. If it lands with text, the selection keys
+    /// were applied too, so collapse the stranded selection, hand the text back as context,
+    /// and restore the user's clipboard that the late copy just overwrote.
+    @MainActor
+    static func settleUnansweredRead(budget: TimeInterval = 1.5) async -> Surround? {
+        guard let pending = unansweredRead else { return nil }
+        unansweredRead = nil
+        let pb = NSPasteboard.general
+        let base = pb.changeCount
+        let deadline = Date().addingTimeInterval(budget)
+        while Date() < deadline {
+            if pb.changeCount != base {
+                let late = pb.string(forType: .string) ?? ""
+                pending.snapshot.write(to: pb)
+                if !late.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    TextInserter.postKey(0x7C, flags: [])   // Right: collapse the late selection to the caret
+                    lastSyntheticKeyAt = Date()
+                    try? await Task.sleep(nanoseconds: 60_000_000)
+                    yapdiag(String(format: "insertctx: late answer %.1fs after the read, before=%@", Date().timeIntervalSince(pending.at), late.suffix(30).debugDescription))
+                    return Surround(before: late, after: "", available: true)
+                }
+                yapdiag("insertctx: late answer was empty - clipboard restored, inserting unadapted")
+                return nil
+            }
+            try? await Task.sleep(nanoseconds: 40_000_000)
+        }
+        yapdiag(String(format: "insertctx: read still unanswered after %.1fs - inserting", budget))
+        return nil
     }
 
     /// The one-call entry the inserter uses when no pre-read is available.

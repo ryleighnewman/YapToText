@@ -1,7 +1,7 @@
 import AVFoundation
 
-/// The honest dead-end engine for configurations that cannot transcribe at all - e.g. macOS
-/// versions without SpeechAnalyzer and no Whisper model downloaded yet. Every session fails
+/// The honest dead-end engine for configurations that cannot transcribe at all - no Whisper
+/// model on disk yet (the Homebrew build ships none until one downloads). Every session fails
 /// immediately with a message telling the user exactly what to do, instead of a silent no-op.
 final class UnavailableEngine: TranscriptionEngine, @unchecked Sendable {
     let displayName = "No speech engine"

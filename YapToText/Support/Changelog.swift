@@ -24,13 +24,17 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
-        Entry(version: "1.5.2 (18)", points: [
-            "Bluetooth hearing aids and headsets keep their full sound quality: the app uses the microphone you chose instead of switching to the Bluetooth one, and Music comes back at full quality after every dictation",
+        Entry(version: "1.5.2 (19)", points: [
+            "The app warns when the room or the fans are too loud for the microphone to hear you",
+            "Language auto-detection, plus Polish and fourteen more languages",
+            "Apple Speech has been removed: Whisper is the only speech engine",
+            "Bluetooth hearing aids and headsets keep their full sound quality: the app records from the microphone you chose, and Music comes back at full quality after every dictation",
             "Fixed a crash and a freeze when a Bluetooth device connected mid-dictation",
-            "Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps, and dictating over a selection now replaces it the way it was written",
-            "Quick Edit swaps a word or phrase exactly as you say it, instantly",
+            "Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps",
+            "Dictating over a selection replaces it the way it was written",
+            "Quick Edit swaps a word or phrase exactly as you say it",
             "Cleanup no longer drops words you said",
-            "Hallucinated speaker labels like \u{201C}Name:\u{201D} and stage directions are gone",
+            "Hallucinated speaker labels and stage directions are gone",
             "Miscellaneous bug fixes",
         ]),
         Entry(version: "1.5.1 (16)", points: [

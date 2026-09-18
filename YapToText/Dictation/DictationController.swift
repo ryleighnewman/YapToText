@@ -69,6 +69,8 @@ final class DictationController {
         phase = newPhase
     }
     private(set) var liveText: String = ""
+    /// When the loud-room notice last went out; at most once every ten minutes.
+    private var loudRoomNoticeAt: Date?
     private(set) var level: Float = 0
     /// Rolling window of real microphone levels (one entry per audio buffer), oldest first.
     /// This is what the panel's waveform draws, so it moves with actual input, not a timer.
@@ -778,7 +780,7 @@ final class DictationController {
             if isPaused { pausedAccumulated += Date().timeIntervalSince(pauseStartedAt) }
             isPaused = false
             // If the speech model still has to load (cold Whisper context), say so - a slow first
-            // transcribe used to look frozen. Apple Speech reports nil, so nothing changes there.
+            // transcribe used to look frozen. An engine with nothing to load reports nil.
             statusDetail = engine.modelLoadingDetail
             do {
                 // STAGE STOPWATCH: one line per stage so "where did the time go" is
@@ -1184,6 +1186,13 @@ final class DictationController {
                     yapdiag("insertctx: late read in \(front.localizedName ?? "?") (no pre-read for this app)")
                     presurround = await InsertionContext.readSurroundings(patient: true)
                 }
+                // A read the target never answered is still queued inside it. Wait for the
+                // late copy (up to 1.5s) before the clipboard is loaded, or the paste puts the
+                // target's own words back and the dictation vanishes.
+                if presurround == nil || presurround?.available == false, InsertionContext.unansweredRead != nil,
+                   let late = await InsertionContext.settleUnansweredRead() {
+                    presurround = late
+                }
                 if presurround != nil {
                     do {
                         // DRAIN before pasting. The surround read posts Cmd+C and
@@ -1252,6 +1261,14 @@ final class DictationController {
                 announce("Ready to review")
             } else if !quickEditHandled {
                 announce(target == .clipboardOnly ? "Copied to clipboard" : "Inserted")
+            }
+            // Say it the moment it happens, not on a settings page later: under the measured
+            // floor the words on screen may be wrong, and the fix is the microphone, not a retry.
+            if InputHealth.lastSNR < InputHealth.lowMarginDB,
+               loudRoomNoticeAt.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
+                loudRoomNoticeAt = Date()
+                yapdiag(String(format: "input: loud room, %.1f dB margin, under the %.0f dB floor", InputHealth.lastSNR, InputHealth.lowMarginDB))
+                announce("Loud room: this microphone is struggling to hear you, so check the words. The Dictation page explains.")
             }
         }
         clearRecoveryMarker()   // clean end: this session no longer needs crash recovery
@@ -1437,13 +1454,16 @@ final class DictationController {
 
     func resolvedSpeechModelID(for mode: Mode) -> String {
         let onAC = PowerMonitor.shared.onACPower
-        if !onAC, let batteryOverride = mode.speechModelIDBattery { return batteryOverride }
-        if let modeModel = mode.speechModelID { return modeModel }
+        // "apple" was the removed Apple Speech engine. A pick of it saved by an older version
+        // now means "no override here": fall through to the next choice down.
+        func live(_ id: String?) -> String? { id == "apple" ? nil : id }
+        if !onAC, let batteryOverride = live(mode.speechModelIDBattery) { return batteryOverride }
+        if let modeModel = live(mode.speechModelID) { return modeModel }
         if settings.energyAdaptive {
-            if onAC, let plugged = settings.speechModelPluggedID { return plugged }
-            if !onAC, let battery = settings.speechModelBatteryID { return battery }
+            if onAC, let plugged = live(settings.speechModelPluggedID) { return plugged }
+            if !onAC, let battery = live(settings.speechModelBatteryID) { return battery }
         }
-        return settings.selectedSpeechModelID
+        return live(settings.selectedSpeechModelID) ?? "whisper-large-v3-turbo-q5"
     }
 
     /// The cleanup model for right now, same precedence as speech: a mode's own choice
@@ -1461,7 +1481,7 @@ final class DictationController {
     func warmSpeechModel() {
         guard Date() >= suppressModelWarmUntil else { return }
         let modelID = resolvedSpeechModelID(for: activeMode)
-        guard modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple,
+        guard let model = models.model(id: modelID), model.runtime != .apple,
               let url = models.downloads.localURL(for: model) else { return }
         WhisperEngine.warmContext(at: url.path)
         // The re-warmed model must not become PERMANENTLY resident: the eviction clock
@@ -1494,21 +1514,23 @@ final class DictationController {
     /// Whisper. Nothing may re-derive this from settings independently.
     func resolvedWhisperModel(for mode: Mode) -> (model: ModelInfo, url: URL)? {
         let modelID = resolvedSpeechModelID(for: mode)
-        guard modelID != "apple", let model = models.model(id: modelID), model.runtime != .apple,
+        guard let model = models.model(id: modelID), model.runtime != .apple,
               let url = models.downloads.localURL(for: model) else { return nil }
         return (model, url)
     }
 
-    /// Whether Apple's speech stack would ACTUALLY transcribe. Anything that would wake
-    /// Apple's speech services must ask this first: those daemons appearing in the privacy
-    /// list is indistinguishable, to a user, from this app listening through them.
-    var usesAppleSpeechEngine: Bool { resolvedWhisperModel(for: activeMode) == nil }
+    /// One line for the launch log and the diagnostics report: which Whisper file would run
+    /// right now, or "none" when no model is on disk.
+    var resolvedSpeechEngineDescription: String {
+        resolvedWhisperModel(for: activeMode).map { "whisper:\($0.model.id)" } ?? "none"
+    }
 
     private func makeEngine(for mode: Mode) -> TranscriptionEngine {
         let modelID = resolvedSpeechModelID(for: mode)
         do {
-            // Only hand off to whisper when the file is actually on disk; otherwise fall back
-            // to Apple Speech so dictation always works while a default model downloads.
+            // Only hand off to whisper when the selected file is actually on disk; otherwise
+            // any other downloaded Whisper model stands in, so dictation keeps working while
+            // the chosen one downloads.
             if let (model, url) = resolvedWhisperModel(for: mode) {
                 yapdiag("makeEngine: WHISPER \(model.displayName) at \(url.path)")
                 let engine = WhisperEngine(modelURL: url, modelName: model.displayName)
@@ -1560,17 +1582,18 @@ final class DictationController {
                 if let bias { yapdiag("makeEngine: primed \(bias.count) chars (recent: \(recent.joined(separator: "|")))") }
                 return engine
             }
-            yapdiag("makeEngine: model \(modelID) selected but NOT on disk; falling back to Apple Speech")
+            yapdiag("makeEngine: model \(modelID) selected but NOT on disk")
         }
-        if #available(macOS 26.0, *) { yapdiag("makeEngine: APPLE SPEECH (modelID=\(modelID))"); return AppleSpeechEngine() }
-        // Pre-26 macOS has no SpeechAnalyzer: Whisper is the only speech engine. Reach for ANY
-        // downloaded Whisper model rather than dead-ending.
+        // Whisper is the only speech engine. Reach for ANY downloaded Whisper model rather
+        // than dead-ending, and log which one took over so a mishearing is traceable.
         if let fallback = models.catalogFallbackWhisperURL() {
+            yapdiag("makeEngine: WHISPER fallback \(fallback.name) at \(fallback.url.path)")
             let engine = WhisperEngine(modelURL: fallback.url, modelName: fallback.name)
             engine.livePreview = settings.livePreviewEnabled
             return engine
         }
-        return UnavailableEngine(message: "Download a Whisper model in Settings > Models to dictate on this version of macOS.")
+        yapdiag("makeEngine: no Whisper model on disk at all")
+        return UnavailableEngine(message: "No speech model is installed. Download one on the AI Models page.")
     }
 
     /// Hard ceiling on a single dictation, independent of the user's own limits. Nobody

@@ -76,7 +76,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     func isAvailable() async -> Bool { modelIsOnDisk }
 
     private func unavailableError() -> TranscriptionError {
-        .unavailable("'\(displayName)' isn't downloaded yet. Download it on the AI Models page, or switch to Apple Speech.")
+        .unavailable("'\(displayName)' isn't downloaded yet. Download it on the AI Models page.")
     }
 
     func prepare(localeIdentifier: String, progress: (@Sendable (Double) -> Void)?) async throws {

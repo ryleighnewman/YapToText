@@ -13,8 +13,8 @@ final class ModelLibrary {
     init(catalog: [ModelInfo] = ModelCatalog.all) {
         var available = catalog
         if #unavailable(macOS 26.0) {
-            // No SpeechAnalyzer / Apple Intelligence before macOS 26: hide the Apple entries so
-            // nobody can select an engine that cannot exist here. Whisper + GGUF carry everything.
+            // No Apple Intelligence before macOS 26: hide the Apple entry so nobody can select
+            // a cleanup model that cannot exist here. Whisper + GGUF carry everything.
             available.removeAll { $0.runtime == .apple }
         }
         self.catalog = available + userStore.models
@@ -46,8 +46,8 @@ final class ModelLibrary {
 
     func model(id: String) -> ModelInfo? { catalog.first { $0.id == id } }
 
-    /// Pre-macOS-26 fallback: the first Whisper speech model that is actually on disk, so
-    /// dictation still works on systems with no SpeechAnalyzer. nil = nothing downloaded yet.
+    /// The first Whisper speech model that is actually on disk, so dictation still works when
+    /// the selected one is missing. nil = nothing downloaded yet.
     func catalogFallbackWhisperURL() -> (url: URL, name: String)? {
         for model in speechModels where model.runtime != .apple {
             if let url = downloads.localURL(for: model) { return (url, model.displayName) }

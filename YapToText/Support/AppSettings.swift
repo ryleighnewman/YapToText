@@ -2,18 +2,6 @@ import Foundation
 import Observation
 import SwiftUI
 
-enum TranscriptionEngineKind: String, Codable, CaseIterable, Identifiable {
-    case appleSpeech
-    case whisper
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .appleSpeech: return "Apple Speech (on-device)"
-        case .whisper: return "Downloaded model (Whisper / others)"
-        }
-    }
-}
-
 /// What happens right after a dictation lands in a particular app. Chat apps and AI
 /// assistants want the message SENT as soon as it is typed; the user picks the key that
 /// sends there (Return in most, Command-Return in some), and the app presses it.
@@ -368,7 +356,6 @@ enum HistoryRetention: String, Codable, CaseIterable, Identifiable {
 @Observable
 final class AppSettings {
     // Core
-    var engine: TranscriptionEngineKind { didSet { save() } }
     var localeIdentifier: String { didSet { save() } }
     var insertionMethod: InsertionMethod { didSet { save() } }
     var hotkey: KeyCombo { didSet { save() } }
@@ -394,7 +381,7 @@ final class AppSettings {
     // Output
     var autoInsert: Bool { didSet { save() } }
     /// Experimental: type finalized words at the cursor WHILE you speak (Raw-style sessions only;
-    /// AI modes still deliver after cleanup). Needs Accessibility, works best with Apple Speech.
+    /// AI modes still deliver after cleanup). Needs Accessibility.
     var liveTyping: Bool { didSet { save() } }
     /// Say "scratch that" (or "replace X with Y") right after an insert to edit the text you
     /// just dictated instead of typing the phrase. Whole-utterance match only, 30s window.
@@ -568,7 +555,6 @@ final class AppSettings {
     @ObservationIgnored private static let defaultsKey = "com.ryleighnewman.YapToText.settings"
 
     struct Snapshot: Codable {
-        var engine: TranscriptionEngineKind
         var localeIdentifier: String
         var insertionMethod: InsertionMethod
         var hotkey: KeyCombo
@@ -690,7 +676,6 @@ final class AppSettings {
             guard let data = defaults.data(forKey: AppSettings.defaultsKey) else { return nil }
             return try? JSONDecoder().decode(Snapshot.self, from: data)
         }()
-        engine = loaded?.engine ?? .appleSpeech
         localeIdentifier = loaded?.localeIdentifier ?? Locale.current.identifier
         insertionMethod = loaded?.insertionMethod ?? .paste
         hotkey = loaded?.hotkey ?? .default
@@ -861,7 +846,7 @@ final class AppSettings {
     /// Every preference as one value: what save() persists, what a restore undoes.
     func snapshot() -> Snapshot {
         Snapshot(
-            engine: engine, localeIdentifier: localeIdentifier, insertionMethod: insertionMethod,
+            localeIdentifier: localeIdentifier, insertionMethod: insertionMethod,
             hotkey: hotkey, hotkeyBehavior: hotkeyBehavior, pauseHotkey: pauseHotkey, cycleModeHotkey: cycleModeHotkey,
             switcherHotkey: switcherHotkey, aiActionsHotkey: aiActionsHotkey,
             historyPaletteHotkey: historyPaletteHotkey, redoLastHotkey: redoLastHotkey, rightCommandTrigger: rightCommandTrigger, fnKeyTrigger: fnKeyTrigger, rightCommandSpaceSwitcher: rightCommandSpaceSwitcher,
@@ -925,7 +910,6 @@ final class AppSettings {
     /// Assign every preference from a snapshot in one pass, saving once at the end.
     private func apply(_ s: Snapshot) {
         isLoading = true
-        engine = s.engine
         localeIdentifier = s.localeIdentifier
         insertionMethod = s.insertionMethod
         hotkey = s.hotkey

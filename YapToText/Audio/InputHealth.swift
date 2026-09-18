@@ -39,6 +39,13 @@ enum InputHealth {
     /// half-life of about 1,400 of them. Replayed against this machine's own history it first
     /// warns at 9.5dB against a 15.6dB baseline, and stays silent through the healthy stretch.
     private static let baselineDecay = 0.9995
+    /// The working floor, measured 2026-09-18 with the fans flat out: every dictation at 7 dB and
+    /// above transcribed correctly, at 6.5 dB and below it flipped between fine and garbage. Below
+    /// this the decoder is guessing, and no filtering stage recovers it (four were measured; all
+    /// made the words worse). The only lever left is the microphone, so say that.
+    static let lowMarginDB = 7.0
+    /// The margin of the most recent dictation, for the controller's one-line notice.
+    nonisolated(unsafe) static var lastSNR: Double = 100
 
     // MARK: Recording
 
@@ -48,6 +55,7 @@ enum InputHealth {
         // 100dB is the sentinel for "no noise floor to measure" (a clip with no silence in it),
         // and a peak at the gate is a clip with no speech. Neither says anything about health.
         guard snrDB.isFinite, snrDB < 90, peak.isFinite, peak > 0.01 else { return }
+        lastSNR = snrDB
         var s = load()
         s.append(Sample(at: Date(), snr: snrDB, peak: peak))
         if s.count > window { s.removeFirst(s.count - window) }
@@ -85,6 +93,16 @@ enum InputHealth {
                 recentSNR: 0, baselineSNR: 0)
         }
         let s = load()
+        // RIGHT NOW outranks the slow trend: three dictations in a row under the floor means the
+        // room or the fans are too loud for this microphone at this moment, whatever the history.
+        let last3 = s.suffix(3).map(\.snr)
+        if last3.count == 3, median(last3) < lowMarginDB {
+            let now = median(last3)
+            return Diagnosis(
+                headline: String(format: "Right now the room is too loud for this microphone: %.0f dB of voice over the noise, where 7 dB is the floor.", now),
+                detail: "Fans running flat out, a machine next to the Mac, or sound from the speakers all do this, and the built-in microphone sits right at the fan vents. Nothing in the app can put back words the microphone did not catch. Move closer, quiet the room, or pick a microphone that is not at the vents, such as AirPods or an external one, under Microphone above.",
+                recentSNR: now, baselineSNR: baseline(from: s).snr)
+        }
         guard s.count >= recentCount + baselineCount else { return nil }
         let recent = Array(s.suffix(recentCount))
         let rSNR = median(recent.map(\.snr)), rPeak = median(recent.map(\.peak))

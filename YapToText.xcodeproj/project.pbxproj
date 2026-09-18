@@ -294,7 +294,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -304,7 +304,6 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "YapToText checks whether Music is actually playing so it can pause it during dictation and resume it after - never starting playback you didn't.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "YapToText is an assistive voice-input tool that uses the microphone to turn your speech into text, entirely on device.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "YapToText uses on-device speech recognition to provide voice typing as an accessibility input method.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -329,7 +328,7 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEVELOPMENT_TEAM = 65JK8K8VGM;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -339,7 +338,6 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "YapToText checks whether Music is actually playing so it can pause it during dictation and resume it after - never starting playback you didn't.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "YapToText is an assistive voice-input tool that uses the microphone to turn your speech into text, entirely on device.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "YapToText uses on-device speech recognition to provide voice typing as an accessibility input method.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

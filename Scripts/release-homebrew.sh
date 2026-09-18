@@ -8,7 +8,7 @@
 #      because anything downloaded outside the App Store is blocked by Gatekeeper without it.
 #   2. The models are EXCLUDED. With them the bundle is 2.8 GB, which is past GitHub's 2 GB
 #      per-asset ceiling; without them it is ~18 MB. The app downloads models on demand and
-#      falls back to Apple's speech engine until one is installed.
+#      cannot dictate until a speech model is installed.
 set -eu
 
 PROJ="/Users/ryleighnewman/Desktop/Apps/YapToText"

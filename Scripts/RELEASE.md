@@ -67,8 +67,8 @@ Verify without installing (installing would replace the App Store copy in /Appli
 
 It ships WITHOUT the speech and cleanup models. With them the app is 2.8 GB, past GitHub's
 2 GB per-asset limit; without them it is about 18 MB. The app downloads models on demand
-and falls back to Apple's speech engine until one is installed, and the cask's caveats say
-so at install time.
+and cannot dictate until a speech model is installed, and the cask's caveats say so at
+install time.
 
 ### Requirements
 

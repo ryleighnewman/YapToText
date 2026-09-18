@@ -48,7 +48,7 @@ struct AppWindowBackground: View {
         // white and the white glass cards dissolved into it. A stronger shade keeps the
         // window a clear step darker than its cards; dark mode keeps its lighter veil.
         VisualEffectBackground()
-            .overlay(Color.black.opacity(scheme == .light ? 0.20 : 0.13))
+            .overlay(Color.black.opacity(scheme == .light ? 0.26 : 0.22))
             .ignoresSafeArea()
     }
 }

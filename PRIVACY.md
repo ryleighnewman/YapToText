@@ -8,8 +8,8 @@ data never leave your Mac.**
 - **Audio** from your microphone is captured only while you are dictating (or while the
   mic route is kept warm for instant starts - warm audio is analyzed for levels only and
   never stored). Recordings are transcribed on your Mac by on-device models.
-- **Transcripts** are produced on device, by Apple's speech engine or by models bundled
-  with (or downloaded into) the app.
+- **Transcripts** are produced on device, by Whisper models bundled with (or downloaded
+  into) the app.
 - **AI cleanup** runs on device, via Apple Intelligence or a local model. Your text is
   never sent to any server for processing.
 

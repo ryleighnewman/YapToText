@@ -15,10 +15,6 @@ enum ModelCatalog {
     static let all: [ModelInfo] = [
 
         // MARK: Built-in (no download)
-        ModelInfo(id: "apple", displayName: "Apple Speech", provider: "Apple",
-                  kind: .speech, summary: "On-device streaming transcription with live text, no time limit. The instant fallback.",
-                  languages: "43+ languages", sizeMB: 0, quality: 5, speed: 5,
-                  downloadURL: nil, fileName: nil, runtime: .apple, license: "Apple system"),
         ModelInfo(id: "apple-foundation", displayName: "Apple Intelligence", provider: "Apple",
                   kind: .language, summary: "On-device Foundation model. Fallback while a downloaded cleanup model isn\u{2019}t installed.",
                   languages: "Multilingual", sizeMB: 0, quality: 5, speed: 4,
