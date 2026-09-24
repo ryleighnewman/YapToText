@@ -48,7 +48,7 @@ if grep -q "ARCHIVE SUCCEEDED" "$ALOG" \
   plutil -p "$ARCHIVE/Info.plist" | grep -E "ShortVersion|BundleVersion" >> "$ALOG"
   du -sh "$ARCHIVE/Products/Applications/YapToText.app/Contents/Resources/Models" >> "$ALOG" 2>&1
   xcodebuild -exportArchive -archivePath "$ARCHIVE" \
-    -exportOptionsPlist "$PROJ/Marketing/tools/exportOptions.plist" \
+    -exportOptionsPlist "$PROJ/Scripts/exportOptions.plist" \
     -allowProvisioningUpdates > "$ULOG" 2>&1
   echo "UPLOAD-EXIT=$?" >> "$ULOG"
 else

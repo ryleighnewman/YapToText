@@ -8,20 +8,8 @@ xcuserdata/
 *.xcarchive
 .swiftpm/
 
-# Superseded marketing intermediates (kept locally, not shipped)
-Marketing/posters-v2/
-Marketing/posters-v3/
-Marketing/shots-v2/
-Marketing/README-v2.md
-Marketing/outreach/
-Marketing/.staging-backup/
+Marketing/*
+!Marketing/posters-v5/
+Store/
 
-# Python bytecode from the marketing tools
 __pycache__/
-
-# Website asset intermediates: the finished files are installed into the yaptotext.com repo,
-# the sources are re-shot by tools/shoot_web*.py whenever they are needed again.
-Marketing/clips/
-Marketing/shots-web/
-Marketing/video-web/
-Marketing/shots-v5/wave-candidates/
