@@ -10,9 +10,16 @@ account, no cloud, no subscription, no word cap.
 It is the no-subscription alternative to Wispr Flow, superwhisper, and MacWhisper, built
 by someone who cannot type and dictates everything, including this.
 
-[<img src=".github/assets/mac-app-store-badge.svg" alt="Download on the Mac App Store" height="48">](https://apps.apple.com/us/app/yaptotext/id6786382289?mt=12)
+Made by [Ryleigh Newman](https://ryleighnewman.com), one person who dictates everything with it. The
+[about page](https://yaptotext.com/about) has the facts for the record, and the
+[privacy policy](https://yaptotext.com/privacy) says what the app does and does not collect.
 
-Website: [yaptotext.com](https://yaptotext.com) (help, install, release notes)
+[<img src=".github/assets/mac-app-store-badge.svg" alt="Download on the Mac App Store" height="48">](https://apps.apple.com/app/apple-store/id6786382289?pt=128760092&ct=github&mt=8)
+
+Or with Homebrew: `brew install --cask ryleighnewman/yaptotext/yaptotext` (the Homebrew build downloads its
+speech model on first launch; see [install](https://yaptotext.com/install)).
+
+Website: [yaptotext.com](https://yaptotext.com/), with [install steps](https://yaptotext.com/install), [help for every page of the app](https://yaptotext.com/help/), [release notes](https://yaptotext.com/whats-new), [how it compares](https://yaptotext.com/compare) and the [privacy policy](https://yaptotext.com/privacy).
 
 ## Overview
 
@@ -36,7 +43,8 @@ everything else in the sidebar is optional.
 - Hallucinated speaker labels and stage directions are gone
 - Miscellaneous bug fixes
 
-Full release history in [CHANGELOG.md](CHANGELOG.md). This section tracks the latest release.
+Full release history in [CHANGELOG.md](CHANGELOG.md). This section tracks the latest release on GitHub. The Mac App
+Store has 1.5.3, and its notes are in the [release notes on yaptotext.com](https://yaptotext.com/whats-new).
 
 ## A tour
 
@@ -44,7 +52,7 @@ Full release history in [CHANGELOG.md](CHANGELOG.md). This section tracks the la
 
 Open YapToText and the whole app is on one screen: your dictation and Quick Edit keys,
 Intelligent Insert, the after-transcription switches, and your stats. The floating panel
-shows your voice as a live wave while you talk, in whichever size and colour you like.
+shows your voice as a live wave while you talk, in whichever layout and color you like.
 
 ![I created this because my hands don't work](Marketing/posters-v5/02-punchline.jpg)
 
@@ -73,7 +81,7 @@ red while recording, spins while transcribing, and flashes green when your text 
 ![AI pipelines, tuned your way](Marketing/posters-v5/06-ai-pipelines.jpg)
 
 Every mode is its own pipeline: transcription, dictionaries, cleanup model, output style.
-Raw Transcription, Clean Up, Note, Email, Message, and Code are built in, every one is
+Raw Transcription, Clean Up, Note, Email, Message, and Code Comment are built in, every one is
 editable in plain language, and you can press 1 to 9 mid-dictation to switch, or let
 Auto pick for you.
 
@@ -96,7 +104,7 @@ real number, "insert smiley face" types the emoji.
 
 ![Never lose a word. Ever.](Marketing/posters-v5/10-history.jpg)
 
-Every dictation is saved on your Mac with playback, search, editing, and export. If the
+Every dictation is saved on your Mac with playback, search, and export. If the
 app or the Mac dies mid-sentence, the audio survives and is transcribed on the next
 launch, so the words are waiting for you in History.
 
@@ -116,6 +124,10 @@ launch, so the words are waiting for you in History.
 Checked August 2026. The paid apps are good software and some of them do things I don't
 do yet. Prices and features change, so check for yourself before you switch.
 
+The dated comparison lives at [yaptotext.com/compare](https://yaptotext.com/compare), with one page each for
+[Wispr Flow](https://yaptotext.com/wispr-flow-alternative), [superwhisper](https://yaptotext.com/superwhisper-alternative),
+[MacWhisper](https://yaptotext.com/macwhisper-alternative) and [VoiceInk](https://yaptotext.com/voiceink-alternative).
+
 ## Everything it does
 
 - **Dictate anywhere.** One tap of Right Command starts dictation in any app, and the
@@ -129,7 +141,7 @@ do yet. Prices and features change, so check for yourself before you switch.
 - **Auto mode.** It reads each dictation and picks the right format on its own: an email
   comes out as an email, a quick message stays casual, everything else is cleaned up.
   End with "make that formal" or "as a bullet list" and it follows the instruction.
-- **Modes for everything.** Raw Transcription, Clean Up, Email, Note, Message, Code, or
+- **Modes for everything.** Raw Transcription, Clean Up, Email, Note, Message, Code Comment, or
   write your own with custom instructions and give each app its own default. Press 1
   through 9 mid-dictation to switch.
 - **Send it for me.** Choose a key per app (Return or Command Return) that is pressed the
@@ -143,7 +155,7 @@ do yet. Prices and features change, so check for yourself before you switch.
 - **Teach it your words.** Dictionaries fix the names it mishears. Commands type anything
   you say. Say "add this to my dictionary" over a selection and it is learned.
 - **Never lose a word.** Crash recovery rescues interrupted dictations. Full history with
-  playback, search, editing, export, and statistics, all computed locally.
+  playback, search, export, and statistics, all computed locally.
 - **Transcribe any file.** Drop in audio or video, get the text.
 - **Built for accessibility.** Works with VoiceOver and Voice Control, one key runs
   everything, and dictation can fully replace typing.
@@ -152,8 +164,9 @@ do yet. Prices and features change, so check for yourself before you switch.
 
 - macOS 14 (Sonoma) or later, Apple Silicon. On macOS 26 the interface picks up the new Liquid Glass look.
 - Xcode 26+ to build from source.
-- AI modes use Apple Intelligence when it's on, or the bundled local model when it isn't.
-  Raw transcription needs neither.
+- AI modes use the bundled Phi-3.5 Mini model. On macOS 26 you can choose Apple Intelligence for cleanup
+  instead. Raw Transcription needs neither.
+- Full requirements and both install routes: [yaptotext.com/install](https://yaptotext.com/install).
 
 ## Permissions
 
@@ -170,9 +183,10 @@ The formal policy is in [PRIVACY.md](PRIVACY.md); the short version:
 - History stores your transcripts as JSON in the app's own container on your Mac, and (by
   default) the audio of each dictation next to them so you can play a recording back. The
   audio stays on your Mac like everything else; turn off "save audio with history" in
-  Settings to keep text only, choose how much history is retained, or delete any entry -
+  Settings to keep text only, choose how much history is retained, or delete any entry, and
   its audio is removed with it.
-- No network calls. No analytics, no account, no tracking of any kind.
+- No network calls in normal use. The only exception is a model download you start yourself. No analytics,
+  no account, no tracking of any kind.
 - The entire source is here, so none of this has to be taken on faith.
 
 ### The boring details
@@ -186,11 +200,11 @@ The bullet points above are the promise; this is exactly where every byte lives 
   the moment the dictation ends. Deleting a History entry deletes its audio, and the
   history retention setting prunes old audio automatically. Nothing is ever sent anywhere.
 - **Raw transcript.** What the speech model heard, before any cleanup. Kept in History
-  (alongside the cleaned text) so you can always compare the two - each entry has a
+  (alongside the cleaned text) so you can always compare the two: each entry has a
   "Show what was heard" toggle. History is a plain JSON file in the app's container:
   `~/Library/Containers/.../Data/Library/Application Support/YapToText/history.json`.
-- **Cleaned text.** Produced on device, either by Apple's on-device models or by the bundled
-  local models. The prompt and your text never leave the machine.
+- **Cleaned text.** Produced on device by the bundled local model, or by Apple Intelligence if you
+  choose it on macOS 26. The prompt and your text never leave the machine.
 - **Model downloads.** The ONLY network traffic the app can generate, and only when you
   explicitly click a download button: models are fetched over HTTPS from Hugging Face and
   stored in the app's container. No request carries anything about you or your dictations.
@@ -217,24 +231,29 @@ it ships.
 
 **Is there a free alternative to Wispr Flow?**
 This is one. YapToText does the same job, costs nothing, and runs on your Mac instead of a
-server, so there is no subscription and no account.
+server, so there is no subscription and no account. More on the
+[Wispr Flow alternative page](https://yaptotext.com/wispr-flow-alternative).
 
 **Is there an open-source superwhisper alternative?**
 Yes. The whole app is here under GPL-3.0, including the speech and AI pipeline, so you can
-read exactly what happens to your voice.
+read exactly what happens to your voice. More on the
+[superwhisper alternative page](https://yaptotext.com/superwhisper-alternative).
 
 **What is the best free dictation app for Mac?**
 I am biased, so here is the honest version: Apple's built-in dictation is free and fine for
 short bursts. If you want AI cleanup, modes, custom vocabulary, and editing text by voice
-without paying monthly, that is what I built this for.
+without paying monthly, that is what I built this for. The longer answer is
+[the best free dictation apps for Mac](https://yaptotext.com/best-free-dictation-app-mac).
 
 **How is this different from Apple's built-in dictation?**
 Apple's transcribes what you say. This transcribes it, then formats it: an email comes out
 as an email, a note as a note. It also fixes words it mishears, remembers your history, and
-lets you edit any selected text by speaking.
+lets you edit any selected text by speaking. The guide to
+[speech to text on a Mac](https://yaptotext.com/speech-to-text-mac) sets the two side by side.
 
 **Does it work offline?**
 Yes, from the first launch. The speech model and the AI cleanup model are inside the app.
+[Offline dictation for Mac](https://yaptotext.com/offline-dictation-mac) shows how to test it.
 
 **Does my voice get sent anywhere?**
 No. There are no network calls at all unless you click a button to download an optional
@@ -247,6 +266,18 @@ disabled people for the ability to type felt wrong.
 
 **Which Macs does it run on?**
 macOS 14 (Sonoma) or later on Apple Silicon.
+
+## Help and guides
+
+The help articles and guides live on yaptotext.com, one page per question:
+
+- [Your first dictation](https://yaptotext.com/help/first-dictation) and [keys and shortcuts](https://yaptotext.com/help/keys-and-shortcuts)
+- [Intelligent Insert](https://yaptotext.com/help/intelligent-insert), [Quick Edit](https://yaptotext.com/help/quick-edit), [Auto mode](https://yaptotext.com/help/auto-mode), [modes](https://yaptotext.com/help/modes) and [dictionaries](https://yaptotext.com/help/dictionaries)
+- [Speech and cleanup models](https://yaptotext.com/help/models), [energy and battery](https://yaptotext.com/help/energy), [history](https://yaptotext.com/help/history) and [troubleshooting](https://yaptotext.com/help/troubleshooting)
+- [YapToText compared with Wispr Flow, superwhisper, MacWhisper and VoiceInk](https://yaptotext.com/compare)
+- [Dictate on a Mac with one key](https://yaptotext.com/one-key-dictation-mac), [dictation for carpal tunnel](https://yaptotext.com/dictation-for-carpal-tunnel-mac), [Mac dictation with hearing aids](https://yaptotext.com/mac-dictation-hearing-aids) and [typing on a Mac without your hands](https://yaptotext.com/type-on-mac-without-hands)
+- [Dictation for coding](https://yaptotext.com/dictation-for-coding-mac), [in Word](https://yaptotext.com/dictation-in-word-mac), [in Google Docs](https://yaptotext.com/dictation-google-docs-mac) and [into any app](https://yaptotext.com/dictate-into-any-app-mac)
+- [Transcribe an audio or video file](https://yaptotext.com/transcribe-audio-file-mac-free) and [Whisper on a Mac](https://yaptotext.com/whisper-mac-app)
 
 ## Support
 
