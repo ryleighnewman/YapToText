@@ -25,6 +25,8 @@ struct RecordingPanelView: View {
 
     var body: some View {
         card
+            .contentShape(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
+            .windowDragArea()
             // Fill the fixed-size window and pin the card to its anchored edge, so as the card
             // springs between forms it grows/shrinks IN PLACE. `margin` leaves room for its shadow.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: cardAlignment)
@@ -934,6 +936,10 @@ struct PanelChrome: View {
             // Soft grounding, not a black halo: the old 0.32/13 read as a giant dark
             // blob behind the big card.
             .shadow(color: .black.opacity(0.16), radius: 9, y: 3)
+            // The card's empty stretches fall through the content view to this one: grabbing
+            // anywhere on the glass drags the panel.
+            .contentShape(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
+            .windowDragArea()
             .frame(width: size.width, height: size.height)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
             .offset(x: offset.width, y: offset.height)

@@ -2,6 +2,11 @@
 
 Newest first. The build number is in parentheses; the Mac App Store and Homebrew ship the same build.
 
+## 1.5.3
+
+- The dictation pop-up and the Quick Edit pop-up can be dragged again on macOS 27
+- Rebuilt media pausing: a paused video stays paused when you dictate, and videos in Safari and web-based apps now pause and resume too
+
 ## 1.5.2
 
 - The app warns when the room or the fans are too loud for the microphone to hear you

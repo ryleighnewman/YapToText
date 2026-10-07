@@ -24,6 +24,10 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
+        Entry(version: "1.5.3 (21)", points: [
+            "The dictation pop-up and the Quick Edit pop-up can be dragged again on macOS 27",
+            "Rebuilt media pausing: a paused video stays paused when you dictate, and videos in Safari and web-based apps now pause and resume too",
+        ]),
         Entry(version: "1.5.2 (19)", points: [
             "The app warns when the room or the fans are too loud for the microphone to hear you",
             "Language auto-detection, plus Polish and fourteen more languages",

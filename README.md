@@ -29,22 +29,13 @@ inside the app, so it works offline from the first launch. Auto mode reads each 
 and shapes it for where it is going, Quick Edit rewrites any selected text by voice, and
 everything else in the sidebar is optional.
 
-## What's new in 1.5.2
+## What's new in 1.5.3
 
-- The app warns when the room or the fans are too loud for the microphone to hear you
-- Language auto-detection, plus Polish and fourteen more languages
-- Apple Speech has been removed: Whisper is the only speech engine
-- Bluetooth hearing aids and headsets keep their full sound quality: the app records from the microphone you chose, and Music comes back at full quality after every dictation
-- Fixed a crash and a freeze when a Bluetooth device connected mid-dictation
-- Intelligent Insert is more reliable in Gmail, chat pages, and Electron apps
-- Dictating over a selection replaces it the way it was written
-- Quick Edit swaps a word or phrase exactly as you say it
-- Cleanup no longer drops words you said
-- Hallucinated speaker labels and stage directions are gone
-- Miscellaneous bug fixes
+- The dictation pop-up and the Quick Edit pop-up can be dragged again on macOS 27
+- Rebuilt media pausing: a paused video stays paused when you dictate, and videos in Safari and web-based apps now pause and resume too
 
-Full release history in [CHANGELOG.md](CHANGELOG.md). This section tracks the latest release on GitHub. The Mac App
-Store has 1.5.3, and its notes are in the [release notes on yaptotext.com](https://yaptotext.com/whats-new).
+Full release history in [CHANGELOG.md](CHANGELOG.md), and the notes for every version are in the
+[release notes on yaptotext.com](https://yaptotext.com/whats-new).
 
 ## A tour
 

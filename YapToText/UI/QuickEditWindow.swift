@@ -411,6 +411,8 @@ struct QuickEditPopupView: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.06)],
                                          startPoint: .top, endPoint: .bottom), lineWidth: 0.8))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .windowDragArea(previewData == nil)   // the Settings preview must not move the Settings window
         .symbolRenderingMode(.hierarchical)
         // ONE card that morphs: every stage change crossfades in place - never a box swap.
         .animation(.easeInOut(duration: 0.22), value: model.stage)
