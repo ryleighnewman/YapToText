@@ -26,6 +26,6 @@ the report is credited in the release notes unless you would rather stay anonymo
 
 YapToText runs in the App Sandbox and transcribes on device. It makes no network calls in normal
 use; the only exception is a model download you start yourself from the AI Models page (see
-[PRIVACY.md](PRIVACY.md)). Reports that are most useful include anything that sends audio or text
+[PRIVACY.md](../PRIVACY.md)). Reports that are most useful include anything that sends audio or text
 off the Mac, inserts text somewhere it was not meant to go, loads a tampered model file, or
 escapes the sandbox.
