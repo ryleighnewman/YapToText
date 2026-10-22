@@ -54,7 +54,7 @@ final class KeyRecorderHub {
             }
             // A recognizable key that ISN'T watchable (left cmd - the system owns too
             // much of it) still deserves a reaction, not silence.
-            self.showFlash("Try the right-side keys, Fn, or Caps Lock")
+            self.showFlash(String(localized: "Try the right-side keys, Fn, or Caps Lock"))
             return event
         }
         // ANY other key commits as a CUSTOM trigger - zero restrictions. The key gets
@@ -200,11 +200,11 @@ final class ModifierRecorderNSView: NSView {
         KeyRecorderHub.shared.stop()
         let menu = NSMenu()
         if onTurnOff != nil {
-            let off = NSMenuItem(title: "Turn Off", action: #selector(turnOff), keyEquivalent: "")
+            let off = NSMenuItem(title: String(localized: "Turn Off"), action: #selector(turnOff), keyEquivalent: "")
             off.target = self
             menu.addItem(off)
         }
-        let record = NSMenuItem(title: "Record New Key", action: #selector(beginRecordingFromMenu), keyEquivalent: "")
+        let record = NSMenuItem(title: String(localized: "Record New Key"), action: #selector(beginRecordingFromMenu), keyEquivalent: "")
         record.target = self
         menu.addItem(record)
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -225,7 +225,7 @@ final class ModifierRecorderNSView: NSView {
 
     func updateAppearance() {
         if KeyRecorderHub.shared.armedRole == role {
-            label.stringValue = KeyRecorderHub.shared.flash ?? "Tap a key\u{2026}"
+            label.stringValue = KeyRecorderHub.shared.flash ?? String(localized: "Tap a key\u{2026}")
             label.textColor = .secondaryLabelColor
             layer?.borderColor = NSColor.controlAccentColor.cgColor
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
@@ -234,7 +234,7 @@ final class ModifierRecorderNSView: NSView {
             label.textColor = .systemRed
             layer?.borderColor = NSColor.systemRed.cgColor
             layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.10).cgColor
-            toolTip = "This key is bound to BOTH dictation and Quick Edit - whichever fires first wins."
+            toolTip = String(localized: "This key is bound to BOTH dictation and Quick Edit - whichever fires first wins.")
         } else {
             label.stringValue = current.label
             label.textColor = .labelColor

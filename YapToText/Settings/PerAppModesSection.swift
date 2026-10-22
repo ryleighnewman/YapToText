@@ -62,6 +62,7 @@ struct PerAppModesSection: View {
             }
             .labelsHidden()
             .frame(maxWidth: 190)
+            .accessibilityLabel(String(localized: "Mode for \(AppCatalog.name(for: bundleID))"))
             Button {
                 state.settings.perAppModeOverrides.removeValue(forKey: bundleID)
             } label: {

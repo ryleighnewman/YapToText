@@ -94,8 +94,9 @@ final class AudioRecorder: @unchecked Sendable {
     private func rebuildRouteMidSession() {
         controlQueue.async { [weak self] in self?.rebuildRouteMidSessionNow() }
     }
-    private func rebuildRouteMidSessionNow() {
-        guard isRunning, !armInFlight, !usingDirectInput else { return }   // direct capture owns the route
+    @discardableResult
+    private func rebuildRouteMidSessionNow() -> Bool {
+        guard isRunning, !armInFlight, !usingDirectInput else { return false }   // direct capture owns the route
         // ALWAYS a fresh engine. Reusing the old engine's input node after a route change
         // crashed in the field (1.2 (7), SIGABRT in installTap): the node reports a STALE
         // cached format that passes the >0 guards while the hardware underneath already
@@ -110,15 +111,93 @@ final class AudioRecorder: @unchecked Sendable {
         let format = input.outputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
             yapdiag("recorder: mid-session device change - NO input available")
-            return
+            return false
         }
         ensureResidentTap(format, on: input)
         engine.prepare()
         do {
             try engine.start()
             yapdiag("recorder: mid-session route rebuilt fresh (\(Int(format.sampleRate))Hz) - capture continues")
+            return true
         } catch {
             yapdiag("recorder: mid-session rebuild failed (\(error))")
+            return false
+        }
+    }
+
+    // MARK: Stall watchdog
+
+    /// When the capture last delivered a buffer to the running session (paused or not), or
+    /// distantPast before the first one. A route can stop delivering in the middle of a
+    /// dictation with no configuration change, no error and the hardware still running
+    /// (2026-10-13 23:26, built-in mic, engine path: five minutes of "Listening..." and
+    /// nothing captured). The controller polls this and rebuilds the capture in place.
+    private let bufferClockLock = NSLock()
+    private var _lastBufferAt = Date.distantPast
+    private var lastBufferAt: Date {
+        get { bufferClockLock.lock(); defer { bufferClockLock.unlock() }; return _lastBufferAt }
+        set { bufferClockLock.lock(); _lastBufferAt = newValue; bufferClockLock.unlock() }
+    }
+
+    /// Seconds since the running session last received audio. Nil when no session is
+    /// running or before its first buffer (the dead-route watchdog owns that window).
+    var secondsSinceLastBuffer: TimeInterval? {
+        guard isRunning else { return nil }
+        let last = lastBufferAt
+        guard last != .distantPast else { return nil }
+        return Date().timeIntervalSince(last)
+    }
+
+    /// What the capture looked like when it went quiet, for the log.
+    var stallReport: String {
+        let quiet = secondsSinceLastBuffer.map { String(format: "%.1fs", $0) } ?? "n/a"
+        let path = usingDirectInput ? "direct" : "engine"
+        let defaultUID = AudioInputDevices.defaultInputUID() ?? "none"
+        return "quiet=\(quiet) path=\(path) engineRunning=\(engine.isRunning) directRunning=\(direct?.isRunning ?? false) buffers=\(bufferCount) routed=\(routedDeviceUID ?? "default") chosen=\(preferredDeviceUID ?? "default") systemDefault=\(defaultUID) paused=\(isPaused)"
+    }
+
+    #if DEBUG
+    /// Test hook: silence the capture the way the field stall did, leaving the session
+    /// running and the route believing it is live, so the watchdog has to notice.
+    func debugSimulateStall() {
+        controlQueue.async { [weak self] in
+            guard let self, self.isRunning else { return }
+            if self.usingDirectInput { self.direct?.stop() } else { self.engine.pause() }
+            yapdiag("recorder: DEBUG stall simulated (\(self.usingDirectInput ? "direct unit stopped" : "engine paused"))")
+        }
+    }
+    #endif
+
+    /// Bring a stalled capture back without ending the session: the same callbacks, the
+    /// same recording file, the same transcription. The engine path gets a fresh engine
+    /// (the device-change rebuild); the direct path restarts its CoreAudio unit.
+    func recoverStalledCapture(_ completion: @escaping (Bool) -> Void) {
+        controlQueue.async { [weak self] in
+            guard let self, self.isRunning, !self.armInFlight else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            let ok: Bool
+            if self.usingDirectInput {
+                if let unit = self.direct, let uid = self.routedDeviceUID,
+                   let device = AudioInputDevices.device(forUID: uid) {
+                    do {
+                        try unit.start(deviceUID: uid, deviceID: device.id) { [weak self] buffer in self?.residentTap(buffer) }
+                        yapdiag("recorder: stalled direct capture restarted on \(device.name)")
+                        ok = true
+                    } catch {
+                        yapdiag("recorder: stalled direct capture could not restart (\(error))")
+                        ok = false
+                    }
+                } else {
+                    yapdiag("recorder: stalled direct capture has no device to restart on")
+                    ok = false
+                }
+            } else {
+                ok = self.rebuildRouteMidSessionNow()
+            }
+            self.lastBufferAt = Date()   // a fresh fuse for the rebuilt route
+            DispatchQueue.main.async { completion(ok) }
         }
     }
 
@@ -282,6 +361,7 @@ final class AudioRecorder: @unchecked Sendable {
             }
             return
         }
+        lastBufferAt = Date()   // the stall watchdog's clock: any session buffer, paused or not
         if isPaused {
             DispatchQueue.main.async { levelCB(0) }
             return   // drop the buffer: no transcription, no file write while paused
@@ -733,7 +813,7 @@ final class AudioRecorder: @unchecked Sendable {
                 isRunning = true
                 if !routeToPreferred {
                     fellBackToDefaultInput = true; fallbackDefaultUID = defaultNow
-                    let name = defaultNow.flatMap { AudioInputDevices.device(forUID: $0)?.name } ?? "the system default input"
+                    let name = defaultNow.flatMap { AudioInputDevices.device(forUID: $0)?.name } ?? String(localized: "the system default input")
                     AudioRecorder.lastFallback = (defaultNow ?? "", name)
                 } else {
                     AudioRecorder.lastFallback = nil
@@ -744,7 +824,7 @@ final class AudioRecorder: @unchecked Sendable {
                 yapdiag("recorder: engine.start attempt \(attempt) failed (\(error))")
             }
         }
-        throw lastError ?? TranscriptionError.unavailable("The microphone couldn't start.")
+        throw lastError ?? TranscriptionError.unavailable(String(localized: "The microphone couldn't start."))
     }
 
     /// Replace the engine with a brand-new one, tearing the old one down in the safe order.
@@ -789,6 +869,7 @@ final class AudioRecorder: @unchecked Sendable {
         sessionLock.unlock()
         bufferCount = 0
         startedAt = Date()
+        lastBufferAt = .distantPast
         routedDeviceUID = uid
         usingDirectInput = true
         residentAsked = nil
@@ -846,7 +927,7 @@ final class AudioRecorder: @unchecked Sendable {
         let format = input.outputFormat(forBus: 0)
         armMark("format read")
         guard format.channelCount > 0, format.sampleRate > 0 else {
-            throw TranscriptionError.unavailable("No microphone input is available.")
+            throw TranscriptionError.unavailable(String(localized: "No microphone input is available."))
         }
 
         // Plug this session's callbacks into the RESIDENT tap - no tap churn. Removing and
@@ -872,6 +953,7 @@ final class AudioRecorder: @unchecked Sendable {
         armMark("installTap")
         bufferCount = 0
         startedAt = Date()
+        lastBufferAt = .distantPast
         engine.prepare()
         armMark("engine.prepare")
         try engine.start()

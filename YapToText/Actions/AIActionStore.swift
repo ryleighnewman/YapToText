@@ -27,7 +27,7 @@ final class AIActionStore {
 
     @discardableResult
     func add() -> AIAction {
-        let action = AIAction(name: "New Action", iconSystemName: "wand.and.stars", instructions: "")
+        let action = AIAction(name: String(localized: "New Action"), iconSystemName: "wand.and.stars", instructions: "")
         actions.append(action)
         save()
         return action
@@ -67,28 +67,28 @@ final class AIActionStore {
     // MARK: Defaults
 
     static let defaults: [AIAction] = [
-        AIAction(name: "Improve Writing", iconSystemName: "sparkles",
+        AIAction(name: String(localized: "Improve Writing"), iconSystemName: "sparkles",
                  instructions: "Improve the writing: fix grammar, spelling, and clarity while preserving the meaning, tone, and language. Output only the improved text, with no preamble or quotes.",
                  isBuiltIn: true),
-        AIAction(name: "Fix Grammar & Spelling", iconSystemName: "checkmark.circle",
+        AIAction(name: String(localized: "Fix Grammar & Spelling"), iconSystemName: "checkmark.circle",
                  instructions: "Correct grammar, spelling, and punctuation only. Do not change wording, tone, or meaning. Output only the corrected text.",
                  isBuiltIn: true),
-        AIAction(name: "Make Concise", iconSystemName: "scissors",
+        AIAction(name: String(localized: "Make Concise"), iconSystemName: "scissors",
                  instructions: "Rewrite to be as concise as possible without losing meaning. Output only the shortened text.",
                  isBuiltIn: true),
-        AIAction(name: "Make Formal", iconSystemName: "briefcase",
+        AIAction(name: String(localized: "Make Formal"), iconSystemName: "briefcase",
                  instructions: "Rewrite in a professional, formal tone while keeping the meaning and language. Output only the rewritten text.",
                  isBuiltIn: true),
-        AIAction(name: "Make Friendly", iconSystemName: "face.smiling",
+        AIAction(name: String(localized: "Make Friendly"), iconSystemName: "face.smiling",
                  instructions: "Rewrite in a warm, friendly, casual tone while keeping the meaning and language. Output only the rewritten text.",
                  isBuiltIn: true),
-        AIAction(name: "Summarize", iconSystemName: "text.line.first.and.arrowtriangle.forward",
+        AIAction(name: String(localized: "Summarize"), iconSystemName: "text.line.first.and.arrowtriangle.forward",
                  instructions: "Summarize the text into its key points. Output only the summary.",
                  isBuiltIn: true),
-        AIAction(name: "Bullet Points", iconSystemName: "list.bullet",
+        AIAction(name: String(localized: "Bullet Points"), iconSystemName: "list.bullet",
                  instructions: "Rewrite the text as a clear bulleted list of its key points. Output only the list.",
                  isBuiltIn: true),
-        AIAction(name: "Translate to English", iconSystemName: "globe",
+        AIAction(name: String(localized: "Translate to English"), iconSystemName: "globe",
                  instructions: "Translate the text into English. Output only the translation. If it is already English, lightly correct it.",
                  isBuiltIn: true),
     ]

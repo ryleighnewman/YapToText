@@ -11,8 +11,8 @@
 #      cannot dictate until a speech model is installed.
 set -eu
 
-PROJ="/Users/ryleighnewman/Desktop/Apps/YapToText"
-TAP="/Users/ryleighnewman/Desktop/Apps/homebrew-yaptotext"
+PROJ="$(cd "$(dirname "$0")/.." && pwd)"
+TAP="${TAP:-$PROJ/../homebrew-yaptotext}"
 DD="$HOME/Library/Caches/YapToTextDD-Homebrew"
 STAGE="$DD/stage"
 LOG="/tmp/yap-homebrew.log"

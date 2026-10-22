@@ -118,9 +118,9 @@ struct WelcomeView: View {
 
     private var continueTitle: String {
         switch step {
-        case .welcome: return "Get Started"
-        case .ready: return "Start Dictating"
-        default: return "Continue"
+        case .welcome: return String(localized: "Get Started")
+        case .ready: return String(localized: "Start Dictating")
+        default: return String(localized: "Continue")
         }
     }
 
@@ -157,16 +157,16 @@ struct WelcomeView: View {
 
     // Page 2 - permissions.
     private var permissionsStep: some View {
-        stepScaffold(icon: nil, title: "A couple of permissions",
-                     subtitle: "Microphone so it can hear you; Accessibility so your words can be pasted into other apps and the Right Command key works everywhere.") {
+        stepScaffold(icon: nil, title: String(localized: "A couple of permissions"),
+                     subtitle: String(localized: "Microphone so it can hear you; Accessibility so your words can be pasted into other apps and the Right Command key works everywhere.")) {
             VStack(spacing: 12) {
-                permissionCard(icon: "mic.fill", title: "Microphone", required: false,
+                permissionCard(icon: "mic.fill", title: String(localized: "Microphone"), required: false,
                                granted: state.permissions.microphoneGranted,
-                               detail: "Recommended, so the app can hear your voice.",
+                               detail: String(localized: "Recommended, so the app can hear your voice."),
                                grant: { Task { await state.permissions.requestMicrophone() } })
-                permissionCard(icon: "accessibility", title: "Accessibility", required: false,
+                permissionCard(icon: "accessibility", title: String(localized: "Accessibility"), required: false,
                                granted: state.permissions.accessibilityGranted,
-                               detail: "Required to paste your dictations into other apps, and for the global shortcuts. Without it, text is copied to the clipboard.",
+                               detail: String(localized: "Required to paste your dictations into other apps, and for the global shortcuts. Without it, text is copied to the clipboard."),
                                grant: { state.permissions.promptAccessibility() })
                 // Re-read the live grant state and re-arm the key readers, so flipping a switch in
                 // System Settings updates here (and starts working) without relaunching the app.
@@ -218,7 +218,7 @@ struct WelcomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Toggle("", isOn: Binding(get: { state.settings.aiCleanupEnabled },
+            Toggle("Post-transcription analysis", isOn: Binding(get: { state.settings.aiCleanupEnabled },
                                      set: { state.settings.aiCleanupEnabled = $0 }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
@@ -257,7 +257,7 @@ struct WelcomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Toggle("", isOn: Binding(get: { state.settings.autoContextMode },
+            Toggle("Auto mode", isOn: Binding(get: { state.settings.autoContextMode },
                                      set: { state.settings.autoContextMode = $0 }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
@@ -281,7 +281,7 @@ struct WelcomeView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "mic.fill").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                     Text("Dictation key").font(.callout.weight(.medium))
-                    Picker("", selection: Binding(
+                    Picker("Dictation key", selection: Binding(
                         get: { pushToTalk ? ModifierTrigger.pushToTalk : .toggle },
                         set: { pushToTalk = $0 == .pushToTalk; useCustomDictation = false })) {
                         ForEach(ModifierTrigger.allCases.filter { $0 != .off }) { Text($0.label).tag($0) }
@@ -320,7 +320,7 @@ struct WelcomeView: View {
             VStack(spacing: 10) {
                 escRow
                 customShortcut(on: $useCustomDictation, combo: $customDictation,
-                               label: "Use a custom shortcut instead of Right \u{2318}")
+                               label: String(localized: "Use a custom shortcut instead of Right \u{2318}"))
             }
             .frame(maxWidth: 480)
         }
@@ -337,7 +337,7 @@ struct WelcomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Toggle("", isOn: $escCancel).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            Toggle("Esc cancels dictation", isOn: $escCancel).labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
         .padding(13)
         .yapGlass(in: RoundedRectangle(cornerRadius: Metrics.panelRadius, style: .continuous))
@@ -355,16 +355,16 @@ struct WelcomeView: View {
     // Privacy / architecture: everything runs and stays on this Mac. Quiet surfaces (not stacked
     // glass) so the slide reads clean and stays light on the glass renderer.
     private var quickEditStep: some View {
-        stepScaffold(icon: nil, title: "The Quick Edit key",
-                     subtitle: "Fix text after it lands, by talking instead of typing.") {
+        stepScaffold(icon: nil, title: String(localized: "The Quick Edit key"),
+                     subtitle: String(localized: "Fix text after it lands, by talking instead of typing.")) {
             QuickEditTutorial()
                 .frame(maxWidth: 520)
         }
     }
 
     private var appearanceStep: some View {
-        stepScaffold(icon: "paintpalette.fill", title: "Make it yours",
-                     subtitle: "The dictation pop-up and the Quick Edit card, live: pick their layout, position, and colors. Everything applies instantly.") {
+        stepScaffold(icon: "paintpalette.fill", title: String(localized: "Make it yours"),
+                     subtitle: String(localized: "The dictation pop-up and the Quick Edit card, live: pick their layout, position, and colors. Everything applies instantly.")) {
             AppearanceQuickPicker()
                 .frame(maxWidth: 520)
         }
@@ -384,12 +384,12 @@ struct WelcomeView: View {
                     .frame(maxWidth: 470)
             }
             VStack(spacing: 10) {
-                privacyRow("cpu", "On-device AI",
-                           "Speech recognition and AI cleanup run entirely on this Mac, with models that ship inside the app. Your voice is turned into text right here.")
-                privacyRow("internaldrive", "Your data stays put",
-                           "Transcripts, history, and audio live only on this Mac, in the app's own storage, and you can delete any of it anytime.")
-                privacyRow("wifi.slash", "Works offline",
-                           "Dictation needs no network. Nothing is uploaded, and there are no servers to trust.")
+                privacyRow("cpu", String(localized: "On-device AI"),
+                           String(localized: "Speech recognition and AI cleanup run entirely on this Mac, with models that ship inside the app. Your voice is turned into text right here."))
+                privacyRow("internaldrive", String(localized: "Your data stays put"),
+                           String(localized: "Transcripts, history, and audio live only on this Mac, in the app's own storage, and you can delete any of it anytime."))
+                privacyRow("wifi.slash", String(localized: "Works offline"),
+                           String(localized: "Dictation needs no network. Nothing is uploaded, and there are no servers to trust."))
             }
             .frame(maxWidth: 480)
             HStack(spacing: 4) {
@@ -437,7 +437,7 @@ struct WelcomeView: View {
             .stroke(Color.secondary.opacity(0.1), lineWidth: 0.5))
     }
 
-    // Final page: you're set, the one gesture to remember, and a clearly-labelled name prompt.
+    // Final page: you're set, the one gesture to remember, and a clearly-labeled name prompt.
     private var readyStep: some View {
         VStack(spacing: 22) {
             VStack(spacing: 12) {
@@ -559,12 +559,12 @@ struct WelcomeView: View {
     /// a modifier-less key is chosen (it will trigger dictation every time it is pressed, anywhere).
     private func captionFor(_ combo: KeyCombo?) -> String {
         guard let combo else {
-            return "The box is listening. Press any key or combo, like \u{2325}\u{2318}D or F13. If nothing registers, click the box once and try again."
+            return String(localized: "The box is listening. Press any key or combo, like \u{2325}\u{2318}D or F13. If nothing registers, click the box once and try again.")
         }
         if combo.modifiers == 0 {
-            return "Saved. Heads up: a bare key starts dictation every time you press it, in every app. A combo with \u{2318} or \u{2325} avoids surprises."
+            return String(localized: "Saved. Heads up: a bare key starts dictation every time you press it, in every app. A combo with \u{2318} or \u{2325} avoids surprises.")
         }
-        return "Saved. Click the box to change it."
+        return String(localized: "Saved. Click the box to change it.")
     }
 
     // MARK: Flow
@@ -683,11 +683,11 @@ private struct PipelineDemoView: View {
 
     private struct Processor { let name: String; let output: String }
 
-    private static let spoken = "hey um can you send over the q3 numbers before friday thanks"
+    private static let spoken = String(localized: "hey um can you send over the q3 numbers before friday thanks")
     private static let processors: [Processor] = [
-        Processor(name: "Raw", output: "hey um can you send over the q3 numbers before friday thanks"),
-        Processor(name: "Email", output: "Hi,\n\nCould you send over the Q3 numbers before Friday?\n\nThanks!"),
-        Processor(name: "Note", output: "- Ask for Q3 numbers\n- Deadline: Friday"),
+        Processor(name: String(localized: "Raw"), output: String(localized: "hey um can you send over the q3 numbers before friday thanks")),
+        Processor(name: String(localized: "Email"), output: String(localized: "Hi,\n\nCould you send over the Q3 numbers before Friday?\n\nThanks!")),
+        Processor(name: String(localized: "Note"), output: String(localized: "- Ask for Q3 numbers\n- Deadline: Friday")),
     ]
 
     @State private var phase: Phase = .listening

@@ -49,7 +49,7 @@ enum MediaAudioDecoder {
         do {
             try decodeViaAudioFile(url: readURL, onChunk: onChunk)
         } catch {
-            throw TranscriptionError.unavailable("No decodable audio was found in \(url.lastPathComponent).")
+            throw TranscriptionError.unavailable(String(localized: "No decodable audio was found in \(url.lastPathComponent)."))
         }
     }
 
@@ -70,11 +70,11 @@ enum MediaAudioDecoder {
         let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: settings)
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else {
-            throw TranscriptionError.unavailable("The audio track can't be decoded.")
+            throw TranscriptionError.unavailable(String(localized: "The audio track can't be decoded."))
         }
         reader.add(output)
         guard reader.startReading() else {
-            throw reader.error ?? TranscriptionError.unavailable("Couldn't start reading the audio.")
+            throw reader.error ?? TranscriptionError.unavailable(String(localized: "Couldn't start reading the audio."))
         }
 
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputSampleRate,
@@ -84,7 +84,7 @@ enum MediaAudioDecoder {
             CMSampleBufferInvalidate(sample)
         }
         if reader.status == .failed {
-            throw reader.error ?? TranscriptionError.unavailable("Failed while decoding the audio.")
+            throw reader.error ?? TranscriptionError.unavailable(String(localized: "Failed while decoding the audio."))
         }
     }
 
@@ -112,7 +112,7 @@ enum MediaAudioDecoder {
               let outFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputSampleRate,
                                             channels: 1, interleaved: false),
               let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
-            throw TranscriptionError.unavailable("Couldn't set up audio conversion.")
+            throw TranscriptionError.unavailable(String(localized: "Couldn't set up audio conversion."))
         }
 
         var reachedEOF = false
@@ -137,7 +137,7 @@ enum MediaAudioDecoder {
             if outBuf.frameLength > 0 { onChunk(outBuf); producedAny = true }
             if status == .endOfStream || status == .error { break }
         }
-        guard producedAny else { throw TranscriptionError.unavailable("The file had no readable audio.") }
+        guard producedAny else { throw TranscriptionError.unavailable(String(localized: "The file had no readable audio.")) }
     }
 
     // MARK: Container sniffing

@@ -146,11 +146,11 @@ enum MicHealth {
 
     var label: String {
         switch self {
-        case .unknown: return "Listening…"
-        case .excellent: return "Excellent"
-        case .good: return "Good"
-        case .fair: return "Fair"
-        case .poor: return "Needs attention"
+        case .unknown: return String(localized: "Listening…")
+        case .excellent: return String(localized: "Excellent")
+        case .good: return String(localized: "Good")
+        case .fair: return String(localized: "Fair")
+        case .poor: return String(localized: "Needs attention")
         }
     }
 
@@ -167,15 +167,15 @@ enum MicHealth {
     var advice: String {
         switch self {
         case .unknown:
-            return "Say a few words so the app can measure how clearly it hears you."
+            return String(localized: "Say a few words so the app can measure how clearly it hears you.")
         case .excellent:
-            return "Your mic is heard clearly, well above the room noise. Transcription will be at its best."
+            return String(localized: "Your mic is heard clearly, well above the room noise. Transcription will be at its best.")
         case .good:
-            return "A clean signal. The occasional word may slip in a noisy moment, but accuracy will be strong."
+            return String(localized: "A clean signal. The occasional word may slip in a noisy moment, but accuracy will be strong.")
         case .fair:
-            return "There's noticeable background noise relative to your voice. A headset or getting closer to the mic would raise accuracy the most. If you're in a call app (Teams, Zoom), it may be holding the mic and lowering your level."
+            return String(localized: "There's noticeable background noise relative to your voice. A headset or getting closer to the mic would raise accuracy the most. If you're in a call app (Teams, Zoom), it may be holding the mic and lowering your level.")
         case .poor:
-            return "Your voice is close to the room noise, which is the biggest limit on accuracy. Move closer to the mic or use a headset, quiet fans or nearby noise, and quit call apps (Teams, Zoom) that may be ducking your input."
+            return String(localized: "Your voice is close to the room noise, which is the biggest limit on accuracy. Move closer to the mic or use a headset, quiet fans or nearby noise, and quit call apps (Teams, Zoom) that may be ducking your input.")
         }
     }
 }
@@ -199,7 +199,7 @@ struct MicHealthReadout: View {
                 Circle().fill(health.color).frame(width: 7, height: 7)
                 Text(health.label).font(.caption.weight(.semibold)).foregroundStyle(health.color)
                 if let snr = monitor.snrDB {
-                    Text(String(format: "· %.0f dB signal-to-noise", snr))
+                    Text(String(format: String(localized: "%.0f dB signal-to-noise"), snr))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }

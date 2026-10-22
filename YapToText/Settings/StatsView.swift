@@ -64,16 +64,17 @@ struct StatsView: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.cancelAction)
+        .accessibilityLabel("Close")
     }
 
     // MARK: Stat tiles
 
     private func tiles(_ s: Stats) -> some View {
         let items: [(String, String, String, Color)] = [
-            ("text.bubble", s.count.formatted(), "Dictations", .accentColor),
-            ("textformat.abc", s.totalWords.formatted(), "Words spoken", .accentColor),
-            ("clock", Stats.duration(s.totalSeconds), "Time speaking", .accentColor),
-            ("speedometer", s.wpm > 0 ? "\(s.wpm)" : "-", "Speaking pace", .accentColor),
+            ("text.bubble", s.count.formatted(), String(localized: "Dictations"), .accentColor),
+            ("textformat.abc", s.totalWords.formatted(), String(localized: "Words spoken"), .accentColor),
+            ("clock", Stats.duration(s.totalSeconds), String(localized: "Time speaking"), .accentColor),
+            ("speedometer", s.wpm > 0 ? "\(s.wpm)" : "-", String(localized: "Speaking pace"), .accentColor),
         ]
         return HStack(spacing: 10) {
             ForEach(items, id: \.2) { item in
@@ -106,7 +107,7 @@ struct StatsView: View {
                     RuleMark(x: .value("Day", point.day, unit: .day))
                         .foregroundStyle(Color.secondary.opacity(0.25))
                         .annotation(position: .top, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
-                            Text("\(point.day.formatted(.dateTime.month(.abbreviated).day()))  ·  \(point.words) word\(point.words == 1 ? "" : "s")")
+                            Text("\(point.day.formatted(.dateTime.month(.abbreviated).day())), \(point.words) word\(point.words == 1 ? "" : "s")")
                                 .font(.caption.weight(.medium)).monospacedDigit()
                                 .padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(.regularMaterial, in: Capsule())
@@ -128,12 +129,12 @@ struct StatsView: View {
         CardSection("Insights") {
             VStack(alignment: .leading, spacing: 8) {
                 if s.minutesSaved >= 1 {
-                    insight("About \(Stats.duration(s.minutesSaved * 60)) saved versus typing everything at 40 words a minute.")
+                    insight(String(localized: "About \(Stats.duration(s.minutesSaved * 60)) saved versus typing everything at 40 words a minute."))
                 }
                 insight(s.currentStreak > 1
-                        ? "You're on a \(s.currentStreak)-day streak. Your best is \(s.bestStreak) days."
-                        : "Your best streak so far is \(max(s.bestStreak, 1)) day\(s.bestStreak == 1 ? "" : "s") in a row.")
-                insight("A typical dictation runs about \(s.medianWords) words.")
+                        ? String(localized: "You're on a \(s.currentStreak)-day streak. Your best is \(s.bestStreak) days.")
+                        : String(localized: "Your best streak so far is \(max(s.bestStreak, 1)) day\(s.bestStreak == 1 ? "" : "s") in a row."))
+                insight(String(localized: "A typical dictation runs about \(s.medianWords) words."))
             }
         }
     }
@@ -150,8 +151,8 @@ struct StatsView: View {
     private func breakdownCard(_ s: Stats) -> some View {
         CardSection("Top modes and destinations") {
             HStack(alignment: .top, spacing: Metrics.gap) {
-                rankList(title: "Modes", rows: s.topModes, tint: .accentColor)
-                rankList(title: "Apps", rows: s.topApps, tint: .accentColor)
+                rankList(title: String(localized: "Modes"), rows: s.topModes, tint: .accentColor)
+                rankList(title: String(localized: "Apps"), rows: s.topApps, tint: .accentColor)
             }
         }
     }
@@ -204,11 +205,11 @@ private struct EnergyCard: View {
     var body: some View {
         CardSection("Energy & resources") {
             HStack(spacing: 0) {
-                StatPill(memMB > 0 ? "\(memMB) MB" : "-", "memory")
-                StatPill(String(format: "%.0f%%", cpuPercent), "CPU now")
-                StatPill(state.settings.modelCooldownSeconds < 0 ? "kept" :
-                         state.settings.modelCooldownSeconds == 0 ? "instant" :
-                         "\(Int(state.settings.modelCooldownSeconds))s", "model unload")
+                StatPill(memMB > 0 ? String(localized: "\(memMB) MB") : "-", String(localized: "memory"))
+                StatPill(String(format: "%.0f%%", cpuPercent), String(localized: "CPU now"))
+                StatPill(state.settings.modelCooldownSeconds < 0 ? String(localized: "kept") :
+                         state.settings.modelCooldownSeconds == 0 ? String(localized: "instant") :
+                         String(localized: "\(Int(state.settings.modelCooldownSeconds))s"), String(localized: "model unload"))
             }
             Caption("Memory is mostly the loaded speech/AI models; after the unload delay they're released and the footprint drops. CPU spikes briefly during transcription and cleanup, then returns to ~0% at idle.")
         }
@@ -330,8 +331,8 @@ private struct Stats {
 
     static func duration(_ seconds: Double) -> String {
         let s = Int(seconds)
-        if s < 60 { return "\(s)s" }
-        if s < 3600 { return "\(s / 60)m" }
+        if s < 60 { return String(localized: "\(s)s") }
+        if s < 3600 { return String(localized: "\(s / 60)m") }
         return String(format: "%.1fh", seconds / 3600)
     }
 

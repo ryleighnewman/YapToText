@@ -37,16 +37,16 @@ struct EnergySettingsView: View {
                     Toggle("Switch models with the power source", isOn: $settings.energyAdaptive)
                         .toggleStyle(.switch)
                     if settings.energyAdaptive {
-                        adaptiveGroup(title: "Dictation model",
-                                      subtitle: "Turns your voice into words",
+                        adaptiveGroup(title: String(localized: "Dictation model"),
+                                      subtitle: String(localized: "Turns your voice into words"),
                                       options: speechOptions,
                                       plugged: $settings.speechModelPluggedID,
                                       battery: $settings.speechModelBatteryID)
 
                         Divider().padding(.vertical, 2)
 
-                        adaptiveGroup(title: "Cleanup model",
-                                      subtitle: "Turns those words into finished text",
+                        adaptiveGroup(title: String(localized: "Cleanup model"),
+                                      subtitle: String(localized: "Turns those words into finished text"),
                                       options: cleanupOptions,
                                       plugged: $settings.languageModelPluggedID,
                                       battery: $settings.languageModelBatteryID)
@@ -92,8 +92,8 @@ struct EnergySettingsView: View {
     }
 
     private var powerLine: String {
-        var line = PowerMonitor.shared.onACPower ? "Plugged in" : "On battery"
-        if let percent = PowerMonitor.shared.batteryPercent { line += " \u{00B7} \(percent)%" }
+        var line = PowerMonitor.shared.onACPower ? String(localized: "Plugged in") : String(localized: "On battery")
+        if let percent = PowerMonitor.shared.batteryPercent { line += String(localized: ", \(percent)%") }
         return line
     }
 
@@ -111,8 +111,8 @@ struct EnergySettingsView: View {
                 Text(title).font(.caption.weight(.semibold))
                 Text(subtitle).font(.caption2).foregroundStyle(.secondary)
             }
-            modelPicker("Plugged in", options: options, selection: plugged)
-            modelPicker("On battery", options: options, selection: battery)
+            modelPicker(String(localized: "Plugged in"), options: options, selection: plugged)
+            modelPicker(String(localized: "On battery"), options: options, selection: battery)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -122,7 +122,7 @@ struct EnergySettingsView: View {
         Picker(label, selection: selection) {
             Text("Use the main selection").tag(String?.none)
             ForEach(options) { model in
-                Text(model.displayName + (state.models.isUserModel(model) ? " (yours)" : ""))
+                Text(model.displayName + (state.models.isUserModel(model) ? String(localized: " (yours)") : ""))
                     .tag(String?.some(model.id))
             }
         }

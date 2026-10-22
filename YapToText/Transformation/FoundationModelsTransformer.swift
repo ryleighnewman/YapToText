@@ -13,15 +13,15 @@ struct FoundationModelsTransformer: TextTransformer {
 
     static var statusDescription: String {
         guard #available(macOS 26.0, *) else {
-            return "This version of macOS has no Apple Intelligence; AI modes use the bundled on-device model instead."
+            return String(localized: "This version of macOS has no Apple Intelligence; AI modes use the bundled on-device model instead.")
         }
         switch SystemLanguageModel.default.availability {
         case .available:
-            return "Apple Intelligence is ready. AI modes are available."
+            return String(localized: "Apple Intelligence is ready. AI modes are available.")
         case .unavailable:
-            return "Apple Intelligence isn't available right now (enable it in System Settings, or this Mac may not support it). Raw transcription still works; AI modes are disabled until it's ready."
+            return String(localized: "Apple Intelligence isn't available right now (enable it in System Settings, or this Mac may not support it). Raw transcription still works; AI modes are disabled until it's ready.")
         @unknown default:
-            return "Apple Intelligence status is unknown."
+            return String(localized: "Apple Intelligence status is unknown.")
         }
     }
 

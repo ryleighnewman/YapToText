@@ -12,9 +12,9 @@ enum AfterInsertAction: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .none: return "Nothing"
-        case .returnKey: return "Press Return"
-        case .commandReturn: return "Press \u{2318}Return"
+        case .none: return String(localized: "Nothing")
+        case .returnKey: return String(localized: "Press Return")
+        case .commandReturn: return String(localized: "Press \u{2318}Return")
         }
     }
 }
@@ -26,9 +26,9 @@ enum InsertionMethod: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .paste: return "Paste (fast, recommended)"
-        case .type: return "Type character-by-character"
-        case .clipboardOnly: return "Copy to clipboard only"
+        case .paste: return String(localized: "Paste (fast, recommended)")
+        case .type: return String(localized: "Type character-by-character")
+        case .clipboardOnly: return String(localized: "Copy to clipboard only")
         }
     }
 }
@@ -39,8 +39,8 @@ enum HotkeyBehavior: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .toggle: return "Toggle (press to start, press to stop)"
-        case .pushToTalk: return "Push-to-talk (hold to record)"
+        case .toggle: return String(localized: "Toggle (press to start, press to stop)")
+        case .pushToTalk: return String(localized: "Push-to-talk (hold to record)")
         }
     }
 }
@@ -53,10 +53,10 @@ enum PanelPosition: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .bottomCenter: return "Bottom center"
-        case .center: return "Center of screen"
-        case .topCenter: return "Top center"
-        case .nearMenuBar: return "Near menu bar"
+        case .bottomCenter: return String(localized: "Bottom center")
+        case .center: return String(localized: "Center of screen")
+        case .topCenter: return String(localized: "Top center")
+        case .nearMenuBar: return String(localized: "Near menu bar")
         }
     }
     /// How the card pins inside its fixed window at each position.
@@ -76,9 +76,9 @@ enum PanelAnimation: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .none: return "None"
-        case .fade: return "Fade"
-        case .scale: return "Scale + fade"
+        case .none: return String(localized: "None")
+        case .fade: return String(localized: "Fade")
+        case .scale: return String(localized: "Scale + fade")
         }
     }
 }
@@ -92,11 +92,11 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .capybara: return "Capybara"
-        case .microphone: return "Microphone"
-        case .waveform: return "Mini waveform"
-        case .bubble: return "Speech bubble"
-        case .dot: return "Minimal dot"
+        case .capybara: return String(localized: "Capybara")
+        case .microphone: return String(localized: "Microphone")
+        case .waveform: return String(localized: "Mini waveform")
+        case .bubble: return String(localized: "Speech bubble")
+        case .dot: return String(localized: "Minimal dot")
         }
     }
 }
@@ -110,10 +110,10 @@ enum PanelTintStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .off: return "None"
-        case .accent: return "Match accent"
-        case .custom: return "Custom color"
-        case .rainbow: return "RGB"
+        case .off: return String(localized: "None")
+        case .accent: return String(localized: "Match accent")
+        case .custom: return String(localized: "Custom color")
+        case .rainbow: return String(localized: "RGB")
         }
     }
 }
@@ -132,9 +132,9 @@ enum WaveColorStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .accent: return "Match accent"
-        case .custom: return "Custom color"
-        case .rgb: return "RGB"
+        case .accent: return String(localized: "Match accent")
+        case .custom: return String(localized: "Custom color")
+        case .rgb: return String(localized: "RGB")
         }
     }
 }
@@ -204,14 +204,14 @@ enum PrimaryTriggerKey: Codable, Identifiable, Equatable, Hashable {
 
     var label: String {
         switch self {
-        case .rightCommand: return "Right \u{2318}"
-        case .rightControl: return "Right \u{2303}"
-        case .leftControl: return "Left \u{2303}"
-        case .fnGlobe: return "Fn \u{1F310}"
-        case .rightOption: return "Right \u{2325}"
-        case .leftOption: return "Left \u{2325}"
-        case .rightShift: return "Right \u{21E7}"
-        case .capsLock: return "\u{21EA} Caps Lock"
+        case .rightCommand: return String(localized: "Right \u{2318}")
+        case .rightControl: return String(localized: "Right \u{2303}")
+        case .leftControl: return String(localized: "Left \u{2303}")
+        case .fnGlobe: return String(localized: "Fn \u{1F310}")
+        case .rightOption: return String(localized: "Right \u{2325}")
+        case .leftOption: return String(localized: "Left \u{2325}")
+        case .rightShift: return String(localized: "Right \u{21E7}")
+        case .capsLock: return String(localized: "\u{21EA} Caps Lock")
         case .custom(let code): return Self.keyName(code)
         }
     }
@@ -257,8 +257,8 @@ enum PrimaryTriggerKey: Codable, Identifiable, Equatable, Hashable {
             122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7",
             100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12", 105: "F13",
             107: "F14", 113: "F15", 106: "F16", 64: "F17", 79: "F18", 80: "F19",
-            49: "Space", 36: "Return", 48: "Tab", 51: "Delete", 53: "Esc",
-            116: "Page Up", 121: "Page Down", 115: "Home", 119: "End", 114: "Help",
+            49: String(localized: "Space"), 36: String(localized: "Return"), 48: String(localized: "Tab"), 51: String(localized: "Delete"), 53: String(localized: "Esc"),
+            116: String(localized: "Page Up"), 121: String(localized: "Page Down"), 115: String(localized: "Home"), 119: String(localized: "End"), 114: String(localized: "Help"),
             123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
             50: "`", 27: "-", 24: "=", 33: "[", 30: "]", 42: "\\", 41: ";", 39: "'",
             43: ",", 47: ".", 44: "/",
@@ -267,7 +267,7 @@ enum PrimaryTriggerKey: Codable, Identifiable, Equatable, Hashable {
             15: "R", 1: "S", 17: "T", 32: "U", 9: "V", 13: "W", 7: "X", 16: "Y", 6: "Z",
             29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7", 28: "8", 25: "9",
         ]
-        return names[code] ?? "Key \(code)"
+        return names[code] ?? String(localized: "Key \(code)")
     }
 }
 
@@ -278,9 +278,9 @@ enum ModifierTrigger: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .off: return "Off"
-        case .toggle: return "Tap to start / stop"
-        case .pushToTalk: return "Hold to talk"
+        case .off: return String(localized: "Off")
+        case .toggle: return String(localized: "Tap to start / stop")
+        case .pushToTalk: return String(localized: "Hold to talk")
         }
     }
 }
@@ -292,9 +292,9 @@ enum PanelStyle: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .expanded: return "Expanded (live transcript)"
-        case .compact: return "Compact (one row)"
-        case .mini: return "Mini (just the waveform)"
+        case .expanded: return String(localized: "Expanded (live transcript)")
+        case .compact: return String(localized: "Compact (one row)")
+        case .mini: return String(localized: "Mini (just the waveform)")
         }
     }
 }
@@ -306,9 +306,9 @@ enum PanelSize: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .small: return "Small"
-        case .medium: return "Medium"
-        case .large: return "Large"
+        case .small: return String(localized: "Small")
+        case .medium: return String(localized: "Medium")
+        case .large: return String(localized: "Large")
         }
     }
     /// Panel width in points; the height follows the content.
@@ -332,11 +332,11 @@ enum HistoryRetention: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .all: return "Keep everything"
-        case .last500: return "Keep last 500"
-        case .last100: return "Keep last 100"
-        case .sessionOnly: return "This session only"
-        case .off: return "Don't save history"
+        case .all: return String(localized: "Keep everything")
+        case .last500: return String(localized: "Keep last 500")
+        case .last100: return String(localized: "Keep last 100")
+        case .sessionOnly: return String(localized: "This session only")
+        case .off: return String(localized: "Don't save history")
         }
     }
     /// Cap for persisted records, or nil for unbounded.
@@ -720,7 +720,7 @@ final class AppSettings {
         lastSeenWhatsNewVersion = loaded?.lastSeenWhatsNewVersion
         visualizerColorHex = loaded?.visualizerColorHex
         restoreClipboard = loaded?.restoreClipboard ?? true
-        adaptToSurroundings = loaded?.adaptToSurroundings ?? true
+        adaptToSurroundings = loaded?.adaptToSurroundings ?? false   // off for new installs (Oct 2026); a saved choice is kept
         doubleEscapeToCancel = loaded?.doubleEscapeToCancel ?? false
         quickEditModelID = loaded?.quickEditModelID
         trimTrailingNewlines = loaded?.trimTrailingNewlines ?? true

@@ -72,17 +72,17 @@ struct ModelInfo: Codable, Identifiable, Hashable {
     /// Plain-language ratings shown as chips next to the stars.
     enum Rating { case high, balanced, low
         var accuracyLabel: String {
-            switch self { case .high: "High accuracy"; case .balanced: "Good accuracy"; case .low: "Low accuracy" }
+            switch self { case .high: String(localized: "High accuracy"); case .balanced: String(localized: "Good accuracy"); case .low: String(localized: "Low accuracy") }
         }
         var speedLabel: String {
-            switch self { case .high: "High performance"; case .balanced: "Good performance"; case .low: "Low performance" }
+            switch self { case .high: String(localized: "High performance"); case .balanced: String(localized: "Good performance"); case .low: String(localized: "Low performance") }
         }
     }
     private static func rating(_ v: Int) -> Rating { v >= 4 ? .high : (v <= 2 ? .low : .balanced) }
     var accuracyRating: Rating { Self.rating(quality) }
     var speedRating: Rating { Self.rating(speed) }
     var sizeDescription: String {
-        if sizeMB <= 0 { return "Built-in" }
+        if sizeMB <= 0 { return String(localized: "Built-in") }
         if sizeMB >= 1024 { return String(format: "%.1f GB", sizeMB / 1024) }
         return String(format: "%.0f MB", sizeMB)
     }

@@ -26,7 +26,7 @@ struct CommandsView: View {
                 }
             }
 
-            Picker("", selection: $category) {
+            Picker("Category", selection: $category) {
                 ForEach(CommandCategory.allCases) { Label($0.label, systemImage: $0.icon).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -35,7 +35,7 @@ struct CommandsView: View {
             .frame(maxWidth: .infinity, alignment: .center)
             .onChange(of: category) { searchText = "" }
 
-            SearchField(text: $searchText, prompt: "Search \(category.label.lowercased()) commands")
+            SearchField(text: $searchText, prompt: String(localized: "Search \(category.label.lowercased()) commands"))
 
             commandList
                 .opacity(state.commands.isEnabled ? 1 : 0.45)
@@ -80,7 +80,7 @@ struct CommandsView: View {
                 }
                 .font(.caption).foregroundStyle(.secondary)
                 ForEach(items) { command in row(command) }
-                Caption(footnote(for: category))
+                Caption(verbatim: footnote(for: category))
             }
         }
     }
@@ -88,11 +88,11 @@ struct CommandsView: View {
     private func footnote(for category: CommandCategory) -> String {
         switch category {
         case .punctuation:
-            return "Give one command several phrases, like \u{201C}exclamation point, exclamation, bang\u{201D}. Type \\n in the Inserts box for a line break."
+            return String(localized: "Give one command several phrases, like \u{201C}exclamation point, exclamation, bang\u{201D}. Type \\n in the Inserts box for a line break.")
         case .emoji:
-            return "Give one emoji several phrases, like \u{201C}fire emoji, flame emoji, lit emoji\u{201D}."
+            return String(localized: "Give one emoji several phrases, like \u{201C}fire emoji, flame emoji, lit emoji\u{201D}.")
         case .snippet:
-            return "Snippets paste whole blocks of text: addresses, sign-offs, links. Live tokens work in the Inserts box: {date}, {time}, and {clipboard}."
+            return String(localized: "Snippets paste whole blocks of text: addresses, sign-offs, links. Live tokens work in the Inserts box: {date}, {time}, and {clipboard}.")
         }
     }
 
@@ -101,11 +101,11 @@ struct CommandsView: View {
     /// One-tap starters for things people dictate constantly: say "insert phone number"
     /// and the real number is typed. Each disappears once a command with that trigger exists.
     private static let personalSnippets: [(label: String, icon: String, trigger: String, output: String)] = [
-        ("Phone number", "phone", "phone number", "(your number)"),
-        ("Work email", "briefcase", "work email", "(your work email)"),
-        ("Personal email", "envelope", "personal email", "(your personal email)"),
-        ("Home address", "house", "home address", "(your address)"),
-        ("Website", "globe", "website", "(your website)"),
+        (String(localized: "Phone number"), "phone", "phone number", String(localized: "(your number)")),
+        (String(localized: "Work email"), "briefcase", "work email", String(localized: "(your work email)")),
+        (String(localized: "Personal email"), "envelope", "personal email", String(localized: "(your personal email)")),
+        (String(localized: "Home address"), "house", "home address", String(localized: "(your address)")),
+        (String(localized: "Website"), "globe", "website", String(localized: "(your website)")),
     ]
 
     @ViewBuilder
@@ -146,7 +146,7 @@ struct CommandsView: View {
                 .frame(maxWidth: .infinity)
             Image(systemName: "arrow.right").foregroundStyle(.secondary).font(.caption)
             TextField("", text: outputBinding(command))
-                .textFieldStyle(.plain)
+                .textFieldStyle(.plain).accessibilityLabel("Output")
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .innerWell(radius: 7)
                 .multilineTextAlignment(command.category == .snippet ? .leading : .center)
@@ -167,7 +167,7 @@ struct CommandsView: View {
                     }
                 }
             }
-            Toggle("", isOn: enabledBinding(command))
+            Toggle("Enabled", isOn: enabledBinding(command))
                 .toggleStyle(.switch).controlSize(.small).labelsHidden().frame(width: 40)
             Button { state.commands.delete(command) } label: {
                 Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)

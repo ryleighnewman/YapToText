@@ -22,6 +22,7 @@ struct AnalysisGate: ViewModifier {
                         .onTapGesture { state.requestAnalysisControl() }
                         .accessibilityLabel("Disabled - post-transcription analysis is off. Activate to turn it on.")
                         .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { state.requestAnalysisControl() }
                 }
             }
     }

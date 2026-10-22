@@ -37,7 +37,7 @@ struct ActionsView: View {
     private func card(_ action: AIAction) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Picker("", selection: iconBinding(action)) {
+                Picker("Icon", selection: iconBinding(action)) {
                     ForEach(icons, id: \.self) { Image(systemName: $0).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.menu).frame(width: 70)

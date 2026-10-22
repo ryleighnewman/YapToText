@@ -118,7 +118,7 @@ final class ModeStore {
     func duplicate(_ mode: Mode) -> Mode {
         var copy = mode
         copy.id = UUID()
-        copy.name = mode.name + " Copy"
+        copy.name = String(localized: "\(mode.name) Copy")
         copy.isBuiltIn = false
         modes.append(copy)
         save()

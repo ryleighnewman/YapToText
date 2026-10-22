@@ -99,17 +99,17 @@ struct AdvancedSettingsView: View {
                         Toggle("Also save the audio recording", isOn: $settings.saveAudio).toggleStyle(.switch).controlSize(.small)
                         if settings.saveAudio {
                             SubOptions {
-                                FolderCaption(prefix: "Audio stays on your Mac in the app's ",
-                                              linkText: "data folder",
+                                FolderCaption(prefix: String(localized: "Audio stays on your Mac in the app's "),
+                                              linkText: String(localized: "data folder"),
                                               url: AudioStore.directory,
-                                              suffix: " and can be replayed from History.")
+                                              suffix: String(localized: " and can be replayed from History."))
                             }
                         }
-                        Toggle("Keep cancelled dictations", isOn: $settings.recordCancelledDictations)
+                        Toggle("Keep canceled dictations", isOn: $settings.recordCancelledDictations)
                             .toggleStyle(.switch).controlSize(.small)
                         SubOptions {
                             Caption(settings.recordCancelledDictations
-                                    ? "Cancel a dictation and it is still transcribed and saved here, marked as cancelled, so a stray Escape cannot lose what you said. It is never inserted anywhere."
+                                    ? "Cancel a dictation and it is still transcribed and saved here, marked as canceled, so a stray Escape cannot lose what you said. It is never inserted anywhere."
                                     : "Cancelling discards the recording. Nothing is saved and it cannot be recovered.")
                         }
                         Toggle("Clear history when I quit", isOn: $settings.clearHistoryOnQuit).toggleStyle(.switch).controlSize(.small)
@@ -127,8 +127,8 @@ struct AdvancedSettingsView: View {
 
             CardSection("Backup & sharing") {
                 HStack {
-                    TipRow(icon: "square.and.arrow.up", title: "Share your whole setup",
-                           message: "Everything you've configured: modes, dictionaries, commands, AI actions, and settings. History is never included.")
+                    TipRow(icon: "square.and.arrow.up", title: String(localized: "Share your whole setup"),
+                           message: String(localized: "Everything you've configured: modes, dictionaries, commands, AI actions, and settings. History is never included."))
                     Spacer()
                     VStack(spacing: 6) {
                         Button("Export Preset…") { PresetPorter.export() }.buttonStyle(.solidSecondary).controlSize(.small)
@@ -139,10 +139,10 @@ struct AdvancedSettingsView: View {
 
             CardSection("Restore defaults") {
                 HStack {
-                    TipRow(icon: "arrow.counterclockwise", title: "Put every setting back to its default",
+                    TipRow(icon: "arrow.counterclockwise", title: String(localized: "Put every setting back to its default"),
                            message: settings.restoreUndo == nil
-                               ? "Modes, dictionaries, commands, AI actions, and history are kept."
-                               : "Defaults restored. Undo brings back exactly what you had, until you quit.")
+                               ? String(localized: "Modes, dictionaries, commands, AI actions, and history are kept.")
+                               : String(localized: "Defaults restored. Undo brings back exactly what you had, until you quit."))
                     Spacer()
                     if settings.restoreUndo != nil {
                         Button("Undo") { settings.undoRestore() }.buttonStyle(.solidSecondary).controlSize(.small)
@@ -159,8 +159,8 @@ struct AdvancedSettingsView: View {
 
             CardSection("Start over") {
                 HStack {
-                    TipRow(icon: "trash", title: "Erase all data and start from scratch",
-                           message: "Every setting, mode, dictionary, command, and AI action, plus your whole history and saved audio. The app relaunches at its welcome screen.")
+                    TipRow(icon: "trash", title: String(localized: "Erase all data and start from scratch"),
+                           message: String(localized: "Every setting, mode, dictionary, command, and AI action, plus your whole history and saved audio. The app relaunches at its welcome screen."))
                     Spacer()
                     Button("Erase All Data\u{2026}") { confirmErase = true }.buttonStyle(.solidSecondary).controlSize(.small)
                 }
@@ -196,10 +196,11 @@ struct AdvancedSettingsView: View {
                         ForEach(InsertionMethod.allCases) { Text($0.label).tag($0) }
                     }
                     .labelsHidden().frame(maxWidth: 190)
+                    .accessibilityLabel(String(localized: "Insertion method for \(AppCatalog.name(for: bundleID))"))
                     Button {
                         settings.appInsertionOverrides.removeValue(forKey: bundleID)
                     } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("Remove this override")
+                        .buttonStyle(.plain).help("Remove this override").accessibilityLabel("Remove this override")
                 }
             }
             Menu {
@@ -227,10 +228,11 @@ struct AdvancedSettingsView: View {
                         ForEach(AfterInsertAction.allCases) { Text($0.label).tag($0) }
                     }
                     .labelsHidden().frame(maxWidth: 190)
+                    .accessibilityLabel(String(localized: "Key pressed after inserting into \(AppCatalog.name(for: bundleID))"))
                     Button {
                         settings.appAfterInsert.removeValue(forKey: bundleID)
                     } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("Stop pressing a key in this app")
+                        .buttonStyle(.plain).help("Stop pressing a key in this app").accessibilityLabel("Stop pressing a key in this app")
                 }
             }
             Menu {

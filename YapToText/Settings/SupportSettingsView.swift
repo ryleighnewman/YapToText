@@ -92,7 +92,7 @@ struct SupportSettingsView: View {
                 Text("Make this recurring monthly")
                     .font(.body)
                 Text(recurring
-                     ? "Tips charge automatically each month until cancelled."
+                     ? "Tips charge automatically each month until canceled."
                      : "Switch on to support monthly instead of one time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -159,7 +159,7 @@ struct SupportSettingsView: View {
 
     private func priceLabel(for product: Product) -> String {
         if product.type == .autoRenewable {
-            return "\(product.displayPrice)/mo"
+            return String(localized: "\(product.displayPrice)/mo")
         }
         return product.displayPrice
     }

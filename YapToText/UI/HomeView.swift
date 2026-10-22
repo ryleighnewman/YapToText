@@ -29,6 +29,7 @@ struct HomeView: View {
                 if !state.settings.hasDismissedDictionaryTip { dictionaryTip }
                 if !state.history.records.isEmpty { statsCard }
                 footer
+                siblingApp
             }
             .frame(maxWidth: Metrics.pageWidth)
             .frame(maxWidth: .infinity)
@@ -47,7 +48,7 @@ struct HomeView: View {
             AnimatedCapy(size: 76)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Welcome to YapToText").font(.title.weight(.semibold))
-                // Tiny grey version, part of the same line - still the release-notes button.
+                // Tiny gray version, part of the same line - still the release-notes button.
                 Button { showChangelog = true } label: {
                     Text(Changelog.currentVersion)
                         .font(.caption)
@@ -74,7 +75,7 @@ struct HomeView: View {
                 ForEach(Changelog.entries) { entry in
                     VStack(alignment: .leading, spacing: 5) {
                         Text(entry.version).font(.subheadline.weight(.semibold))
-                        ForEach(entry.points, id: \.self) { point in
+                        ForEach(Array(entry.points.enumerated()), id: \.offset) { _, point in
                             HStack(alignment: .firstTextBaseline, spacing: 6) {
                                 Text("\u{2022}").foregroundStyle(.secondary)
                                 Text(point).font(.callout)
@@ -97,7 +98,7 @@ struct HomeView: View {
     /// The note names whatever key ACTUALLY starts dictation right now, so it never lies after
     /// someone changes the trigger: Right Command when that trigger is on, else the custom hotkey.
     private var dictationKeyName: String {
-        if state.settings.rightCommandTrigger != .off { return "Right \u{2318}" }
+        if state.settings.rightCommandTrigger != .off { return String(localized: "Right \u{2318}") }
         return state.settings.hotkey.displayString
     }
 
@@ -206,7 +207,7 @@ struct HomeView: View {
     // MARK: Quick controls (the everyday switches, right on Home)
 
     /// The little "this is where you change the keys" affordance: every binding row gets one.
-    private func editBindingLink(_ help: String = "Change this binding on the Dictation page") -> some View {
+    private func editBindingLink(_ help: String = String(localized: "Change this binding on the Dictation page")) -> some View {
         Button {
             NotificationCenter.default.post(name: .yapShowDestination, object: "dictation")
         } label: {
@@ -222,7 +223,7 @@ struct HomeView: View {
 
     // THE HOME CONTROLS, in four small cards instead of one long one. Same controls,
     // same explanations, same links as before; the page read as a wall because keys,
-    // insert behaviour, AI stages, and app icons all sat in one card with no breaks
+    // insert behavior, AI stages, and app icons all sat in one card with no breaks
     // between them (2026-09-16). Each card now has a title that says what it is for,
     // and one short line under each control.
 
@@ -232,7 +233,7 @@ struct HomeView: View {
             HStack(spacing: 8) {
                 Image(systemName: "mic.fill").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Dictation key")
-                Picker("", selection: $settings.rightCommandTrigger) {
+                Picker("Dictation key", selection: $settings.rightCommandTrigger) {
                     ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
                 }
                 .labelsHidden().fixedSize()
@@ -249,7 +250,7 @@ struct HomeView: View {
             HStack(spacing: 8) {
                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Quick Edit key")
-                Picker("", selection: $settings.quickEditTrigger) {
+                Picker("Quick Edit key", selection: $settings.quickEditTrigger) {
                     ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
                 }
                 .labelsHidden().fixedSize()
@@ -321,10 +322,10 @@ struct HomeView: View {
             HStack(spacing: 8) {
                 Image(systemName: "menubar.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Menu bar icon")
-                Toggle("", isOn: $settings.showMenuBarIcon).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Toggle("Menu bar icon", isOn: $settings.showMenuBarIcon).labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .onChange(of: settings.showMenuBarIcon) { AppDelegate.shared?.reloadStatusItem() }
                 if settings.showMenuBarIcon {
-                    Picker("", selection: $settings.menuBarIconStyle) {
+                    Picker("Menu bar icon style", selection: $settings.menuBarIconStyle) {
                         ForEach(MenuBarIconStyle.allCases) { Text($0.label).tag($0) }
                     }
                     .labelsHidden().fixedSize()
@@ -335,7 +336,7 @@ struct HomeView: View {
             HStack(spacing: 8) {
                 Image(systemName: "dock.rectangle").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Dock icon")
-                Toggle("", isOn: $settings.showDockIcon).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Toggle("Dock icon", isOn: $settings.showDockIcon).labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .onChange(of: settings.showDockIcon) { AppDelegate.shared?.reloadDockIcon() }
                 Spacer(minLength: 0)
             }
@@ -355,11 +356,11 @@ struct HomeView: View {
         let wpm = minutes > 0.05 ? Int((Double(words) / minutes).rounded()) : 0
         return CardSection("Your dictation") {
             HStack(spacing: 0) {
-                StatPill("\(records.count)", "dictations")
-                StatPill("\(words)", "words")
-                StatPill(minutes >= 60 ? String(format: "%.1f h", minutes / 60) : "\(Int(minutes)) min", "speaking")
+                StatPill("\(records.count)", String(localized: "dictations"))
+                StatPill("\(words)", String(localized: "words"))
+                StatPill(minutes >= 60 ? String(format: String(localized: "%.1f h"), minutes / 60) : String(localized: "\(Int(minutes)) min"), String(localized: "speaking"))
                 if wpm > 0 {
-                    StatPill("\(wpm)", "words/min")
+                    StatPill("\(wpm)", String(localized: "words/min"))
                 }
             }
         }
@@ -369,12 +370,12 @@ struct HomeView: View {
 
     private var setupCard: some View {
         CardSection("Get set up") {
-            statusRow(symbol: "mic.fill", title: "Microphone",
-                      subtitle: "Required so YapToText can hear you.",
+            statusRow(symbol: "mic.fill", title: String(localized: "Microphone"),
+                      subtitle: String(localized: "Required so YapToText can hear you."),
                       granted: state.permissions.microphoneGranted,
                       // 5.1.1(iv): pre-permission buttons must use neutral wording
                       // ("Continue"), never "Allow" - App Review flagged this.
-                      actionTitle: "Continue") {
+                      actionTitle: String(localized: "Continue")) {
                           Task {
                               // If it was previously denied, requestAccess can't re-prompt -
                               // send the user straight to System Settings instead of no-op.
@@ -383,10 +384,10 @@ struct HomeView: View {
                           }
                       }
             Divider()
-            statusRow(symbol: "accessibility", title: "Accessibility (needed for auto-paste)",
-                      subtitle: "Required to paste your words into other apps automatically, for the Right \u{2318} key, and for reading selected text. Without it, dictations are copied to the clipboard instead.",
+            statusRow(symbol: "accessibility", title: String(localized: "Accessibility (needed for auto-paste)"),
+                      subtitle: String(localized: "Required to paste your words into other apps automatically, for the Right \u{2318} key, and for reading selected text. Without it, dictations are copied to the clipboard instead."),
                       granted: state.permissions.accessibilityGranted,
-                      actionTitle: "Grant") {
+                      actionTitle: String(localized: "Grant")) {
                           state.permissions.promptAccessibility()
                           state.permissions.openAccessibilitySettings()
                       }
@@ -440,6 +441,37 @@ struct HomeView: View {
     }
 
     private var footer: some View { QuickTipsPill() }
+
+    /// Sister-app shoutout anchoring the bottom of the Home page: the same block
+    /// InputConfig's home page gives YapToText, so the two apps point at each other.
+    private var siblingApp: some View {
+        HStack(spacing: 14) {
+            Image("InputConfigIcon")
+                .resizable().scaledToFit()
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Like YapToText? Try InputConfig.")
+                    .font(.callout.weight(.semibold))
+                Text("From the same developer: turn game controllers, MIDI devices, and accessibility controllers into keystrokes, mouse control, and macros on your Mac. Free, open source, and built for hands that don't work well.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 10)
+            Link(destination: URL(string: "https://apps.apple.com/us/app/inputconfig/id6777759147?mt=12")!) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.forward.app").accessibilityHidden(true)
+                    Text("App Store")
+                }
+                .font(.callout)
+            }
+            .help("Opens InputConfig on the Mac App Store. It's free.")
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.secondary.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
+    }
 }
 
 /// A quiet rotating pill of one-line feature tips - it replaces the old Quick Start Tour button.
@@ -451,21 +483,21 @@ private struct QuickTipsPill: View {
     private struct Tip { let text: String; var dest: AppDestination? }
 
     private static let tips: [Tip] = [
-        Tip(text: "Press 1-9 while dictating to pick how your words come out: email, note, message.", dest: .modes),
-        Tip(text: "Tap Space mid-dictation to pause; tap it again to resume.", dest: .settings),
-        Tip(text: "Press Esc while dictating to cancel. Nothing is typed or saved.", dest: nil),
-        Tip(text: "Set Right \u{2318} to hold-to-talk and use it like a walkie-talkie.", dest: .settings),
-        Tip(text: "Drop any audio or video file on the Utility page to transcribe it.", dest: .utility),
-        Tip(text: "Select text in any app, then use the menu bar\u{2019}s Regenerate menu to rewrite it with any mode.", dest: nil),
-        Tip(text: "Not happy with how a mode writes? Open it and edit its instructions. Every mode is yours to tweak.", dest: .modes),
-        Tip(text: "Dictionaries auto-correct names and jargon the mic keeps mishearing.", dest: .dictionaries),
-        Tip(text: "Say \u{201C}insert smiley face\u{201D} and Commands turn it into the emoji, right in your text.", dest: .commands),
-        Tip(text: "Regenerate your last dictation as an email straight from the menu bar.", dest: nil),
-        Tip(text: "Search the sidebar to jump to any setting in seconds.", dest: nil),
-        Tip(text: "Everything runs on your Mac. Your voice is never uploaded.", dest: .models),
-        Tip(text: "Curious how much you dictate? Statistics charts your words, streaks, and busiest hours.", dest: .stats),
-        Tip(text: "If the app ever crashes mid-sentence, don't worry: your recording is rescued on the next launch and waiting in History.", dest: .history),
-        Tip(text: "Need to whisper? Turn up the input boost or auto-amplify in Settings and quiet speech still comes through clearly.", dest: .settings),
+        Tip(text: String(localized: "Press 1-9 while dictating to pick how your words come out: email, note, message."), dest: .modes),
+        Tip(text: String(localized: "Tap Space mid-dictation to pause; tap it again to resume."), dest: .settings),
+        Tip(text: String(localized: "Press Esc while dictating to cancel. Nothing is typed; the dictation is still saved to History, marked as canceled."), dest: nil),
+        Tip(text: String(localized: "Set Right \u{2318} to hold-to-talk and use it like a walkie-talkie."), dest: .settings),
+        Tip(text: String(localized: "Drop any audio or video file on the Utility page to transcribe it."), dest: .utility),
+        Tip(text: String(localized: "Select text in any app, then use the menu bar\u{2019}s Regenerate menu to rewrite it with any mode."), dest: nil),
+        Tip(text: String(localized: "Not happy with how a mode writes? Open it and edit its instructions. Every mode is yours to tweak."), dest: .modes),
+        Tip(text: String(localized: "Dictionaries auto-correct names and jargon the mic keeps mishearing."), dest: .dictionaries),
+        Tip(text: String(localized: "Say \u{201C}insert smiley face\u{201D} and Commands turn it into the emoji, right in your text."), dest: .commands),
+        Tip(text: String(localized: "Regenerate your last dictation as an email straight from the menu bar."), dest: nil),
+        Tip(text: String(localized: "Search the sidebar to jump to any setting in seconds."), dest: nil),
+        Tip(text: String(localized: "Everything runs on your Mac. Your voice is never uploaded."), dest: .models),
+        Tip(text: String(localized: "Curious how much you dictate? Statistics charts your words, streaks, and busiest hours."), dest: .stats),
+        Tip(text: String(localized: "If the app ever crashes mid-sentence, don't worry: your recording is rescued on the next launch and waiting in History."), dest: .history),
+        Tip(text: String(localized: "Need to whisper? Turn up the input boost or auto-amplify in Settings and quiet speech still comes through clearly."), dest: .settings),
     ]
 
     @State private var index = Int.random(in: 0..<QuickTipsPill.tips.count)

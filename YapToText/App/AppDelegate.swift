@@ -127,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.settings.selectedSpeechModelID = "whisper-large-v3-turbo-q5"
             yapdiag("migration: full-turbo selection had no local file; moved to bundled Q5")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.state.controller.flashStatus("Speech model updated to the faster Turbo Q5. The full model is still available on the AI Models page.")
+                self?.state.controller.flashStatus(String(localized: "Speech model updated to the faster Turbo Q5. The full model is still available on the AI Models page."))
             }
         }
         // DEFAULT CHANGED (1.3): users on another speech model get one clear offer to
@@ -141,17 +141,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            state.settings.selectedSpeechModelID != "whisper-large-v3-turbo-q5" {
             state.settings.q5SwitchOfferShown = true
             let current = state.models.model(id: state.settings.selectedSpeechModelID)?.displayName
-                ?? "your current model"
+                ?? String(localized: "your current model")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 guard let self else { return }
                 let alert = NSAlert()
-                alert.messageText = "A faster default model"
-                alert.informativeText = "YapToText's default speech model is now Whisper Large v3 Turbo Q5: verified on hundreds of real dictations to hear as well as the full model, while loading three times faster and using a third of the memory. You're currently using \(current). Switch anytime on the AI Models page."
-                alert.addButton(withTitle: "Switch to Turbo Q5")
-                alert.addButton(withTitle: "Keep \(current)")
+                alert.messageText = String(localized: "A faster default model")
+                alert.informativeText = String(localized: "YapToText's default speech model is now Whisper Large v3 Turbo Q5: verified on hundreds of real dictations to hear as well as the full model, while loading three times faster and using a third of the memory. You're currently using \(current). Switch anytime on the AI Models page.")
+                alert.addButton(withTitle: String(localized: "Switch to Turbo Q5"))
+                alert.addButton(withTitle: String(localized: "Keep \(current)"))
                 if alert.runModal() == .alertFirstButtonReturn {
                     self.state.settings.selectedSpeechModelID = "whisper-large-v3-turbo-q5"
-                    self.state.controller.flashStatus("Speech model switched to Whisper Large v3 Turbo Q5")
+                    self.state.controller.flashStatus(String(localized: "Speech model switched to Whisper Large v3 Turbo Q5"))
                 }
             }
         }
@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         state.controller.onDidBecomeIdle = { [weak self] in self?.disarmCancelKey() }
         state.controller.onMenuStateChanged = { [weak self] in self?.refreshStatusIcon() }
-        TextInserter.adaptToSurroundings = { [weak self] in self?.state.settings.adaptToSurroundings ?? true }
+        TextInserter.adaptToSurroundings = { [weak self] in self?.state.settings.adaptToSurroundings ?? false }
         // Per-app control of the surrounding read (issue #5). nil falls through to the
         // built-in destructive list in InsertionContext.readIsDestructive.
         InsertionContext.adaptOverrideLookup = { [weak self] bundleID in
@@ -331,6 +331,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let c = self.stagingController else { return }
             if self.stagingPanel == nil { self.stagingPanel = RecordingPanel(controller: c, settings: self.state.settings) }
             c.setPreviewLiveText(text)
+            // "style|text|energy|phase|t|Mode name": the named mode is shown as the current chip.
+            if parts.count > 5, let mode = self.state.modeStore.allModes.first(where: { $0.name == parts[5] }) {
+                c.setPreviewMode(mode)
+            }
             // "style|text|energy|phase": phase drives the ring states (transcribing/transforming)
             // so the website can capture the condensed loader, not just the live wave.
             switch parts.count > 3 ? parts[3] : "recording" {
@@ -502,6 +506,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dnc.addObserver(forName: .init("yap.debug.toggle"), object: nil, queue: .main) { [weak self] _ in
             self?.state.controller.toggle()
         }
+        dnc.addObserver(forName: .init("yap.debug.simulateStall"), object: nil, queue: .main) { [weak self] _ in
+            self?.state.controller.debugSimulateStall()
+        }
         dnc.addObserver(forName: .init("yap.debug.cancel"), object: nil, queue: .main) { [weak self] _ in
             self?.state.controller.cancel()
         }
@@ -571,13 +578,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 QuickEditWindow.shared.showWorking("make it sound more formal")
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
-                QuickEditWindow.shared.showResult("Done")
+                QuickEditWindow.shared.showResult(String(localized: "Done"))
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 QuickEditWindow.shared.showListening(liveTextSource: controller)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 QuickEditWindow.shared.showWorking("delete the second paragraph")
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-                QuickEditWindow.shared.showResult("Couldn't apply that edit", success: false)
+                QuickEditWindow.shared.showResult(String(localized: "Couldn't apply that edit"), success: false)
             }
         }
         dnc.addObserver(forName: .init("yap.debug.insertlast"), object: nil, queue: .main) { [weak self] _ in
@@ -717,7 +724,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+                  app.bundleIdentifier != Bundle.main.bundleIdentifier,
+                  app.activationPolicy == .regular else { return }   // never a menu bar utility or a launcher
             self?.lastActiveOtherApp = app
         }
 
@@ -767,6 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaults.standard.set(true, forKey: "diag.cleanExit")
+        AppLanguage.launchReplacement()   // Restart Now: the new copy starts as this one quits
         // Stop any in-flight dictation cleanly (releases the recorder/engine, restores the
         // clipboard, hides the panel) before we clear anything.
         state.controller.cancel()
@@ -891,16 +900,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showHistoryPalette() {
         let records = Array(state.history.records.prefix(9))
         guard !records.isEmpty else {
-            state.controller.announceStatus("No dictations yet")
+            state.controller.announceStatus(String(localized: "No dictations yet"))
             return
         }
         let target = NSWorkspace.shared.frontmostApplication
         let items = records.map { record in
             QuickPanelItem(title: String(record.finalText.prefix(70)).replacingOccurrences(of: "\n", with: " "),
-                           subtitle: "\(record.modeName) · \(record.date.formatted(date: .omitted, time: .shortened))",
+                           subtitle: "\(record.modeName), \(record.date.formatted(date: .omitted, time: .shortened))",
                            icon: "clock.arrow.circlepath")
         }
-        QuickPanel.shared.present(title: "Insert Recent Dictation", items: items) { [weak self] index in
+        QuickPanel.shared.present(title: String(localized: "Insert Recent Dictation"), items: items) { [weak self] index in
             Task { await self?.paste(records[index].finalText, into: target) }
         }
     }
@@ -909,20 +918,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shared by AI actions and the history palette so a paste can't land in the wrong app.
     private func paste(_ text: String, into target: NSRunningApplication?) async {
         guard let target, target.bundleIdentifier != Bundle.main.bundleIdentifier else {
-            state.controller.flashStatus("Lost the target app - select text and try again")
+            state.controller.flashStatus(String(localized: "Lost the target app - select text and try again"))
             return
         }
         // Robust activation (up to ~1s, with a second nudge and a settle beat) - the old 500ms
         // loop lost the race returning from another app, which surfaced as "Couldn't return".
         await waitUntilFrontmost(target)
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
-            state.controller.flashStatus("Couldn't return to the app to paste")
+            state.controller.flashStatus(String(localized: "Couldn't return to the app to paste"))
             return
         }
         await TextInserter.deliver(text, target: .insertAtCursor,
                              method: state.settings.insertionMethod,
                              restoreClipboard: state.settings.restoreClipboard)
-        state.controller.announceStatus("Inserted")
+        state.controller.announceStatus(String(localized: "Inserted"))
     }
 
     /// Type `text` into the app the user was last in (the Utility hub's Insert buttons). Falls back
@@ -1170,7 +1179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func addSelectionToDictionary(_ selection: String) {
         let word = selection.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty, word.count <= 80 else {
-            state.controller.flashStatus("Select a word or short phrase to add it to the dictionary")
+            state.controller.flashStatus(String(localized: "Select a word or short phrase to add it to the dictionary"))
             return
         }
         // Already covered? Don't stack duplicates.
@@ -1179,11 +1188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dict.replacements.contains { $0.from.lowercased() == heard }
         }
         guard !exists else {
-            state.controller.flashStatus("\u{201C}\(word)\u{201D} is already in your dictionary")
+            state.controller.flashStatus(String(localized: "\u{201C}\(word)\u{201D} is already in your dictionary"))
             return
         }
         state.vocabulary.addReplacement(Replacement(from: heard, to: word))
-        state.controller.flashStatus("Added \u{201C}\(word)\u{201D} to your dictionary")
+        state.controller.flashStatus(String(localized: "Added \u{201C}\(word)\u{201D} to your dictionary"))
         yapdiag("quickEdit: added '\(word)' to dictionary")
         // Sound-alike expansion: the case-fix alone only helps when the recognizer heard the
         // word LETTER-PERFECT. For a name like "Ryleigh" it usually hears "Riley" - so ask the
@@ -1291,7 +1300,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             guard !added.isEmpty else { return }
             yapdiag("quickEdit: sound-alikes for '\(word)': \(added.joined(separator: ", "))")
-            self.state.controller.flashStatus("Also mapped \(added.count) sound-alike\(added.count == 1 ? "" : "s") to \u{201C}\(word)\u{201D}")
+            self.state.controller.flashStatus(added.count == 1
+                ? String(localized: "Also mapped 1 sound-alike to \u{201C}\(word)\u{201D}")
+                : String(localized: "Also mapped \(added.count) sound-alikes to \u{201C}\(word)\u{201D}"))
         }
     }
 
@@ -1319,19 +1330,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Nothing selected: teach in the moment, in the feature's own popup - a status
                 // flash elsewhere is invisible when someone is looking at their document.
                 if TextInserter.isSecureInputActive {
-                    QuickEditWindow.shared.showInfo("Can't read the selection",
-                        "Secure Input is on (usually a password field). Click into normal text and try again.")
+                    QuickEditWindow.shared.showInfo(String(localized: "Can't read the selection"),
+                        String(localized: "Secure Input is on (usually a password field). Click into normal text and try again."))
                 } else if self.state.settings.quickEditTrigger == .toggle {
                     // TOGGLE mode: the tap already meant "I want to edit". Keep the card up,
                     // watch for the selection being made, and enter listening BY ITSELF the
                     // moment text is highlighted - no second tap, and no card vanishing
                     // right as the user clicks into their document.
-                    QuickEditWindow.shared.showInfo("Select some text first",
-                        "Highlight the words to change - the edit starts by itself.", seconds: 12)
+                    QuickEditWindow.shared.showInfo(String(localized: "Select some text first"),
+                        String(localized: "Highlight the words to change - the edit starts by itself."), seconds: 12)
                     self.armQuickEditSelectionRetry()
                 } else {
-                    QuickEditWindow.shared.showInfo("Select some text first",
-                        "Highlight the words you want to change, then hold \(self.state.settings.quickEditTriggerKey.label) and say the edit - like \u{201C}capitalize this\u{201D}.")
+                    QuickEditWindow.shared.showInfo(String(localized: "Select some text first"),
+                        String(localized: "Highlight the words you want to change, then hold \(self.state.settings.quickEditTriggerKey.label) and say the edit - like \u{201C}capitalize this\u{201D}."))
                 }
                 return
             }
@@ -1350,7 +1361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Nothing, or a filler ("Okay.", "um"): no request was made, so no model run
                 // and nothing touches the document.
                 guard !trimmed.isEmpty, !Self.isFillerOnly(trimmed) else {
-                    QuickEditWindow.shared.showResult("Didn't catch an instruction", success: false)
+                    QuickEditWindow.shared.showResult(String(localized: "Didn't catch an instruction"), success: false)
                     return
                 }
                 // Dictionary command: "add this to my dictionary" makes the SELECTED text a
@@ -1360,7 +1371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 yapdiag("quickEdit: instruction='\(trimmed)' dictionaryCommand=\(Self.isAddToDictionary(trimmed))")
                 if Self.isAddToDictionary(trimmed) {
                     self.addSelectionToDictionary(text)
-                    QuickEditWindow.shared.showResult("Added \u{201C}\(text.prefix(30))\u{201D} to your dictionary")
+                    QuickEditWindow.shared.showResult(String(localized: "Added \u{201C}\(text.prefix(30))\u{201D} to your dictionary"))
                     return
                 }
                 // A literal swap never needs the model either: "change this to named" is "named".
@@ -1370,10 +1381,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         if literal == text {
-                            QuickEditWindow.shared.showResult("Already like that", success: false)
+                            QuickEditWindow.shared.showResult(String(localized: "Already like that"), success: false)
                         } else {
                             await self.paste(literal, into: target)
-                            QuickEditWindow.shared.showResult("Done")
+                            QuickEditWindow.shared.showResult(String(localized: "Done"))
                         }
                     }
                     return
@@ -1386,10 +1397,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         if cased == text {
-                            QuickEditWindow.shared.showResult("Already like that", success: false)
+                            QuickEditWindow.shared.showResult(String(localized: "Already like that"), success: false)
                         } else {
                             await self.paste(cased, into: target)
-                            QuickEditWindow.shared.showResult("Done")
+                            QuickEditWindow.shared.showResult(String(localized: "Done"))
                         }
                     }
                     return
@@ -1411,10 +1422,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.disarmCancelKey()
                     guard !self.quickEditCancelled else { return }   // window already says "Cancelled"
                     switch outcome {
-                    case .applied: QuickEditWindow.shared.showResult("Done")
-                    case .unchanged: QuickEditWindow.shared.showResult("Nothing changed", success: false)
-                    case .notAnEdit: QuickEditWindow.shared.showResult("That didn't sound like an edit", success: false)
-                    case .failed: QuickEditWindow.shared.showResult("Couldn't apply that edit", success: false)
+                    case .applied: QuickEditWindow.shared.showResult(String(localized: "Done"))
+                    case .unchanged: QuickEditWindow.shared.showResult(String(localized: "Nothing changed"), success: false)
+                    case .notAnEdit: QuickEditWindow.shared.showResult(String(localized: "That didn't sound like an edit"), success: false)
+                    case .failed: QuickEditWindow.shared.showResult(String(localized: "Couldn't apply that edit"), success: false)
                     }
                 }
             }
@@ -1491,10 +1502,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modes = state.controller.switchableModes
         guard !modes.isEmpty else { return }
         let items = modes.map {
-            QuickPanelItem(title: $0.name, subtitle: $0.usesAI ? "AI cleanup" : "Verbatim", icon: $0.iconSystemName)
+            QuickPanelItem(title: $0.name, subtitle: $0.usesAI ? String(localized: "AI cleanup") : String(localized: "Verbatim"), icon: $0.iconSystemName)
         }
         let current = modes.firstIndex { $0.id == state.settings.activeModeID } ?? 0
-        QuickPanel.shared.present(title: "Switch Mode", items: items, preselect: current) { [weak self] index in
+        QuickPanel.shared.present(title: String(localized: "Switch Mode"), items: items, preselect: current) { [weak self] index in
             self?.state.controller.selectMode(modes[index])
         }
     }
@@ -1507,18 +1518,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let selection = await SelectionEditor.captureSelection()
             guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self.state.controller.announceStatus(TextInserter.isSecureInputActive
-                    ? "Secure Input is on, so the selection can't be read"
-                    : "Select some text first")
+                    ? String(localized: "Secure Input is on, so the selection can't be read")
+                    : String(localized: "Select some text first"))
                 return
             }
             guard FoundationModelsTransformer.isAvailable else {
-                self.state.controller.announceStatus("Apple Intelligence isn't available")
+                self.state.controller.announceStatus(String(localized: "Apple Intelligence isn't available"))
                 return
             }
             let actions = self.state.actions.actions
             guard !actions.isEmpty else { return }
             let items = actions.map { QuickPanelItem(title: $0.name, icon: $0.iconSystemName) }
-            QuickPanel.shared.present(title: "AI Action on Selection", items: items) { [weak self] index in
+            QuickPanel.shared.present(title: String(localized: "AI Action on Selection"), items: items) { [weak self] index in
                 self?.runAIAction(actions[index], on: text, target: target)
             }
         }
@@ -1538,21 +1549,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             yapdiag("regenSelection: captured len=\(selection?.count ?? -1)")
             guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self.state.controller.flashStatus(TextInserter.isSecureInputActive
-                    ? "Secure Input is on, so the selection can't be read"
-                    : "Select some text first")
+                    ? String(localized: "Secure Input is on, so the selection can't be read")
+                    : String(localized: "Select some text first"))
                 return
             }
             do {
                 let result = try await self.state.controller.preview(text, mode: mode)
                 yapdiag("regenSelection: result len=\(result.count)")
                 guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    self.state.controller.flashStatus("No changes made")
+                    self.state.controller.flashStatus(String(localized: "No changes made"))
                     return
                 }
                 await self.paste(result, into: target)
             } catch {
                 yapdiag("regenSelection FAILED: \(error)")
-                self.state.controller.flashStatus("Couldn't regenerate the selection")
+                self.state.controller.flashStatus(String(localized: "Couldn't regenerate the selection"))
             }
         }
     }
@@ -1568,8 +1579,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             yapdiag("regenAction(\(action.name)): target=\(target?.localizedName ?? "nil") captured len=\(selection?.count ?? -1)")
             guard let text = selection, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 self.state.controller.flashStatus(TextInserter.isSecureInputActive
-                    ? "Secure Input is on, so the selection can't be read"
-                    : "Select some text first")
+                    ? String(localized: "Secure Input is on, so the selection can't be read")
+                    : String(localized: "Select some text first"))
                 return
             }
             self.runAIAction(action, on: text, target: target)
@@ -1642,7 +1653,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmedResult.isEmpty else {
-                    self.state.controller.announceStatus("No changes made")
+                    self.state.controller.announceStatus(String(localized: "No changes made"))
                     onFinish?(.failed)
                     return
                 }
@@ -1650,21 +1661,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // calling it done (the paste is invisible, the "Done" is a lie).
                 guard trimmedResult != text.trimmingCharacters(in: .whitespacesAndNewlines) else {
                     yapdiag("runAIAction: model returned the text unchanged")
-                    self.state.controller.announceStatus("Nothing changed")
+                    self.state.controller.announceStatus(String(localized: "Nothing changed"))
                     onFinish?(.unchanged)
                     return
                 }
                 await self.paste(Self.preserveEdgeWhitespace(Self.trimAddedPeriod(result, selection: text), selection: text), into: target)
                 onFinish?(.applied)
             } catch DictationController.AIActionError.notAnEdit {
-                if isCancelled?() != true { self.state.controller.announceStatus("That didn't sound like an edit") }
+                if isCancelled?() != true { self.state.controller.announceStatus(String(localized: "That didn't sound like an edit")) }
                 onFinish?(.notAnEdit)
             } catch DictationController.AIActionError.declined {
-                if isCancelled?() != true { self.state.controller.announceStatus("Couldn't apply that edit") }
+                if isCancelled?() != true { self.state.controller.announceStatus(String(localized: "Couldn't apply that edit")) }
                 onFinish?(.failed)
             } catch {
                 yapdiag("runAIAction FAILED: \(error)")
-                if isCancelled?() != true { self.state.controller.flashStatus("AI action failed") }
+                if isCancelled?() != true { self.state.controller.flashStatus(String(localized: "AI action failed")) }
                 onFinish?(.failed)
             }
         }
@@ -1683,8 +1694,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // picker is modal and presents itself, and the result is delivered to `target`, so the main
         // window never needs to animate in for this flow.
         let panel = NSOpenPanel()
-        panel.title = "Transcribe a File"
-        panel.message = "Choose any audio or video file. YapToText transcribes its audio track."
+        panel.title = String(localized: "Transcribe a File")
+        panel.message = String(localized: "Choose any audio or video file. YapToText transcribes its audio track.")
         // No content-type filter: accept any file regardless of extension. We decode the audio
         // track ourselves, so video files and unusual containers work too.
         panel.allowsMultipleSelection = false
@@ -1898,6 +1909,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func closeMenuPopover() { menuPopover?.performClose(nil) }
+    /// Main windows taken off screen while the menu bar popover is up (see toggleMenuPopover).
+    private var popoverHiddenWindows: [NSWindow] = []
 
     @objc private func toggleMenuPopover(_ sender: Any?) {
         guard let button = statusItem?.button else { return }
@@ -1909,6 +1922,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: MenuBarView().environment(state))
         menuPopover = popover
+        // A click inside the popover ACTIVATES YapToText, and activation raises every open
+        // window of ours over the app the user was working in: the Home window flashed up
+        // before Insert last handed focus back (2026-10-21). Take the main windows off
+        // screen while the popover is up, and put them back BEHIND everything when it closes.
+        popoverHiddenWindows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) && $0.canBecomeMain }
+        for window in popoverHiddenWindows { window.orderOut(nil) }
+        NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            for window in self.popoverHiddenWindows { window.orderBack(nil) }
+            self.popoverHiddenWindows = []
+        }
         // Make the POPOVER window key so its controls get first-click - but do NOT activate the
         // whole app: NSApp.activate raised the main YapToText window over whatever the user was
         // working in every time they opened the menu bar (visible as a flash of the app before
@@ -1926,8 +1950,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if quickEditApplying {
             quickEditCancelled = true
             quickEditApplying = false
-            QuickEditWindow.shared.showResult("Cancelled - nothing was changed", success: false)
+            QuickEditWindow.shared.showResult(String(localized: "Canceled, nothing was changed"), success: false)
             yapdiag("quickEdit: cancelled by Esc")
+            return
+        }
+        // A Quick Edit still LISTENING: cancel the recording and take its card down with it,
+        // otherwise the card sits on "Listening" with no session behind it.
+        if state.controller.isScratchpadSession, QuickEditWindow.shared.isShowing {
+            disarmQuickEditSelectionRetry()
+            state.controller.cancel()
+            QuickEditWindow.shared.dismiss()
+            yapdiag("quickEdit: listening cancelled by Esc")
             return
         }
         // Default: ONE Escape cancels immediately. The double-press confirmation is an
@@ -1942,7 +1975,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.controller.cancel()
         } else {
             lastEscapeAt = now
-            state.controller.flashStatus("Press Esc again to cancel")
+            state.controller.flashStatus(String(localized: "Press Esc again to cancel"))
         }
     }
 

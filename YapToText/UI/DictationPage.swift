@@ -14,7 +14,7 @@ struct DictationPage: View {
                     HStack(spacing: 8) {
                         Image(systemName: "mic.fill").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                         Text("Dictation key")
-                        Picker("", selection: $settings.rightCommandTrigger) {
+                        Picker("Dictation key", selection: $settings.rightCommandTrigger) {
                             ForEach(ModifierTrigger.allCases) { Text($0.label).tag($0) }
                         }
                         .labelsHidden().fixedSize()
@@ -37,10 +37,10 @@ struct DictationPage: View {
                 }
 
                 CardSection("Recording") {
-                    SettingSlider("Auto-stop after silence", value: $settings.silenceTimeout, range: 0...5, step: 0.5,
-                                  display: settings.silenceTimeout == 0 ? "Off" : String(format: "%.1fs", settings.silenceTimeout))
-                    SettingSlider("Maximum length", value: $settings.maxRecordingSeconds, range: 0...300, step: 15,
-                                  display: settings.maxRecordingSeconds == 0 ? "Off" : "\(Int(settings.maxRecordingSeconds))s")
+                    SettingSlider(String(localized: "Auto-stop after silence"), value: $settings.silenceTimeout, range: 0...5, step: 0.5,
+                                  display: settings.silenceTimeout == 0 ? String(localized: "Off") : String(format: String(localized: "%.1fs"), settings.silenceTimeout))
+                    SettingSlider(String(localized: "Maximum length"), value: $settings.maxRecordingSeconds, range: 0...300, step: 15,
+                                  display: settings.maxRecordingSeconds == 0 ? String(localized: "Off") : String(localized: "\(Int(settings.maxRecordingSeconds))s"))
                     Toggle("Pause music and video while dictating", isOn: $settings.pauseMediaDuringDictation)
                         .toggleStyle(.switch).controlSize(.small)
                     SubOptions {
@@ -53,8 +53,9 @@ struct DictationPage: View {
                     // A slow slide in input quality used to be invisible: the app quietly
                     // compensated and the transcripts just got worse. Now it says so.
                     InputHealthNotice()
-                    Toggle("Reduce background noise", isOn: $settings.reduceBackgroundNoise)
-                        .toggleStyle(.switch).controlSize(.small)
+                    // "Reduce background noise" is gone: the switch fed a voice-processing path that
+                    // is permanently off, so it never changed anything. Noise conditioning runs
+                    // for everyone in the transcription pipeline itself.
                     Toggle("Auto-amplify quiet speech", isOn: $settings.autoAmplifyInput)
                         .toggleStyle(.switch).controlSize(.small)
                         .onChange(of: settings.autoAmplifyInput) { InputLevelMonitor.shared.autoAmplify = settings.autoAmplifyInput }
@@ -126,18 +127,18 @@ struct DictationPage: View {
                             HStack {
                                 Text("Color").font(.caption).foregroundStyle(.secondary)
                                 Spacer()
-                                ColorPicker("", selection: panelTintBinding, supportsOpacity: false)
+                                ColorPicker("Pop-up color", selection: panelTintBinding, supportsOpacity: false)
                                     .labelsHidden().controlSize(.small)
                             }
                         }
                         HStack {
                             Text("Strength").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.panelTintStrength, in: 0.05...1)
+                            Slider(value: $settings.panelTintStrength, in: 0.05...1).accessibilityLabel("Tint strength")
                         }
                         if settings.panelTintStyle == .rainbow {
                             HStack {
                                 Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                                Slider(value: $settings.panelRGBSpeed, in: 0.2...3)
+                                Slider(value: $settings.panelRGBSpeed, in: 0.2...3).accessibilityLabel("Tint RGB speed")
                             }
                         }
                         if settings.panelTintStyle != .rainbow {
@@ -147,7 +148,7 @@ struct DictationPage: View {
                         }
                     }
                 }
-                // THIRD colour: the wave itself, independent of both the app accent and the
+                // THIRD color: the wave itself, independent of both the app accent and the
                 // glass behind it - so the ribbons can sing against their own background.
                 Picker("Pop-up waveform color", selection: $settings.waveColorStyle) {
                     ForEach(WaveColorStyle.allCases) { Text($0.label).tag($0) }
@@ -165,31 +166,31 @@ struct DictationPage: View {
                                         .overlay(Circle().strokeBorder(.primary.opacity(
                                             settings.waveColorHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
                                 }
-                                .buttonStyle(.plain).help(preset.name)
+                                .buttonStyle(.plain).help(preset.name).accessibilityLabel(Text(verbatim: preset.name))
                             }
-                            ColorPicker("", selection: waveColorBinding, supportsOpacity: false)
+                            ColorPicker("Wave color", selection: waveColorBinding, supportsOpacity: false)
                                 .labelsHidden().controlSize(.small).help("Pick any color")
                         }
                     }
                     HStack {
                         Text("Strength").font(.caption).foregroundStyle(.secondary)
-                        Slider(value: $settings.waveStrength, in: 0.15...1)
+                        Slider(value: $settings.waveStrength, in: 0.15...1).accessibilityLabel("Wave strength")
                     }
                     if settings.waveColorStyle == .rgb {
                         HStack {
                             Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.waveRGBSpeed, in: 0.2...3)
+                            Slider(value: $settings.waveRGBSpeed, in: 0.2...3).accessibilityLabel("Wave RGB speed")
                         }
                         HStack {
                             Text("RGB spread").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.waveRGBSpread, in: 0...0.33)
+                            Slider(value: $settings.waveRGBSpread, in: 0...0.33).accessibilityLabel("Wave RGB spread")
                         }
                     }
                     Caption(settings.waveColorStyle == .rgb
-                            ? "The ribbons ride the spectrum. Speed sets the cycle rate; spread fans the ribbons apart in hue - all the way down pulses the whole wave as one colour."
+                            ? "The ribbons ride the spectrum. Speed sets the cycle rate; spread fans the ribbons apart in hue - all the way down pulses the whole wave as one color."
                             : settings.waveColorStyle == .accent
                             ? "The wave follows your app accent color. Strength sets how vivid the ribbons are."
-                            : "The wave uses this color and its neighbouring shades. Strength sets how vivid the ribbons are.")
+                            : "The wave uses this color and its neighboring shades. Strength sets how vivid the ribbons are.")
                 }
                 }
 
@@ -308,7 +309,7 @@ struct PanelTintPreview: View {
     }
 }
 
-/// A labelled slider with its value readout, shared by the Dictation page and Settings.
+/// A labeled slider with its value readout, shared by the Dictation page and Settings.
 struct SettingSlider: View {
     let title: String
     @Binding var value: Double
@@ -350,7 +351,7 @@ struct InputHealthNotice: View {
                         Text(d.headline).font(.callout.weight(.medium))
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Caption(d.detail)
+                    Caption(verbatim: d.detail)
                 }
                 .padding(.bottom, 2)
             }
@@ -400,7 +401,7 @@ struct IntelligentInsertPerApp: View {
                         Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Turn Intelligent Insert back on in \(AppCatalog.name(for: row.bundleID))")
+                    .help("Turn Intelligent Insert back on in \(AppCatalog.name(for: row.bundleID))").accessibilityLabel("Turn Intelligent Insert back on in \(AppCatalog.name(for: row.bundleID))")
                 }
             }
             if offRows.isEmpty {

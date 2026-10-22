@@ -31,7 +31,7 @@ struct VocabularySettingsView: View {
             }
 
             Button {
-                _ = state.vocabulary.addDictionary(name: "New Dictionary")
+                _ = state.vocabulary.addDictionary(name: String(localized: "New Dictionary"))
             } label: {
                 Label("New Dictionary", systemImage: "plus")
             }
@@ -64,12 +64,12 @@ struct VocabularySettingsView: View {
                         SmartDictionary.dismiss(s)
                         suggestions.removeAll { $0.id == s.id }
                     } label: { Image(systemName: "plus.circle.fill").foregroundStyle(Color.accentColor) }
-                        .buttonStyle(.plain).help("Add to your first dictionary")
+                        .buttonStyle(.plain).help("Add to your first dictionary").accessibilityLabel("Add to your first dictionary")
                     Button {
                         SmartDictionary.dismiss(s)
                         suggestions.removeAll { $0.id == s.id }
                     } label: { Image(systemName: "xmark.circle").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).help("Don't suggest this again")
+                        .buttonStyle(.plain).help("Don't suggest this again").accessibilityLabel("Don't suggest this again")
                 }
                 .font(.callout)
             }
@@ -120,7 +120,7 @@ struct VocabularySettingsView: View {
             if searchOpen.contains(dict.id) {
                 SearchField(text: Binding(get: { dictSearch[dict.id] ?? "" },
                                           set: { dictSearch[dict.id] = $0 }),
-                            prompt: "Search \(dict.name)")
+                            prompt: String(localized: "Search \(dict.name)"))
             }
             let query = (dictSearch[dict.id] ?? "").trimmingCharacters(in: .whitespaces)
             let visible = query.isEmpty ? dict.replacements : dict.replacements.filter {
@@ -192,8 +192,8 @@ struct VocabularySettingsView: View {
             Image(systemName: "arrow.right").foregroundStyle(.secondary).font(.caption)
             TextField("Replace with", text: replacementBinding(r, in: dict.id, \.to))
                 .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
-            if r.wholeWord { tag("word") }
-            if r.caseSensitive { tag("Aa") }
+            if r.wholeWord { tag(String(localized: "word")) }
+            if r.caseSensitive { tag(String(localized: "Aa")) }
             // Sound-alikes: for a name like "Ryleigh", map the common mishearings
             // ("rylee", "reilly"...) to this spelling in one click.
             Button("Generate variations") { AppDelegate.shared?.expandSoundAlikes(for: r.to) }
@@ -203,12 +203,12 @@ struct VocabularySettingsView: View {
                 Image(systemName: "plus.square.on.square").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Duplicate this substitution")
+            .help("Duplicate this substitution").accessibilityLabel("Duplicate this substitution")
             Button { state.vocabulary.deleteReplacement(r, in: dict.id) } label: {
                 Image(systemName: "minus.circle.fill").foregroundStyle(.red)
             }
             .buttonStyle(.plain)
-            .help("Delete this substitution")
+            .help("Delete this substitution").accessibilityLabel("Delete this substitution")
         }
         .font(.callout)
         .contentShape(Rectangle())
@@ -251,7 +251,7 @@ struct VocabularySettingsView: View {
                     Image(systemName: "minus.circle.fill").foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                .help("Delete every spelling that leads to \u{201C}\(target)\u{201D}")
+                .help("Delete every spelling that leads to \u{201C}\(target)\u{201D}").accessibilityLabel("Delete every spelling that leads to \u{201C}\(target)\u{201D}")
             }
             .font(.callout)
             .animation(.easeInOut(duration: 0.18), value: open)
@@ -261,13 +261,13 @@ struct VocabularySettingsView: View {
                         HStack(spacing: 8) {
                             TextField("Heard", text: replacementBinding(r, in: dict.id, \.from))
                                 .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
-                            if r.wholeWord { tag("word") }
-                            if r.caseSensitive { tag("Aa") }
+                            if r.wholeWord { tag(String(localized: "word")) }
+                            if r.caseSensitive { tag(String(localized: "Aa")) }
                             Button { state.vocabulary.deleteReplacement(r, in: dict.id) } label: {
                                 Image(systemName: "minus.circle.fill").foregroundStyle(.red)
                             }
                             .buttonStyle(.plain)
-                            .help("Delete this spelling")
+                            .help("Delete this spelling").accessibilityLabel("Delete this spelling")
                         }
                         .font(.callout)
                     }

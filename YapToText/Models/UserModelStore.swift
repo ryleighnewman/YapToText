@@ -12,11 +12,11 @@ enum UserModelError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreadable:
-            return "That file couldn't be read."
+            return String(localized: "That file couldn't be read.")
         case .unrecognizedFormat:
-            return "That file isn't a supported model. Speech models are whisper.cpp GGML .bin files; cleanup models are llama.cpp GGUF files."
+            return String(localized: "That file isn't a supported model. Speech models are whisper.cpp GGML .bin files; cleanup models are llama.cpp GGUF files.")
         case .copyFailed(let reason):
-            return "The model couldn't be copied: \(reason)"
+            return String(localized: "The model couldn't be copied: \(reason)")
         }
     }
 }
@@ -84,14 +84,14 @@ final class UserModelStore {
         let display = (source.lastPathComponent as NSString).deletingPathExtension
         let info = ModelInfo(id: "user-\(UUID().uuidString)",
                              displayName: display,
-                             provider: "Your model",
+                             provider: String(localized: "Your model"),
                              kind: kind,
                              summary: kind == .speech
-                                ? "Your own whisper.cpp speech model."
-                                : "Your own GGUF cleanup model. If it fails to load, its architecture isn't supported by the built-in engine.",
+                                ? String(localized: "Your own whisper.cpp speech model.")
+                                : String(localized: "Your own GGUF cleanup model. If it fails to load, its architecture isn't supported by the built-in engine."),
                              languages: "\u{2014}", sizeMB: sizeMB, quality: 3,
                              downloadURL: nil, fileName: fileName,
-                             runtime: runtime, license: "User provided")
+                             runtime: runtime, license: String(localized: "User provided"))
         models.append(info)
         save()
         return info

@@ -13,12 +13,19 @@ struct SettingsView: View {
         case advanced = "Advanced"
         case about = "About"
         var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .general: return String(localized: "General")
+            case .advanced: return String(localized: "Advanced")
+            case .about: return String(localized: "About")
+            }
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             // Modern capsule chips instead of the legacy segmented Picker.
-            CapsuleSegments(options: SettingsTab.allCases.map { ($0, $0.rawValue) },
+            CapsuleSegments(options: SettingsTab.allCases.map { ($0, $0.label) },
                             selection: $tab, font: .callout)
                 .accessibilityLabel("Settings section")
                 .padding(.top, 14)

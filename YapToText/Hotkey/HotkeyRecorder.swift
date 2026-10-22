@@ -10,7 +10,7 @@ struct HotkeyRecorderField: NSViewRepresentable {
     var allowsEmpty: Bool = true
     /// Shown when no combo is set - lets a row surface a built-in default (e.g. the dictation
     /// pause key showing "Space") instead of a misleading "Not set".
-    var placeholder: String = "Not set"
+    var placeholder: String = String(localized: "Not set")
     /// Start listening the moment the field appears (used in onboarding, where the row invites
     /// "press your keys" - without this the field is deaf until clicked, which reads as the app
     /// not seeing the keyboard at all).
@@ -78,7 +78,7 @@ struct HotkeyRecorderField: NSViewRepresentable {
 final class RecorderNSView: NSView {
     var combo: KeyCombo?
     var allowsEmpty = true
-    var placeholder = "Not set"
+    var placeholder = String(localized: "Not set")
     var autoStart = false
     var onChange: ((KeyCombo?) -> Void)?
     private(set) var isRecording = false
@@ -124,18 +124,18 @@ final class RecorderNSView: NSView {
         if isRecording { stopRecording() }
         let menu = NSMenu()
         if allowsEmpty {
-            let clear = NSMenuItem(title: "Turn Off", action: #selector(clearCombo), keyEquivalent: "")
+            let clear = NSMenuItem(title: String(localized: "Turn Off"), action: #selector(clearCombo), keyEquivalent: "")
             clear.target = self
             clear.isEnabled = combo != nil
             menu.addItem(clear)
         }
         if let def = defaultCombo {
-            let reset = NSMenuItem(title: "Reset to Default (\(def.displayString))", action: #selector(resetCombo), keyEquivalent: "")
+            let reset = NSMenuItem(title: String(localized: "Reset to Default (\(def.displayString))"), action: #selector(resetCombo), keyEquivalent: "")
             reset.target = self
             reset.isEnabled = combo != def
             menu.addItem(reset)
         }
-        let record = NSMenuItem(title: "Record New Shortcut", action: #selector(beginRecordingFromMenu), keyEquivalent: "")
+        let record = NSMenuItem(title: String(localized: "Record New Shortcut"), action: #selector(beginRecordingFromMenu), keyEquivalent: "")
         record.target = self
         menu.addItem(record)
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -248,7 +248,7 @@ final class RecorderNSView: NSView {
 
     func updateAppearance() {
         if isRecording {
-            label.stringValue = "Type shortcut…"
+            label.stringValue = String(localized: "Type shortcut…")
             label.textColor = .secondaryLabelColor
             layer?.borderColor = NSColor.controlAccentColor.cgColor
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor

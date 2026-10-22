@@ -9,7 +9,10 @@ xcuserdata/
 .swiftpm/
 
 Marketing/*
-!Marketing/posters-v5/
+!Marketing/posters/
+Scripts/*
+!Scripts/release-homebrew.sh
+DESIGN.md
 Store/
 
 __pycache__/

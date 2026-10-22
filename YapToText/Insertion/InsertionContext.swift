@@ -33,6 +33,10 @@ enum InsertionContext {
         /// shape says what fits: a lowercase word mid-sentence wants a lowercase word
         /// with no period, a sentence wants a sentence.
         var replacing: String?
+        /// The pre-read's selection check went unanswered in an app that normally answers it
+        /// (starved by the decode). No selection keys were sent, so a live selection is still
+        /// intact; the delivery-time read must run the check again before anything else.
+        var probeUnanswered = false
         static let none = Surround(before: "", after: "", available: false)
     }
 
@@ -100,6 +104,20 @@ enum InsertionContext {
         let selEnd = min(ns.length, caret + max(0, range.length))
         let after = ns.substring(with: NSRange(location: selEnd, length: min(maxChars, ns.length - selEnd)))
         return Surround(before: before, after: after, available: true)
+    }
+
+    /// The plain text of a copy. A web app's copy handler can write rich types only (HTML,
+    /// RTF) with no plain-text entry; reading just the string type then reports an empty
+    /// answer for a real selection. Rich types are converted when the string is missing.
+    private static func answerText(_ pb: NSPasteboard) -> String {
+        if let s = pb.string(forType: .string), !s.isEmpty { return s }
+        if let html = pb.data(forType: .html),
+           let a = try? NSAttributedString(data: html, options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil),
+           !a.string.isEmpty { return a.string }
+        if let rtf = pb.data(forType: .rtf),
+           let a = try? NSAttributedString(data: rtf, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil),
+           !a.string.isEmpty { return a.string }
+        return pb.string(forType: .string) ?? ""
     }
 
     /// Deterministic adaptation of `text` to its surroundings. Pure function - testable.
@@ -208,23 +226,54 @@ enum InsertionContext {
     /// no probe (the pre-read's probe already ruled out a live selection a moment ago), a
     /// medium settle, no late copy. The Mac is quiet by then, so the app can keep up.
     @MainActor
-    private static func keyRead(patient: Bool, retry: Bool = false) async -> (s: Surround, appAnswered: Bool) {
+    private static func keyRead(patient: Bool, retry: Bool = false, probeOnRetry: Bool = false) async -> (s: Surround, appAnswered: Bool) {
         guard !TextInserter.isSecureInputActive else { return (.none, false) }
         let pb = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(pb)
+        let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         defer { snapshot.write(to: pb) }
 
         /// Cmd+C, then wait briefly for the pasteboard to change. nil = nothing copied
         /// (empty selection), which is itself information. The waits are async: this runs
         /// on the main actor, and blocking here froze the wave mid-choreography.
+        /// Every answer is logged with its delay, because a web app's copies can be
+        /// answered seconds late, and a late answer to an EARLIER copy is indistinguishable
+        /// from a fresh one by content alone (Gmail, 2026-10-21).
+        var copyIndex = 0
         func copyChanged(_ timeout: TimeInterval) async -> String? {
             let token = pb.changeCount
+            let posted = Date()
+            copyIndex += 1
             TextInserter.postCopy()
             let deadline = Date().addingTimeInterval(timeout)
             while Date() < deadline {
-                if pb.changeCount != token { return pb.string(forType: .string) ?? "" }
+                if pb.changeCount != token {
+                    var text = answerText(pb)
+                    // WebKit declares the copy's types first and fills in the data a moment
+                    // later: read at the first sign of change, a real copy of a selected word
+                    // came back EMPTY every time (Gmail in Safari, 2026-10-21 20:16: answers
+                    // read within 90 ms were empty, every one read after 100 ms had the text).
+                    // WebKit never copies an empty selection, so rich types with no text yet
+                    // mean the data is still on its way: keep reading for a moment.
+                    if text.isEmpty, let types = pb.types,
+                       types.contains(where: { $0 == .html || $0 == .rtf || $0.rawValue == "com.apple.webarchive" }) {
+                        let filled = Date()
+                        while text.isEmpty, Date().timeIntervalSince(filled) < 0.3 {
+                            try? await Task.sleep(nanoseconds: 20_000_000)
+                            text = answerText(pb)
+                        }
+                        if !text.isEmpty { yapdiag(String(format: "insertctx:   data arrived %.0f ms after the types", Date().timeIntervalSince(filled) * 1000)) }
+                    }
+                    yapdiag(String(format: "insertctx: copy #%d answered after %.0f ms (%d chars)", copyIndex, Date().timeIntervalSince(posted) * 1000, text.count))
+                    if text.isEmpty {
+                        let types = (pb.types ?? []).map { $0.rawValue }.joined(separator: " ")
+                        yapdiag("insertctx:   empty answer carried types: \(types.isEmpty ? "none" : types)")
+                    }
+                    return text
+                }
                 try? await Task.sleep(nanoseconds: 15_000_000)
             }
+            yapdiag(String(format: "insertctx: copy #%d unanswered after %.0f ms", copyIndex, timeout * 1000))
             return nil
         }
         let optShift: CGEventFlags = [.maskAlternate, .maskShift]
@@ -246,8 +295,49 @@ enum InsertionContext {
         // (2026-09-16). With the sentinel in place, a re-write returns the sentinel and a
         // selection returns its text, whatever the clipboard held before.
         let sentinel = "\u{E000}"
-        if !retry { pb.clearContents(); pb.setString(sentinel, forType: .string) }
-        let probe: String? = retry ? "" : await copyChanged(patient ? 0.15 : 0.1)
+        let runProbe = !retry || probeOnRetry
+        if runProbe { pb.clearContents(); pb.setString(sentinel, forType: .string) }
+        // An app that has answered this check before (browsers and Electron apps bump the
+        // pasteboard even for an empty selection) gets longer: the pre-read runs beside the
+        // decode, which starves such apps, and 150 ms was not enough for Gmail in Safari
+        // with a word selected (2026-10-21 19:35: the selection keys then walked the caret
+        // past the word and the dictation landed after it instead of replacing it).
+        let answers = appAnswersProbes(bundleID: bundle)
+        let probeWait: TimeInterval = retry ? 0.5 : (answers ? (patient ? 0.6 : 0.2) : (patient ? 0.15 : 0.1))
+        var probe: String? = runProbe ? await copyChanged(probeWait) : ""
+        if runProbe, probe != nil { recordProbeAnswer(bundleID: bundle) }
+        // A web app's copy handler lags a selection change: Gmail in Safari answered the
+        // check 91 ms after a word was selected with an EMPTY string, kept answering empty
+        // for three more copies, and returned the word only 500 ms later (2026-10-21
+        // 19:56). An empty answer from such an app is confirmed with a second copy before
+        // it is believed; the selection it would otherwise have missed is then replaced.
+        if runProbe, answers, let first = probe, first.isEmpty || first == sentinel {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            if !retry { pb.clearContents(); pb.setString(sentinel, forType: .string) }
+            if let again = await copyChanged(0.3) {
+                if !again.isEmpty, again != sentinel { yapdiag("insertctx: selection check answered empty first, then with text - a selection after all") }
+                probe = again
+            }
+        }
+        if runProbe, probe == nil, answers {
+            // Silence from a browser or web app: it may not have serviced the Cmd+C yet
+            // (starved by the decode), and selection keys now could destroy a selection.
+            // The pre-read sends nothing more and hands the check to delivery, when the Mac
+            // is quiet. Silent even then means nothing to copy or an app that is not
+            // answering: the words go in unadapted, and a selection, if any, is replaced by
+            // the paste itself.
+            if retry {
+                yapdiag("insertctx: selection check still unanswered at delivery - inserting unadapted, no selection keys")
+                unansweredRead = (snapshot, Date(), false)
+                return (.none, false)
+            }
+            yapdiag("insertctx: selection check unanswered (starved) - no selection keys, checking again at delivery")
+            unansweredRead = (snapshot, Date(), false)
+            var s = Surround.none
+            s.retryAtDelivery = true
+            s.probeUnanswered = true
+            return (s, false)
+        }
         if let probe, probe == sentinel {
             yapdiag("insertctx: probe re-wrote the clipboard - no selection")
         } else if let probe, !probe.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -325,9 +415,15 @@ enum InsertionContext {
             // too busy 340 ms later and answered empty again, so the words went in raw. Keep
             // asking, up to three more copies over about a second, with no further selection
             // keys: the ones already sent are queued and land when the editor catches up.
+            // ONE extra copy, not four: the pre-read already spent its patient loops on this
+            // same empty answer, and an empty composer answers empty every time. Three more
+            // seconds of waiting at delivery, in the user's face, was most of every slow
+            // insert into a chat app (26 of 108 deliveries over 2.5 s, 2026-10-21).
+            // (Two rounds in a web app, whose copies lag the selection keys by up to half a
+            // second; one everywhere else.)
             if retry, before == "" {
                 let started = Date()
-                for _ in 0..<4 where isBlank(before) {
+                for _ in 0..<(answers ? 2 : 1) where isBlank(before) {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     lastSyntheticKeyAt = Date()
                     if let again = await copyChanged(0.25), !isBlank(again) {
@@ -374,7 +470,7 @@ enum InsertionContext {
                 // middle of the sentence it was dropped into (Gmail in Safari, 2026-09-18 11:05).
                 if after == "", (patient || retry) {
                     let started = Date()
-                    for _ in 0..<(patient && !retry ? 4 : 3) where isBlank(after) {
+                    for _ in 0..<(patient && !retry ? 4 : 1) where isBlank(after) {
                         try? await Task.sleep(nanoseconds: 300_000_000)
                         lastSyntheticKeyAt = Date()
                         if let again = await copyChanged(0.25), !isBlank(again) {
@@ -399,6 +495,7 @@ enum InsertionContext {
             try? await Task.sleep(nanoseconds: 80_000_000)
         }
 
+        if before == "" || after == "" { recordProbeAnswer(bundleID: bundle) }   // answers empty copies: a probe-answering app
         // The AFTER side can be starved just like the before side: an answered-empty copy
         // mid-sentence ("outside of that| region.", Gmail, 2026-09-16) let the dictation
         // land with its capital and period intact. Flag it for the delivery-time retry.
@@ -408,7 +505,7 @@ enum InsertionContext {
             yapdiag("insertctx: key-sim read before=\((before ?? "").suffix(30).debugDescription) after answered empty - will retry at delivery")
             return (s, true)
         }
-        unansweredRead = before == nil ? (snapshot, Date()) : nil
+        unansweredRead = before == nil ? (snapshot, Date(), true) : nil
         guard !isBlank(before) || !isBlank(after) else {
             // Reported as UNANSWERED on purpose, so a blank read scores neutral and never
             // accrues strikes: a slow web editor that gave nothing this time is not an app
@@ -437,13 +534,32 @@ enum InsertionContext {
         guard let b = bundleID else { return false }
         return UserDefaults.standard.bool(forKey: answeredKey(b))
     }
+    private static func probeKey(_ b: String) -> String { "insertctx.probeanswers." + b }
+    /// Has this app ever answered the selection check (a Cmd+C on whatever is selected,
+    /// usually nothing)? Browsers and Electron apps bump the pasteboard even then; native
+    /// text views stay silent on an empty selection, so their silence means nothing.
+    static func probeAnswers(bundleID: String?) -> Bool {
+        guard let b = bundleID else { return false }
+        return UserDefaults.standard.bool(forKey: probeKey(b))
+    }
+    /// Browsers and Safari web apps always bump the pasteboard on a copy, selection or not,
+    /// so they count from the first dictation; any other app counts once it has answered a
+    /// copy with an EMPTY string, which only an app of that kind does.
+    static func appAnswersProbes(bundleID: String?) -> Bool {
+        guard let b = bundleID else { return false }
+        return isBrowser(b) || probeAnswers(bundleID: b)
+    }
+    private static func recordProbeAnswer(bundleID: String?) {
+        guard let b = bundleID, !UserDefaults.standard.bool(forKey: probeKey(b)) else { return }
+        UserDefaults.standard.set(true, forKey: probeKey(b))
+    }
     private static func blankKey(_ b: String) -> String { "insertctx.blank." + b }
     private static func skipKey(_ b: String) -> String { "insertctx.skips." + b }
 
     /// Web browsers are never remembered as silent: whether a read answers depends on the
     /// PAGE, not the app. Eight quiet reads on pages with no text field banned Safari for
     /// the next 25 dictations, including the ones typed into a real form.
-    private static func isBrowser(_ b: String) -> Bool {
+    static func isBrowser(_ b: String) -> Bool {
         b.hasPrefix("com.apple.Safari") || b == "com.google.Chrome" || b.hasPrefix("com.google.Chrome.")
             || b == "org.mozilla.firefox" || b == "company.thebrowser.Browser" || b == "com.microsoft.edgemac"
             || b == "com.brave.Browser" || b == "com.vivaldi.Vivaldi" || b == "com.operasoftware.Opera"
@@ -568,13 +684,15 @@ enum InsertionContext {
     /// for that before it loads the clipboard, or the late copy overwrites the dictation and
     /// the paste puts the target's own words back (Gmail in Safari under load, 2026-09-18
     /// 10:59: "nothing happened"). `snapshot` is the user's clipboard from before the read.
-    static private(set) var unansweredRead: (snapshot: PasteboardSnapshot, at: Date)?
+    /// `keysSent` is false when only the selection check went out: a late answer then
+    /// carries a live selection's text, which must stay selected (no collapse).
+    static private(set) var unansweredRead: (snapshot: PasteboardSnapshot, at: Date, keysSent: Bool)?
 
     /// Read the surroundings NOW (AX when the process may, key-simulation inside the
     /// sandbox), with the per-app skip. Separated from adapt() so the read can run
     /// CONCURRENTLY with AI cleanup - its latency hides behind the model's.
     @MainActor
-    static func readSurroundings(patient: Bool = false, retry: Bool = false) async -> Surround {
+    static func readSurroundings(patient: Bool = false, retry: Bool = false, probeOnRetry: Bool = false) async -> Surround {
         let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         if !adaptIsAllowed(bundleID: bundle) {
             yapdiag("insertctx: adapt off for \(bundle ?? "?") (destructive or pinned off)")
@@ -587,7 +705,7 @@ enum InsertionContext {
         var s = read()
         var appAnswered = true          // the AX path answering IS an answer
         if !s.available {
-            let key = await keyRead(patient: patient, retry: retry)
+            let key = await keyRead(patient: patient, retry: retry, probeOnRetry: probeOnRetry)
             s = key.s
             appAnswered = key.appAnswered
             // Silence from an app that has answered before: retry once at delivery.
@@ -616,6 +734,13 @@ enum InsertionContext {
             if pb.changeCount != base {
                 let late = pb.string(forType: .string) ?? ""
                 pending.snapshot.write(to: pb)
+                if !pending.keysSent {
+                    // Only the selection check was sent, so this is its answer: the live
+                    // selection's text, or a browser's empty copy. The selection is intact
+                    // and must stay that way; the delivery-time check handles it.
+                    yapdiag(String(format: "insertctx: selection check answered %.1fs late (%@) - leaving the selection alone", Date().timeIntervalSince(pending.at), late.isEmpty ? "empty" : "text"))
+                    return nil
+                }
                 if !late.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     TextInserter.postKey(0x7C, flags: [])   // Right: collapse the late selection to the caret
                     lastSyntheticKeyAt = Date()

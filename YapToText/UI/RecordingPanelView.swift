@@ -34,7 +34,7 @@ struct RecordingPanelView: View {
             .symbolRenderingMode(.hierarchical)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("YapToText dictation, mode \(controller.activeMode.name)")
-            .accessibilityValue(controller.isPaused ? "Paused" : controller.phase.userFacingLabel)
+            .accessibilityValue(controller.isPaused ? String(localized: "Paused") : controller.phase.userFacingLabel)
             // The mini layout only draws its transport on hover, so pointer-free input
             // (VoiceOver, Switch Control, Voice Control) had NO way to stop or pause a
             // dictation from the panel - only Escape, which discards it. These card-level
@@ -248,9 +248,9 @@ struct RecordingPanelView: View {
     /// The three pipeline stages, for the processing meter. Cleaning only counts as a stage
     /// when this mode actually runs AI cleanup.
     private var meterSteps: [(phase: DictationController.Phase, label: String)] {
-        var steps: [(DictationController.Phase, String)] = [(.transcribing, "Transcribing")]
-        if controller.activeMode.usesAI { steps.append((.transforming, "Cleaning")) }
-        steps.append((.inserting, "Inserting"))
+        var steps: [(DictationController.Phase, String)] = [(.transcribing, String(localized: "Transcribing"))]
+        if controller.activeMode.usesAI { steps.append((.transforming, String(localized: "Cleaning"))) }
+        steps.append((.inserting, String(localized: "Inserting")))
         return steps
     }
 
@@ -384,7 +384,9 @@ struct RecordingPanelView: View {
                         .id(mode.id)   // scroll target
                         .onTapGesture { controller.switchMode(mode) }
                         .help("Press \(index + 1) while dictating")
-                        .accessibilityAddTraits(.isButton)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+                        .accessibilityAction { controller.switchMode(mode) }
                     }
                 }
                 .padding(.horizontal, 1)   // keep the current chip's stroke from clipping at the edge
@@ -527,7 +529,7 @@ struct RecordingPanelView: View {
                     var tx = Transaction(); tx.disablesAnimations = true
                     withTransaction(tx) { miniHovering = false }
                 }
-                // Cancelled (recording ended with nothing to process): the opening in
+                // Canceled (recording ended with nothing to process): the opening in
                 // exact reverse - the wave FLATTENS into a straight line, then the line
                 // pulls back into the center point before the panel slips away. A
                 // stop-with-results goes condensed instead, so this only fires on cancel.
@@ -591,16 +593,16 @@ struct RecordingPanelView: View {
                             HStack {
                                 Spacer().frame(width: 26)
                                 Spacer()
-                                controlButton("arrow.up.left.and.arrow.down.right", "Bigger layout", .secondary) { cyclePanelStyle() }
+                                controlButton("arrow.up.left.and.arrow.down.right", String(localized: "Bigger layout"), .secondary) { cyclePanelStyle() }
                                 Spacer()
                                 controlButton(controller.isPaused ? "play.fill" : "pause.fill",
-                                              controller.isPaused ? "Resume" : "Pause", .accentColor) { controller.togglePause() }
-                                controlButton("stop.fill", "Stop and insert", .red) { controller.stop() }
+                                              controller.isPaused ? String(localized: "Resume") : String(localized: "Pause"), .accentColor) { controller.togglePause() }
+                                controlButton("stop.fill", String(localized: "Stop and insert"), .red) { controller.stop() }
                             }
                             .transition(.opacity)
                         }
                         GeometryReader { geo in
-                            controlButton("xmark", "Cancel and discard", .secondary) { controller.cancel() }
+                            controlButton("xmark", String(localized: "Cancel and discard"), .secondary) { controller.cancel() }
                                 .position(x: xAtCenter ? geo.size.width / 2 : 13,
                                           y: geo.size.height / 2)
                         }
@@ -769,9 +771,9 @@ struct RecordingPanelView: View {
     private let bottomAnchor = "yap.transcript.bottom"
 
     private var displayText: String {
-        if controller.isPaused { return "Paused" }
+        if controller.isPaused { return String(localized: "Paused") }
         if controller.isRecording {
-            return controller.liveText.isEmpty ? "Listening…" : controller.liveText
+            return controller.liveText.isEmpty ? String(localized: "Listening…") : controller.liveText
         }
         if let detail = controller.statusDetail { return detail }
         return controller.phase.userFacingLabel
@@ -818,7 +820,7 @@ struct RecordingPanelView: View {
         // Cycles the full big -> medium -> tiny carousel (it used to toggle only big/medium,
         // which made the tiny layout unreachable from here).
         panelButton("rectangle.compress.vertical",
-                    settings.panelStyle == .expanded ? "Medium layout" : "Tiny layout") {
+                    settings.panelStyle == .expanded ? String(localized: "Medium layout") : String(localized: "Tiny layout")) {
             cyclePanelStyle()
         }
     }
@@ -833,6 +835,7 @@ struct RecordingPanelView: View {
             .help(help)
             .accessibilityLabel(help)
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 
     // MARK: Jump into the app (deep-links to the current mode's editor)
@@ -843,17 +846,20 @@ struct RecordingPanelView: View {
             .foregroundStyle(.secondary)
             .frame(width: 18 * scale, height: 18 * scale)
             .contentShape(Rectangle())
-            .onTapGesture {
-                let modeID = controller.activeMode.id
-                NSApp.activate(ignoringOtherApps: true)
-                for window in NSApp.windows where window.canBecomeMain {
-                    window.makeKeyAndOrderFront(nil)
-                }
-                NotificationCenter.default.post(name: .yapShowMode, object: modeID)
-            }
+            .onTapGesture(perform: jumpToApp)
             .help("Open \(controller.activeMode.name) in YapToText")
             .accessibilityLabel("Open \(controller.activeMode.name) in YapToText")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { jumpToApp() }
+    }
+
+    private func jumpToApp() {
+        let modeID = controller.activeMode.id
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.canBecomeMain {
+            window.makeKeyAndOrderFront(nil)
+        }
+        NotificationCenter.default.post(name: .yapShowMode, object: modeID)
     }
 
     // MARK: Controls
@@ -868,10 +874,10 @@ struct RecordingPanelView: View {
             HStack(spacing: 7 * scale) {
                 // Cancel lives on the LEFT: discard is the escape hatch, kept away from the
                 // stop/insert side so a hurried click can't throw a dictation away.
-                controlButton("xmark", "Cancel and discard", .secondary) { controller.cancel() }
+                controlButton("xmark", String(localized: "Cancel and discard"), .secondary) { controller.cancel() }
                 controlButton(controller.isPaused ? "play.fill" : "pause.fill",
-                              controller.isPaused ? "Resume" : "Pause", .accentColor) { controller.togglePause() }
-                controlButton("stop.fill", "Stop and insert", .red) { controller.stop() }
+                              controller.isPaused ? String(localized: "Resume") : String(localized: "Pause"), .accentColor) { controller.togglePause() }
+                controlButton("stop.fill", String(localized: "Stop and insert"), .red) { controller.stop() }
                 // No size button here: the single cycle control lives in optionsMenu (big ->
                 // medium -> tiny), so the panel never shows two competing resize buttons.
             }
@@ -899,6 +905,7 @@ struct RecordingPanelView: View {
             .help(label)
             .accessibilityLabel(label)
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }
 

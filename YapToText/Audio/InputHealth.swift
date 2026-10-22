@@ -88,8 +88,8 @@ enum InputHealth {
         // microphone and is being recorded by another.
         if let fallback = AudioRecorder.lastFallback {
             return Diagnosis(
-                headline: "Dictation is using \(fallback.defaultName), not the microphone you chose.",
-                detail: "The chosen microphone and \(fallback.defaultName) run at different rates, and macOS's audio engine cannot switch between them while \(fallback.defaultName) is the system default input. To dictate on the chosen microphone, make it the default in System Settings under Sound, or disconnect \(fallback.defaultName).",
+                headline: String(localized: "Dictation is using \(fallback.defaultName), not the microphone you chose."),
+                detail: String(localized: "The chosen microphone and \(fallback.defaultName) run at different rates, and macOS's audio engine cannot switch between them while \(fallback.defaultName) is the system default input. To dictate on the chosen microphone, make it the default in System Settings under Sound, or disconnect \(fallback.defaultName)."),
                 recentSNR: 0, baselineSNR: 0)
         }
         let s = load()
@@ -99,8 +99,8 @@ enum InputHealth {
         if last3.count == 3, median(last3) < lowMarginDB {
             let now = median(last3)
             return Diagnosis(
-                headline: String(format: "Right now the room is too loud for this microphone: %.0f dB of voice over the noise, where 7 dB is the floor.", now),
-                detail: "Fans running flat out, a machine next to the Mac, or sound from the speakers all do this, and the built-in microphone sits right at the fan vents. Nothing in the app can put back words the microphone did not catch. Move closer, quiet the room, or pick a microphone that is not at the vents, such as AirPods or an external one, under Microphone above.",
+                headline: String(format: String(localized: "Right now the room is too loud for this microphone: %.0f dB of voice over the noise, where 7 dB is the floor."), now),
+                detail: String(localized: "Fans running flat out, a machine next to the Mac, or sound from the speakers all do this, and the built-in microphone sits right at the fan vents. Nothing in the app can put back words the microphone did not catch. Move closer, quiet the room, or pick a microphone that is not at the vents, such as AirPods or an external one, under Microphone above."),
                 recentSNR: now, baselineSNR: baseline(from: s).snr)
         }
         guard s.count >= recentCount + baselineCount else { return nil }
@@ -119,14 +119,14 @@ enum InputHealth {
         let detail: String
         switch (snrFell, voiceFell) {
         case (true, true):
-            detail = "Your voice is arriving quieter and the room is louder relative to it. The usual cause is distance: the microphone is further away, at a different angle, or something is resting over it."
+            detail = String(localized: "Your voice is arriving quieter and the room is louder relative to it. The usual cause is distance: the microphone is further away, at a different angle, or something is resting over it.")
         case (true, false):
-            detail = "Your voice is coming through at its usual level, but there is more constant sound in the room than there used to be. Anything that runs continuously nearby will do it: a fan, a printer, an air conditioner."
+            detail = String(localized: "Your voice is coming through at its usual level, but there is more constant sound in the room than there used to be. Anything that runs continuously nearby will do it: a fan, a printer, an air conditioner.")
         default:
-            detail = "Your voice is arriving quieter than it used to. Check that nothing is covering the microphone, and try speaking from where you normally sit."
+            detail = String(localized: "Your voice is arriving quieter than it used to. Check that nothing is covering the microphone, and try speaking from where you normally sit.")
         }
         return Diagnosis(
-            headline: String(format: "Your microphone signal has dropped: %.0fdB now, %.0fdB before.", rSNR, bSNR),
+            headline: String(format: String(localized: "Your microphone signal has dropped: %.0fdB now, %.0fdB before."), rSNR, bSNR),
             detail: detail, recentSNR: rSNR, baselineSNR: bSNR)
     }
 

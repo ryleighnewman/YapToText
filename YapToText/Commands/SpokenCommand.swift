@@ -11,9 +11,9 @@ enum CommandCategory: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .punctuation: return "Punctuation"
-        case .emoji: return "Emoji"
-        case .snippet: return "Snippets"
+        case .punctuation: return String(localized: "Punctuation")
+        case .emoji: return String(localized: "Emoji")
+        case .snippet: return String(localized: "Snippets")
         }
     }
     var icon: String {
@@ -26,9 +26,9 @@ enum CommandCategory: String, Codable, CaseIterable, Identifiable {
     /// Placeholder shown in the trigger field.
     var triggerPlaceholder: String {
         switch self {
-        case .punctuation: return "exclamation point, exclamation, bang"
-        case .emoji: return "fire emoji, flame emoji"
-        case .snippet: return "my work email"
+        case .punctuation: return String(localized: "exclamation point, exclamation, bang")
+        case .emoji: return String(localized: "fire emoji, flame emoji")
+        case .snippet: return String(localized: "my work email")
         }
     }
 }

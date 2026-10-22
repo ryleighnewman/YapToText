@@ -34,7 +34,7 @@ enum TextInserter {
     // MARK: - Private
 
     /// Set by the app at launch; read at insert time so the adapt step is user-controlled.
-    static var adaptToSurroundings: () -> Bool = { true }
+    static var adaptToSurroundings: () -> Bool = { false }
     /// The exact text the last insert put on screen (post-adaptation). Main-actor only.
     static private(set) var lastDelivered: String?
 
@@ -124,6 +124,33 @@ enum TextInserter {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 attemptRestore(retry: true)
             }
+            // A browser can service a leftover Cmd+C from the surround read AFTER the
+            // transcript was loaded: its empty copy wipes the clipboard, and the Cmd+V it
+            // handles next pastes nothing (Gmail in Safari 2026-10-21; Chrome reports). An
+            // EMPTY clipboard this soon after our paste can only be that, so put the
+            // transcript back and paste once more: the first paste put nothing in.
+            if InsertionContext.isBrowser(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "") {
+                var repasted = false
+                func watch(_ left: Int) {
+                    guard left > 0, !repasted else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        let pb = NSPasteboard.general
+                        // Exactly an empty STRING: a copied image or file (no string at all)
+                        // is the user's own copy and must never trigger a second paste.
+                        if pb.changeCount != borrowedToken, pb.string(forType: .string) == "" {
+                            repasted = true
+                            pb.clearContents()
+                            pb.setString(text, forType: .string)
+                            noteOwnWrite(pb)
+                            postKey(0x09, flags: .maskCommand)
+                            yapdiag("insert: clipboard was wiped by a late empty copy after the paste - pasted again")
+                            return
+                        }
+                        watch(left - 1)
+                    }
+                }
+                watch(24)   // ~1.2 s, inside the 1.5 s restore window
+            }
         }
     }
 
@@ -211,27 +238,32 @@ enum TextInserter {
 /// invalidates on `clearContents()`) is what lets us restore images, files, and rich text -
 /// the content a plain-text save silently loses. Lazily-promised data (e.g. some file promises)
 /// can't be read ahead of time, so those types are skipped; everything with real bytes survives.
+///
+/// The snapshot holds plain data, never `NSPasteboardItem`s: an item can be written to a
+/// pasteboard only once, and a second `writeObjects` with it raises NSInvalidArgumentException
+/// ("already associated with another pasteboard"). Intelligent Insert restores the same
+/// snapshot twice when a slow app answers its copy late (the read's own restore, then
+/// settleUnansweredRead), and that exception, swallowed by AppKit mid-task, left the main
+/// thread's concurrency state broken until the next main-actor check crashed (1.5.3, Gmail
+/// in Safari). Every write therefore builds fresh items.
 struct PasteboardSnapshot {
-    private let items: [NSPasteboardItem]
+    /// One entry per pasteboard item, each holding every type that had real bytes, in order.
+    private let items: [[(type: NSPasteboard.PasteboardType, data: Data)]]
 
     /// The plain text the clipboard held when the snapshot was taken, if any.
     var string: String? {
         for item in items {
-            if let s = item.string(forType: .string) { return s }
+            if let data = item.first(where: { $0.type == .string })?.data,
+               let s = String(data: data, encoding: .utf8) { return s }
         }
         return nil
     }
 
     static func capture(_ pb: NSPasteboard) -> PasteboardSnapshot {
-        var copies: [NSPasteboardItem] = []
+        var copies: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
         for item in pb.pasteboardItems ?? [] {
-            let copy = NSPasteboardItem()
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    copy.setData(data, forType: type)
-                }
-            }
-            if !copy.types.isEmpty { copies.append(copy) }
+            let entries = item.types.compactMap { type in item.data(forType: type).map { (type: type, data: $0) } }
+            if !entries.isEmpty { copies.append(entries) }
         }
         return PasteboardSnapshot(items: copies)
     }
@@ -239,9 +271,16 @@ struct PasteboardSnapshot {
     var isEmpty: Bool { items.isEmpty }
 
     /// Restore the captured content, replacing whatever is currently on the pasteboard.
+    /// Safe to call any number of times.
     func write(to pb: NSPasteboard) {
         pb.clearContents()
-        if !items.isEmpty { pb.writeObjects(items) }
+        if !items.isEmpty {
+            pb.writeObjects(items.map { entries in
+                let item = NSPasteboardItem()
+                for entry in entries { item.setData(entry.data, forType: entry.type) }
+                return item
+            })
+        }
         TextInserter.noteOwnWrite(pb)
     }
 }

@@ -39,7 +39,7 @@ struct HardwareProfile {
     }()
 
     var summaryLine: String {
-        "\(chipName) \u{00B7} \(memoryGB)GB memory \u{00B7} \(hasBattery ? "battery powered" : "desktop")"
+        String(localized: "\(chipName), \(memoryGB)GB memory, \(hasBattery ? String(localized: "battery powered") : String(localized: "desktop"))")
     }
 
     private static func sysctlInt(_ name: String) -> Int {

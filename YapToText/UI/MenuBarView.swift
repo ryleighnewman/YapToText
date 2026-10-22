@@ -70,13 +70,13 @@ struct MenuBarView: View {
                 // Plain circular transport controls, matching the dictation panel's language.
                 // Cancel leads the row: dictations are cancellable at every stage, not just
                 // during transcription.
-                circleControl("xmark", "Cancel", tint: .secondary) { state.controller.cancel() }
+                circleControl("xmark", String(localized: "Cancel"), tint: .secondary) { state.controller.cancel() }
                 circleControl(state.controller.isPaused ? "play.fill" : "pause.fill",
-                              state.controller.isPaused ? "Resume" : "Pause",
+                              state.controller.isPaused ? String(localized: "Resume") : String(localized: "Pause"),
                               tint: .accentColor) { state.controller.togglePause() }
-                circleControl("stop.fill", "Stop and insert", tint: .red) { state.controller.stop() }
+                circleControl("stop.fill", String(localized: "Stop and insert"), tint: .red) { state.controller.stop() }
             } else if state.controller.isBusy {
-                circleControl("xmark", "Cancel", tint: .secondary) { state.controller.cancel() }
+                circleControl("xmark", String(localized: "Cancel"), tint: .secondary) { state.controller.cancel() }
             } else {
                 recordPill
             }
@@ -162,7 +162,7 @@ struct MenuBarView: View {
                     }
                 }
             } label: {
-                selectorLabel("Mode", icon: state.controller.activeMode.iconSystemName,
+                selectorLabel(String(localized: "Mode"), icon: state.controller.activeMode.iconSystemName,
                               value: state.controller.activeMode.name)
             }
             .menuStyle(.button)
@@ -186,7 +186,7 @@ struct MenuBarView: View {
                     }
                 }
             } label: {
-                selectorLabel("Input", icon: "mic", value: currentInputName)
+                selectorLabel(String(localized: "Input"), icon: "mic", value: currentInputName)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
@@ -196,7 +196,7 @@ struct MenuBarView: View {
         .onAppear { inputDevices = AudioInputDevices.all() }
     }
 
-    /// A labelled dropdown chip: label and value sit right next to each other, with the chevron
+    /// A labeled dropdown chip: label and value sit right next to each other, with the chevron
     /// making it obvious this is something you click to change.
     private func selectorLabel(_ label: String, icon: String, value: String) -> some View {
         // A PILL that reads as a button: the solid-secondary capsule (same family as the app's
@@ -207,6 +207,7 @@ struct MenuBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .ignore)   // one menu button, not one per icon and text
         .accessibilityLabel("\(label): \(value)")
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Color.secondary.opacity(0.06), in: Capsule())
@@ -215,10 +216,10 @@ struct MenuBarView: View {
     }
 
     private var currentInputName: String {
-        guard let uid = state.settings.inputDeviceUID else { return "System Default" }
+        guard let uid = state.settings.inputDeviceUID else { return String(localized: "System Default") }
         return inputDevices.first { $0.uid == uid }?.name
             ?? AudioInputDevices.device(forUID: uid)?.name
-            ?? "System Default"
+            ?? String(localized: "System Default")
     }
 
     // MARK: Quick actions (four fixed square buttons under the mode title)
@@ -227,7 +228,7 @@ struct MenuBarView: View {
         // Only genuine menu-bar actions here. History lives under Recent's "See all", and modes are
         // switched right above in the mode row, so those navigation buttons were redundant.
         HStack(spacing: 8) {
-            squareButton("Transcribe file", "waveform.badge.magnifyingglass") {
+            squareButton(String(localized: "Transcribe file"), "waveform.badge.magnifyingglass") {
                 NotificationCenter.default.post(name: .yapTranscribeFile, object: nil)
             }
             regenerateButton
@@ -240,7 +241,7 @@ struct MenuBarView: View {
     private var insertLastButton: some View {
         let last = state.history.records.first
         let busy = state.controller.insertLastBusy
-        return squareButton(busy ? "Inserting\u{2026}" : "Insert last", "text.insert") {
+        return squareButton(busy ? String(localized: "Inserting\u{2026}") : String(localized: "Insert last"), "text.insert") {
             guard !busy, let text = last?.finalText else { return }
             AppDelegate.shared?.insertIntoLastApp(text)
         }
@@ -272,7 +273,7 @@ struct MenuBarView: View {
     /// always registers inside the popover. Disabled only while a regeneration is running.
     private var regenerateButton: some View {
         let busy = !state.controller.regeneratingIDs.isEmpty
-        return squareButton("Regenerate", "arrow.clockwise") { showRegenerate = true }
+        return squareButton(String(localized: "Regenerate"), "arrow.clockwise") { showRegenerate = true }
             .disabled(busy)
             .help("Regenerate your last dictation, or rewrite selected text, in any mode")
     }
@@ -294,6 +295,7 @@ struct MenuBarView: View {
                     } label: {
                         Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
                             .frame(width: 26, height: 26)
+                            .accessibilityLabel("Back")
                             .background(Circle().fill(Color.secondary.opacity(0.14)))
                     }
                     .buttonStyle(.plain)
@@ -306,12 +308,12 @@ struct MenuBarView: View {
                 case nil:
                     // Step 1: pick WHAT to regenerate - two plain choices, nothing else.
                     VStack(spacing: 6) {
-                        choiceCard("Most recent dictation", icon: "clock.arrow.circlepath",
-                                   detail: canLast ? "Redo your last dictation in a different style"
-                                                   : "Dictate something first",
+                        choiceCard(String(localized: "Most recent dictation"), icon: "clock.arrow.circlepath",
+                                   detail: canLast ? String(localized: "Redo your last dictation in a different style")
+                                                   : String(localized: "Dictate something first"),
                                    enabled: canLast) { regenTarget = .lastDictation }
-                        choiceCard("Selected text", icon: "text.cursor",
-                                   detail: "Rewrite whatever text is selected in your last app",
+                        choiceCard(String(localized: "Selected text"), icon: "text.cursor",
+                                   detail: String(localized: "Rewrite whatever text is selected in your last app"),
                                    enabled: true) { regenTarget = .selection }
                     }
                 case .lastDictation:
@@ -471,7 +473,7 @@ struct MenuBarView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Text(record.finalText).font(.caption).lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        iconButton("doc.on.doc", "Copy") { TextInserter.setClipboard(record.finalText) }
+                        iconButton("doc.on.doc", String(localized: "Copy")) { TextInserter.setClipboard(record.finalText) }
                             .font(.caption2)
                     }
                     .padding(.vertical, 2)
@@ -492,17 +494,17 @@ struct MenuBarView: View {
             } label: {
                 Image(systemName: "power").foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain).help("Quit YapToText")
+            .buttonStyle(.plain).help("Quit YapToText").accessibilityLabel("Quit YapToText")
             Button {
                 NSApp.activate(ignoringOtherApps: true)
                 SupportWindowController.shared.show(state: state)
             } label: {
                 Image(systemName: "heart.fill").iconTint(.pink)
             }
-            .buttonStyle(.plain).help("Donate to YapToText")
+            .buttonStyle(.plain).help("Donate to YapToText").accessibilityLabel("Donate to YapToText")
             Spacer()
-            iconButton("macwindow", "Open the window") { openMainWindow(destination: .yapShowHome) }
-            iconButton("gearshape", "Settings") { openMainWindow(destination: .yapShowSettings) }
+            iconButton("macwindow", String(localized: "Open the window")) { openMainWindow(destination: .yapShowHome) }
+            iconButton("gearshape", String(localized: "Settings")) { openMainWindow(destination: .yapShowSettings) }
         }
         .font(.body)
     }

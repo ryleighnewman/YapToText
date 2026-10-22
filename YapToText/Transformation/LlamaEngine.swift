@@ -14,9 +14,9 @@ enum LlamaEngine {
         case loadFailed, contextFailed, decodeFailed
         var errorDescription: String? {
             switch self {
-            case .loadFailed: return "The cleanup model couldn't be loaded. Try re-downloading it on the AI Models page."
-            case .contextFailed: return "The cleanup model couldn't start (out of memory?)."
-            case .decodeFailed: return "The cleanup model failed while generating."
+            case .loadFailed: return String(localized: "The cleanup model couldn't be loaded. Try re-downloading it on the AI Models page.")
+            case .contextFailed: return String(localized: "The cleanup model couldn't start (out of memory?).")
+            case .decodeFailed: return String(localized: "The cleanup model failed while generating.")
             }
         }
     }

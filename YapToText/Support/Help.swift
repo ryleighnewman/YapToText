@@ -21,7 +21,7 @@ final class HelpWindowController {
             .environment(state)
             .background(AppWindowBackground()))
         let win = NSWindow(contentViewController: hosting)
-        win.title = "YapToText Help"
+        win.title = String(localized: "YapToText Help")
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         win.titlebarAppearsTransparent = true
         win.isOpaque = false
@@ -41,21 +41,21 @@ final class HelpWindowController {
 /// One article: a titled page of hand-written blocks.
 struct HelpArticle: Identifiable {
     let id: String
-    let section: String
+    let section: LocalizedStringResource
     let icon: String
-    let title: String
-    let summary: String
+    let title: LocalizedStringResource
+    let summary: LocalizedStringResource
     let blocks: [HelpBlock]
 
     /// Plain text of the whole article, for search.
     var searchText: String {
-        var parts = [title, summary]
+        var parts = [String(localized: title), String(localized: summary)]
         for block in blocks {
             switch block {
-            case .paragraph(let t), .tip(let t), .heading(let t): parts.append(t)
-            case .steps(let items): parts.append(contentsOf: items)
-            case .keys(let rows): parts.append(contentsOf: rows.map { "\($0.0) \($0.1)" })
-            case .links(let rows): parts.append(contentsOf: rows.map { "\($0.title) \($0.detail)" })
+            case .paragraph(let t), .tip(let t), .heading(let t): parts.append(String(localized: t))
+            case .steps(let items): parts.append(contentsOf: items.map { String(localized: $0) })
+            case .keys(let rows): parts.append(contentsOf: rows.map { "\($0.0) \(String(localized: $0.1))" })
+            case .links(let rows): parts.append(contentsOf: rows.map { "\(String(localized: $0.title)) \(String(localized: $0.detail))" })
             }
         }
         return parts.joined(separator: " ").lowercased()
@@ -63,18 +63,18 @@ struct HelpArticle: Identifiable {
 }
 
 enum HelpBlock {
-    case heading(String)
-    case paragraph(String)
-    case steps([String])
-    case keys([(String, String)])   // (shortcut, what it does)
-    case tip(String)
+    case heading(LocalizedStringResource)
+    case paragraph(LocalizedStringResource)
+    case steps([LocalizedStringResource])
+    case keys([(String, LocalizedStringResource)])   // (shortcut, what it does)
+    case tip(LocalizedStringResource)
     case links([HelpLink])          // rows that open a page on the web
 }
 
 struct HelpLink {
     let icon: String
-    let title: String
-    let detail: String
+    let title: LocalizedStringResource
+    let detail: LocalizedStringResource
     let url: URL
 }
 
@@ -177,7 +177,7 @@ enum HelpContent {
             summary: "Dictate into the middle of a sentence and it fits.",
             blocks: [
                 .paragraph("It reads the words around your cursor before the text lands: the first word is lowercased mid-sentence, one space goes where words would collide, and a trailing period is dropped when the sentence carries on. Dictating over a selection replaces it, shaped like the selection."),
-                .paragraph("It reads with a few invisible keystrokes, and some apps beep at one of them. Turning Alert volume down in Sound settings silences that. Turn Intelligent Insert off on the Home page, or for one app only on the Dictation page."),
+                .paragraph("It reads with a few invisible keystrokes, and some apps beep at one of them. Turning Alert volume down in Sound settings silences that. It is off until you turn it on, on the Home page or the Dictation page, and the Dictation page can keep it off for one app only."),
             ]),
 
         HelpArticle(
@@ -282,7 +282,10 @@ enum HelpContent {
 
     static var sections: [String] {
         var seen = [String]()
-        for a in articles where !seen.contains(a.section) { seen.append(a.section) }
+        for a in articles {
+            let name = String(localized: a.section)
+            if !seen.contains(name) { seen.append(name) }
+        }
         return seen
     }
 }
@@ -316,7 +319,7 @@ struct HelpView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search help", text: $query).textFieldStyle(.plain)
                 if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.accessibilityLabel("Clear search")
                         .buttonStyle(.plain)
                 }
             }
@@ -333,7 +336,7 @@ struct HelpView: View {
                             .font(.caption).foregroundStyle(.secondary).padding(12)
                     }
                     ForEach(HelpContent.sections, id: \.self) { section in
-                        let items = results.filter { $0.section == section }
+                        let items = results.filter { String(localized: $0.section) == section }
                         if !items.isEmpty {
                             Text(section)
                                 .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
@@ -363,7 +366,7 @@ struct HelpView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .iconTint(selectedID == a.id ? Color.accentColor : .secondary)
                     .frame(width: 18)
-                Text(a.title).font(.callout)
+                Text(String(localized: a.title)).font(.callout)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -384,8 +387,8 @@ struct HelpView: View {
                     HStack(spacing: 12) {
                         IconBadge(symbol: a.icon, tint: .accentColor, size: 40)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(a.title).font(.title2.weight(.semibold))
-                            Text(a.summary).font(.callout).foregroundStyle(.secondary)
+                            Text(String(localized: a.title)).font(.title2.weight(.semibold))
+                            Text(String(localized: a.summary)).font(.callout).foregroundStyle(.secondary)
                         }
                     }
                     .padding(.bottom, 4)
@@ -407,9 +410,9 @@ struct HelpView: View {
     private func blockView(_ block: HelpBlock) -> some View {
         switch block {
         case .heading(let t):
-            Text(t).font(.headline).padding(.top, 6)
+            Text(String(localized: t)).font(.headline).padding(.top, 6)
         case .paragraph(let t):
-            Text(t).font(.body).lineSpacing(3)
+            Text(String(localized: t)).font(.body).lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
         case .steps(let items):
             VStack(alignment: .leading, spacing: 8) {
@@ -418,7 +421,7 @@ struct HelpView: View {
                         Text("\(i + 1).")
                             .font(.body.weight(.medium)).monospacedDigit()
                             .foregroundStyle(.secondary)
-                        Text(item).font(.body).fixedSize(horizontal: false, vertical: true)
+                        Text(String(localized: item)).font(.body).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -433,7 +436,7 @@ struct HelpView: View {
                             .padding(.horizontal, 8).padding(.vertical, 3)
                             .background(Color.secondary.opacity(0.12),
                                         in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        Text(row.1).font(.callout).foregroundStyle(.secondary)
+                        Text(String(localized: row.1)).font(.callout).foregroundStyle(.secondary)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 12).padding(.vertical, 7)
@@ -448,8 +451,8 @@ struct HelpView: View {
                         HStack(alignment: .top, spacing: 10) {
                             IconBadge(symbol: row.icon, tint: .accentColor, size: 30)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(row.title).font(.callout.weight(.semibold)).foregroundStyle(.primary)
-                                Text(row.detail).font(.caption).foregroundStyle(.secondary)
+                                Text(String(localized: row.title)).font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                                Text(String(localized: row.detail)).font(.caption).foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer(minLength: 0)
@@ -466,7 +469,7 @@ struct HelpView: View {
         case .tip(let t):
             HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Image(systemName: "lightbulb.max").iconTint(Color.accentColor).font(.callout)
-                Text(t).font(.callout).foregroundStyle(.secondary)
+                Text(String(localized: t)).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)

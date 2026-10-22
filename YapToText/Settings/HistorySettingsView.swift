@@ -16,6 +16,14 @@ struct HistorySettingsView: View {
     enum DateFilter: String, CaseIterable, Identifiable {
         case all = "All", today = "Today", week = "7 days", month = "30 days"
         var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .all: return String(localized: "All")
+            case .today: return String(localized: "Today")
+            case .week: return String(localized: "7 days")
+            case .month: return String(localized: "30 days")
+            }
+        }
         var cutoff: Date? {
             let cal = Calendar.current
             switch self {
@@ -55,7 +63,7 @@ struct HistorySettingsView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Search text, mode, or app", text: $query).textFieldStyle(.plain)
                     if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.accessibilityLabel("Clear search")
                             .buttonStyle(.plain)
                     }
                 }
@@ -74,12 +82,12 @@ struct HistorySettingsView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Statistics and insights")
+                .help("Statistics and insights").accessibilityLabel("Statistics and insights")
             }
             HStack(spacing: 8) {
                 // Modern capsule chips (the panel's mode-chip language), not the legacy
                 // segmented Picker / button-toggle.
-                CapsuleSegments(options: DateFilter.allCases.map { ($0, $0.rawValue) },
+                CapsuleSegments(options: DateFilter.allCases.map { ($0, $0.label) },
                                 selection: $dateFilter)
 
                 Menu {
@@ -91,12 +99,12 @@ struct HistorySettingsView: View {
                         }
                     }
                 } label: {
-                    Label(modeFilter ?? "All modes", systemImage: "line.3.horizontal.decrease.circle")
+                    Label(modeFilter ?? String(localized: "All modes"), systemImage: "line.3.horizontal.decrease.circle")
                         .font(.caption)
                 }
                 .menuStyle(.borderlessButton).fixedSize()
 
-                CapsuleToggleChip(label: "AI only", isOn: $aiOnly)
+                CapsuleToggleChip(label: String(localized: "AI only"), isOn: $aiOnly)
 
                 Spacer()
 
@@ -172,33 +180,33 @@ struct HistorySettingsView: View {
                         RecordMediaPlayer(record: record)
                     }
                     // 2. The three pipeline stages, in order.
-                    pipelineField("Raw transcript (what the speech model heard)", record.rawText)
+                    pipelineField(String(localized: "Raw transcript (what the speech model heard)"), record.rawText)
                     if record.finalText != record.rawText {
-                        pipelineField(record.usedAI ? "Cleaned transcript (after AI + dictionaries + commands)"
-                                                    : "Processed transcript (after dictionaries + commands)",
+                        pipelineField(record.usedAI ? String(localized: "Cleaned transcript (after AI + dictionaries + commands)")
+                                                    : String(localized: "Processed transcript (after dictionaries + commands)"),
                                       record.finalText)
                     }
                     if let delivered = record.deliveredText,
                        delivered.trimmingCharacters(in: .whitespaces) != record.finalText.trimmingCharacters(in: .whitespaces) {
-                        pipelineField("Final delivered text", delivered)
+                        pipelineField(String(localized: "Final delivered text"), delivered)
                     }
                     // 3. Everything that happened, as a plain bullet list (no pills - they fought
                     //    with the row's own chips below). Timestamp leads.
                     VStack(alignment: .leading, spacing: 3) {
-                        detailBullet("Timestamp", record.date.formatted(.dateTime.year().month().day().hour().minute().second()))
-                        detailBullet("Mode", record.modeName + (record.usedAI ? " (AI cleanup)" : " (verbatim)"))
-                        if let verdict = record.autoVerdict { detailBullet("Auto detected", verdict) }
-                        if let model = record.cleanupModel { detailBullet("Cleanup model", model) }
-                        if let outcome = record.outcome { detailBullet("Delivery", outcome) }
-                        if let app = record.appName { detailBullet("Target app", app) }
-                        detailBullet("Spoken for", String(format: "%.1fs", record.durationSeconds))
-                        if let secs = record.processSeconds { detailBullet("Stop to text", String(format: "%.1fs", secs)) }
+                        detailBullet(String(localized: "Timestamp"), record.date.formatted(.dateTime.year().month().day().hour().minute().second()))
+                        detailBullet(String(localized: "Mode"), record.modeName + (record.usedAI ? String(localized: " (AI cleanup)") : String(localized: " (verbatim)")))
+                        if let verdict = record.autoVerdict { detailBullet(String(localized: "Auto detected"), verdict) }
+                        if let model = record.cleanupModel { detailBullet(String(localized: "Cleanup model"), model) }
+                        if let outcome = record.outcome { detailBullet(String(localized: "Delivery"), outcome) }
+                        if let app = record.appName { detailBullet(String(localized: "Target app"), app) }
+                        detailBullet(String(localized: "Spoken for"), String(format: "%.1fs", record.durationSeconds))
+                        if let secs = record.processSeconds { detailBullet(String(localized: "Stop to text"), String(format: "%.1fs", secs)) }
                         // The stage split: where stop-to-text actually went.
-                        if let w = record.whisperSeconds { detailBullet("- transcription", String(format: "%.1fs", w)) }
-                        if let c = record.cleanupSeconds { detailBullet("- AI cleanup", String(format: "%.1fs", c)) }
-                        if let d = record.deliverySeconds { detailBullet("- delivery", String(format: "%.1fs", d)) }
-                        detailBullet("Language", record.localeIdentifier)
-                        detailBullet("Audio", record.hasAudio ? "saved with this entry" : "not kept")
+                        if let w = record.whisperSeconds { detailBullet(String(localized: "- transcription"), String(format: "%.1fs", w)) }
+                        if let c = record.cleanupSeconds { detailBullet(String(localized: "- AI cleanup"), String(format: "%.1fs", c)) }
+                        if let d = record.deliverySeconds { detailBullet(String(localized: "- delivery"), String(format: "%.1fs", d)) }
+                        detailBullet(String(localized: "Language"), record.localeIdentifier)
+                        detailBullet(String(localized: "Audio"), record.hasAudio ? String(localized: "saved with this entry") : String(localized: "not kept"))
                     }
                     .padding(.top, 2)
                 }
@@ -225,7 +233,7 @@ struct HistorySettingsView: View {
                 chip(record.modeName, "square.stack.3d.up")
                 if let app = record.appName { chip(app, "app") }
                 chip(record.date.formatted(.dateTime.month().day().hour().minute()), "clock")
-                if record.usedAI { chip("AI", "sparkles") }
+                if record.usedAI { chip(String(localized: "AI"), "sparkles") }
                 Spacer()
                 if isRegenerating {
                     HStack(spacing: 5) {
@@ -237,18 +245,18 @@ struct HistorySettingsView: View {
                     // text and audio the entry has - audio-dependent ones gray out instead of
                     // vanishing, so rows always read consistent.
                     rowButton(isPlaying ? "stop.circle.fill" : "play.circle",
-                              record.hasAudio ? (isPlaying ? "Stop playback" : "Play recording")
-                                              : "No audio saved for this entry",
+                              record.hasAudio ? (isPlaying ? String(localized: "Stop playback") : String(localized: "Play recording"))
+                                              : String(localized: "No audio saved for this entry"),
                               tint: isPlaying ? .accentColor : .secondary) {
                         HistoryAudioPlayer.shared.toggle(record)
                     }
                     .disabled(!record.hasAudio)
                     .opacity(record.hasAudio ? 1 : 0.35)
-                    if canRegenerate(record) { rowButton("arrow.clockwise", "Regenerate with AI") { state.controller.regenerate(record) } }
-                    rowButton("doc.on.doc", "Copy") { TextInserter.setClipboard(record.finalText) }
-                    rowButton("text.insert", "Insert into the previous app") { insert(record) }
+                    if canRegenerate(record) { rowButton("arrow.clockwise", String(localized: "Regenerate with AI")) { state.controller.regenerate(record) } }
+                    rowButton("doc.on.doc", String(localized: "Copy")) { TextInserter.setClipboard(record.finalText) }
+                    rowButton("text.insert", String(localized: "Insert into the previous app")) { insert(record) }
                     exportMenu(record)
-                    rowButton("trash", "Delete", tint: .red) { state.history.delete(record) }
+                    rowButton("trash", String(localized: "Delete"), tint: .red) { state.history.delete(record) }
                 }
             }
         }
@@ -275,10 +283,10 @@ struct HistorySettingsView: View {
         }
         .padding(10)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            FolderCaption(prefix: "History lives on your Mac in the app's ",
-                          linkText: "data folder",
+            FolderCaption(prefix: String(localized: "History lives on your Mac in the app's "),
+                          linkText: String(localized: "data folder"),
                           url: Persistence.url("history.json"),
-                          suffix: ".")
+                          suffix: String(localized: "."))
                 .padding(.horizontal, 10).padding(.bottom, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -332,7 +340,7 @@ struct HistorySettingsView: View {
 
         var body: some View {
             HStack(spacing: 8) {
-                Button { player.skip(record, by: -5) } label: { Image(systemName: "gobackward.5") }
+                Button { player.skip(record, by: -5) } label: { Image(systemName: "gobackward.5") }.accessibilityLabel("Back 5 seconds")
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .disabled(!isCurrent)
                 Button { player.playPause(record) } label: {
@@ -340,8 +348,9 @@ struct HistorySettingsView: View {
                         .font(.system(size: 22))
                         .foregroundStyle(Color.accentColor)
                 }
+                .accessibilityLabel(isCurrent && !player.isPaused ? "Pause" : "Play")
                 .buttonStyle(.plain)
-                Button { player.skip(record, by: 5) } label: { Image(systemName: "goforward.5") }
+                Button { player.skip(record, by: 5) } label: { Image(systemName: "goforward.5") }.accessibilityLabel("Forward 5 seconds")
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .disabled(!isCurrent)
 
@@ -351,7 +360,7 @@ struct HistorySettingsView: View {
                     get: { isCurrent ? player.progress : 0 },
                     set: { player.seek(record, toFraction: $0) }
                 ))
-                .controlSize(.mini)
+                .controlSize(.mini).accessibilityLabel("Playback position")
                 Text(fmt(isCurrent ? player.duration : record.durationSeconds))
                     .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
 
@@ -360,7 +369,7 @@ struct HistorySettingsView: View {
                         NSWorkspace.shared.activateFileViewerSelecting([AudioStore.url(for: name)])
                     } label: { Image(systemName: "folder") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help("Show the recording in Finder")
+                        .help("Show the recording in Finder").accessibilityLabel("Show the recording in Finder")
                     ShareLink(item: AudioStore.url(for: name)) {
                         Image(systemName: "square.and.arrow.up")
                     }
@@ -441,6 +450,7 @@ struct HistorySettingsView: View {
         .menuStyle(.button).buttonStyle(.plain)
         .menuIndicator(.hidden).fixedSize()
         .help("Export this dictation")
+        .accessibilityLabel("Export this dictation")
     }
 
     private static let exportNameFormatter: DateFormatter = {

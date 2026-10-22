@@ -38,7 +38,7 @@ final class RecordingPanel {
     private var lastExpandedCardHeight: CGFloat = 170
     private let condenseDriver = DisplayLinkDriver()
     /// RGB glass: integrated hue phase (rate*dt - the speed slider changes pace without
-    /// jumping the colour) advanced by a 10Hz timer of DISCRETE single chrome renders
+    /// jumping the color) advanced by a 10Hz timer of DISCRETE single chrome renders
     /// while the panel is visible. Never a per-frame animated glass transaction.
     private var rgbTimer: Timer?
     /// Set when hide() started the close choreography: orderOut waits for it.
@@ -132,6 +132,8 @@ final class RecordingPanel {
         panel.isMovableByWindowBackground = true
         panel.acceptsMouseMovedEvents = true   // the mini style reveals its controls on hover
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        // Borderless panels have no title, so VoiceOver would announce an unnamed system dialog.
+        panel.setAccessibilityTitle(String(localized: "Dictation pop-up"))
 
         let container = NSView(frame: NSRect(origin: .zero, size: Self.windowSize))
         for view in [chromeHosting, hosting] as [NSView] {
@@ -755,7 +757,7 @@ final class RecordingPanel {
             guard let self else { return }
             // A newer show() owns the panel ONLY if a live session is actually running.
             // Otherwise this close must land no matter how the generations raced - a
-            // cancelled/idle panel that skips its orderOut is stuck on screen forever.
+            // canceled/idle panel that skips its orderOut is stuck on screen forever.
             if self.visibilityGeneration != gen {
                 if self.controller.isRecording || self.controller.isBusy {
                     yapdiag("panel.orderOut deferred to live session (gen \(gen) != \(self.visibilityGeneration))")

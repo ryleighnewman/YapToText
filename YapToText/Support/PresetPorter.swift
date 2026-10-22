@@ -49,8 +49,8 @@ enum PresetPorter {
               let bundle = try? JSONDecoder().decode(Bundle_.self, from: data),
               bundle.format == "yaptotext-preset" else {
             let alert = NSAlert()
-            alert.messageText = "Not a YapToText preset"
-            alert.informativeText = "That file doesn't look like an exported YapToText preset."
+            alert.messageText = String(localized: "Not a YapToText preset")
+            alert.informativeText = String(localized: "That file doesn't look like an exported YapToText preset.")
             alert.runModal()
             return
         }

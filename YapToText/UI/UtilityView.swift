@@ -316,10 +316,10 @@ struct UtilityView: View {
                 VStack(spacing: 4) {
                     if fileBusy {
                         ProgressView().controlSize(.small)
-                        Text("Transcribing \(fileName ?? "file")\u{2026}").font(.caption).foregroundStyle(.secondary)
+                        Text("Transcribing \(fileName ?? String(localized: "file"))\u{2026}").font(.caption).foregroundStyle(.secondary)
                     } else {
                         Image(systemName: "arrow.down.doc").font(.title3).foregroundStyle(.secondary)
-                        Text(fileName.map { "Loaded \($0)" } ?? "Drop an audio or video file here").font(.caption).foregroundStyle(.secondary)
+                        Text(fileName.map { String(localized: "Loaded \($0)") } ?? String(localized: "Drop an audio or video file here")).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -452,8 +452,8 @@ struct UtilityView: View {
 
     private func chooseFile() {
         let panel = NSOpenPanel()
-        panel.title = "Transcribe a File"
-        panel.message = "Choose any audio or video file."
+        panel.title = String(localized: "Transcribe a File")
+        panel.message = String(localized: "Choose any audio or video file.")
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModalInFront() == .OK, let url = panel.url { transcribe(url) }
@@ -470,7 +470,7 @@ struct UtilityView: View {
             do {
                 fileOutput = try await controller.transcribe(fileURL: url, mode: selected)
             } catch {
-                fileError = (error as? LocalizedError)?.errorDescription ?? "Couldn't transcribe that file."
+                fileError = (error as? LocalizedError)?.errorDescription ?? String(localized: "Couldn't transcribe that file.")
             }
             fileBusy = false
         }

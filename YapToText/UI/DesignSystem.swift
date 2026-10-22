@@ -83,25 +83,32 @@ struct IconBadge: View {
 /// The workhorse container: a floating Liquid Glass card with an uppercase tracked
 /// micro-label header (the CubeAura card language).
 struct CardSection<Content: View>: View {
-    let title: String
-    var subtitle: String?
+    let title: Text
+    var subtitle: Text?
     @ViewBuilder var content: () -> Content
 
-    init(_ title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
-        self.title = title
-        self.subtitle = subtitle
+    /// A literal is a localizable key, the way SwiftUI's own Text treats one.
+    init(_ title: LocalizedStringKey, subtitle: LocalizedStringKey? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = Text(title)
+        self.subtitle = subtitle.map { Text($0) }
+        self.content = content
+    }
+    /// A computed string is shown as it is.
+    init<S: StringProtocol>(verbatim title: S, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = Text(title)
+        self.subtitle = subtitle.map { Text($0) }
         self.content = content
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.m) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                title
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .accessibilityAddTraits(.isHeader)
                 if let subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(.tertiary)
+                    subtitle.font(.caption).foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -197,7 +204,7 @@ extension View {
 /// A compact inline search field used to filter lists (commands, dictionary entries).
 struct SearchField: View {
     @Binding var text: String
-    var prompt: String = "Search"
+    var prompt: String = String(localized: "Search")
 
     var body: some View {
         HStack(spacing: 6) {
@@ -213,7 +220,7 @@ struct SearchField: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain).accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 8)
@@ -224,10 +231,13 @@ struct SearchField: View {
 
 /// The standard explanatory caption placed under a control.
 struct Caption: View {
-    let text: String
-    init(_ text: String) { self.text = text }
+    let text: Text
+    /// A literal is a localizable key, the way SwiftUI's own Text treats one.
+    init(_ key: LocalizedStringKey) { self.text = Text(key) }
+    /// A computed string is shown as it is.
+    init<S: StringProtocol>(verbatim text: S) { self.text = Text(text) }
     var body: some View {
-        Text(text).font(.caption).foregroundStyle(.secondary)
+        text.font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -238,7 +248,9 @@ struct Caption: View {
 /// vertically centred beside a wrapped block, which read as a stray right-aligned button.
 struct LinkCaption: View {
     let markdown: String
-    init(_ markdown: String) { self.markdown = markdown }
+    /// A literal is a localizable key; the translation is the markdown shown.
+    init(_ markdown: LocalizedStringResource) { self.markdown = String(localized: markdown) }
+    init(verbatim markdown: String) { self.markdown = markdown }
     var body: some View {
         Text(attributed)
             .font(.caption).foregroundStyle(.secondary)
@@ -650,7 +662,7 @@ struct NameCaptureField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            TextField("Your name, e.g. Ryleigh", text: $draft)
+            TextField("Your name, e.g. Ryleigh", text: $draft).accessibilityLabel("Your name")
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .innerWell(radius: 7)
@@ -687,6 +699,8 @@ struct FolderCaption: View {
             .font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .onTapGesture { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             .onHover { inside in inside ? NSCursor.pointingHand.push() : NSCursor.pop() }
             .help("Open in Finder")
     }

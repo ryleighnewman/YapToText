@@ -23,7 +23,7 @@ final class DictationController {
         /// (stable within a session so the label never flickers mid-thought).
         var userFacingLabel: String {
             switch self {
-            case .idle: return "Ready"
+            case .idle: return String(localized: "Ready")
             case .recording: return Phase.pick(Phase.listeningLines)
             case .transcribing: return Phase.pick(Phase.transcribingLines)
             case .transforming: return Phase.pick(Phase.transformingLines)
@@ -32,12 +32,12 @@ final class DictationController {
             }
         }
 
-        static let listeningLines = ["Listening…", "All ears…", "Go ahead, yap…", "Hearing you out…"]
-        static let transcribingLines = ["Transcribing…", "Deciphering the yap…", "Untangling the words…",
-                                        "Writing it all down…", "Catching every word…"]
-        static let transformingLines = ["Cleaning up…", "Reading the room…", "Polishing the yap…",
-                                        "Making you sound great…", "Dotting the i's…"]
-        static let insertingLines = ["Inserting…", "Delivering the goods…", "Sliding it in place…"]
+        static let listeningLines = [String(localized: "Listening…"), String(localized: "All ears…"), String(localized: "Go ahead, yap…"), String(localized: "Hearing you out…")]
+        static let transcribingLines = [String(localized: "Transcribing…"), String(localized: "Deciphering the yap…"), String(localized: "Untangling the words…"),
+                                        String(localized: "Writing it all down…"), String(localized: "Catching every word…")]
+        static let transformingLines = [String(localized: "Cleaning up…"), String(localized: "Reading the room…"), String(localized: "Polishing the yap…"),
+                                        String(localized: "Making you sound great…"), String(localized: "Dotting the i's…")]
+        static let insertingLines = [String(localized: "Inserting…"), String(localized: "Delivering the goods…"), String(localized: "Sliding it in place…")]
 
         /// One variation per dictation: reseeded when a session starts, constant until the next.
         nonisolated(unsafe) static var sessionSeed = 0
@@ -62,6 +62,13 @@ final class DictationController {
         guard isPreviewInstance else { return }
         liveText = text
     }
+    #if DEBUG
+    /// Marketing staging: show a chosen mode as the current chip on the preview panel.
+    func setPreviewMode(_ mode: Mode) {
+        guard isPreviewInstance else { return }
+        activeMode = mode
+    }
+    #endif
     /// The onboarding demo walks the real panel through its stages: recording (live wave),
     /// transcribing (the wave winds into the ring), and back.
     func setPreviewPhase(_ newPhase: Phase) {
@@ -126,6 +133,16 @@ final class DictationController {
     /// finish() re-activates it before pasting so text lands there, not in whatever happens to
     /// be frontmost when transcription completes (a window the user clicked, or YapToText).
     private var sessionTargetApp: NSRunningApplication?
+    /// Every regular app the user brought forward during this session, newest last. A
+    /// switch made while the microphone is open, or in the moment after the key is
+    /// released, is the user's and is followed at once (the pre-read and the paste both go
+    /// where they are now looking). An app that comes forward later, while the words are
+    /// being transcribed, is not: a window that popped up during the decode used to catch
+    /// the whole dictation.
+    private var sessionActivations: [(app: NSRunningApplication, at: Date)] = []
+    private var activationObserver: NSObjectProtocol?
+    /// How long after the recording ends a switch still counts as the user's.
+    private static let switchGraceAfterStop: TimeInterval = 2.5
     /// Quick edit: what the last dictation left on screen (and where), so a follow-up
     /// "scratch that" or "replace X with Y" can act on it instead of being typed.
     private var lastInsert: (text: String, date: Date, pid: pid_t?)?
@@ -364,7 +381,7 @@ final class DictationController {
             let granted = await permissions.requestMicrophone()
             guard granted else {
                 startInFlight = false
-                setError("Microphone access is needed. Enable it in System Settings > Privacy & Security > Microphone.")
+                setError(String(localized: "Microphone access is needed. Enable it in System Settings > Privacy & Security > Microphone."))
                 return
             }
             await beginRecording()
@@ -387,6 +404,8 @@ final class DictationController {
             sessionTargetApp = front
             sessionStartedFromSelf = false
         }
+        sessionActivations = []
+        installActivationObserverIfNeeded()
         yapdiag("beginRecording: front=\(front?.localizedName ?? "nil") lastOther=\(AppDelegate.shared?.lastActiveOtherApp?.localizedName ?? "nil") target=\(sessionTargetApp?.localizedName ?? "nil") fromSelf=\(sessionStartedFromSelf)")
         let mode = modeStore.resolvedMode(activeID: settings.activeModeID,
                                           appBundleID: bundleID,
@@ -570,10 +589,39 @@ final class DictationController {
                         yapdiag("beginRecording: rebuilt route is LIVE")
                     } else {
                         yapdiag("beginRecording: rebuilt route STILL dead")
-                        self.flashStatus("The microphone isn't delivering audio. Try again, or pick another input in Settings.")
+                        self.flashStatus(String(localized: "The microphone isn't delivering audio. Try again, or pick another input in Settings."))
                     }
                 } catch {
                     yapdiag("beginRecording: dead-route rebuild failed: \(error)")
+                }
+            }
+            // STALL WATCHDOG: a live route can also stop delivering audio partway through a
+            // dictation, with no device change, no error, and the microphone still running
+            // (2026-10-13 23:26: five minutes of "Listening..." and nothing captured, so the
+            // text ended mid-sentence). Two seconds without a single buffer while not paused
+            // means the capture is gone: rebuild it in place, keep the same session, and say
+            // so on the pop-up.
+            Task { [weak self] in
+                var rescues = 0
+                while true {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    guard let self, sid == self.sessionID, self.phase == .recording else { return }
+                    guard !self.isPaused, let quiet = self.recorder.secondsSinceLastBuffer, quiet > 2.0 else { continue }
+                    yapdiag("recorder: STALL - no audio from the microphone (\(self.recorder.stallReport))")
+                    guard rescues < 3 else {
+                        self.flashStatus(String(localized: "The microphone stopped sending audio. Stop and start the dictation again."))
+                        return
+                    }
+                    rescues += 1
+                    let recovered = await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+                        self.recorder.recoverStalledCapture { done.resume(returning: $0) }
+                    }
+                    guard sid == self.sessionID, self.phase == .recording else { return }
+                    yapdiag("recorder: stall rescue \(rescues) \(recovered ? "rebuilt the capture" : "FAILED")")
+                    self.flashStatus(recovered
+                        ? String(localized: "The microphone stopped sending audio, so YapToText restarted it. Check the last few words.")
+                        : String(localized: "The microphone stopped sending audio. Stop and start the dictation again."))
+                    if !recovered { return }
                 }
             }
             // Arm timeout: beginSession can hang FOREVER when audio input is broken (seen live:
@@ -653,7 +701,7 @@ final class DictationController {
             writeRecoveryMarker(RecoveryMarker(audioFileName: audioName, startedAt: sessionStart,
                                                modeID: sessionMode.id, localeIdentifier: locale))
             yapdiag("beginRecording: ARMED (recorder running=\(recorder.isRunning))")
-            announce("Listening")
+            announce(String(localized: "Listening"))
             // A push-to-talk key released during the async prologue lands here.
             if stopRequested { stopRequested = false; stop() }
         } catch {
@@ -703,7 +751,7 @@ final class DictationController {
             group.addTask { try await operation() }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                throw TranscriptionError.unavailable("The microphone or speech engine didn't start. Check the Microphone permission in System Settings > Privacy, then try again.")
+                throw TranscriptionError.unavailable(String(localized: "The microphone or speech engine didn't start. Check the Microphone permission in System Settings > Privacy, then try again."))
             }
             try await group.next()
             group.cancelAll()
@@ -739,7 +787,7 @@ final class DictationController {
         // keeps running; everything the user SEES responds to the keypress now.
         onRecordingDidStop?()
         setPhase(.transcribing)
-        announce("Transcribing")
+        announce(String(localized: "Transcribing"))
 
         Task {
             // SMART TRAILING CAPTURE (audio only): people finish a word right as - or a hair
@@ -794,6 +842,16 @@ final class DictationController {
                 yapdiag("stop: endSession raw.len=\(raw.count) sid==cur:\(sid == sessionID)")
                 guard sid == sessionID else { return }   // cancelled while finishing
 
+                // A CODE, not prose: digits spoken one at a time ("one, three, five, seven, two,
+                // one") go in as bare digits, with no mode, cleanup, or punctuation touching
+                // them, so a verification code lands in its field cleanly.
+                if let code = SpokenDigits.collapse(raw) {
+                    yapdiag("digits: \(code.count) spoken digits -> \(code)")
+                    sessionAutoVerdict = nil
+                    await finish(sid: sid, raw: raw, final: code)
+                    return
+                }
+
                 // AUTO MODE: pick the post-processor from what was said, where it's going, and
                 // how the user asked. Signals, cheapest first: trailing spoken directive ->
                 // heuristic text screen -> destination-app bias -> one-word AI tiebreak.
@@ -819,7 +877,7 @@ final class DictationController {
                         yapdiag("auto: destination bias from \(sessionBundleID ?? "?")")
                     } else {
                         setPhase(.transforming)
-                        statusDetail = "Reading the room…"
+                        statusDetail = String(localized: "Reading the room…")
                         verdict = await classifyForAutoMode(source)
                         statusDetail = nil
                     }
@@ -841,11 +899,11 @@ final class DictationController {
                     // The thinking pipeline, narrated: the pop-up says WHAT Auto detected and
                     // what it's doing about it, instead of a generic "cleaning up".
                     switch verdict {
-                    case .email:   statusDetail = "Email detected - formatting and signing\u{2026}"
-                    case .message: statusDetail = "Casual message detected - keeping it as spoken\u{2026}"
-                    case .note:    statusDetail = "Note detected - structuring it\u{2026}"
-                    case .code:    statusDetail = "Code comment detected - formatting for code\u{2026}"
-                    case .cleanup: statusDetail = "Cleaning up what was misheard - nothing rewritten\u{2026}"
+                    case .email:   statusDetail = String(localized: "Email detected - formatting and signing\u{2026}")
+                    case .message: statusDetail = String(localized: "Casual message detected - keeping it as spoken\u{2026}")
+                    case .note:    statusDetail = String(localized: "Note detected - structuring it\u{2026}")
+                    case .code:    statusDetail = String(localized: "Code comment detected - formatting for code\u{2026}")
+                    case .cleanup: statusDetail = String(localized: "Cleaning up what was misheard - nothing rewritten\u{2026}")
                     }
 
                     // Formatting verdicts may change LAYOUT, never the user's wording or tone -
@@ -886,7 +944,7 @@ final class DictationController {
                     let cleanupID = resolvedLanguageModelID(for: sessionMode)
                     if cleanupID != "apple", let m = models.model(id: cleanupID), m.runtime == .llamaCpp,
                        let url = models.downloads.localURL(for: m), !LlamaEngine.isCached(modelPath: url.path) {
-                        statusDetail = "Loading the AI model (first time only)…"
+                        statusDetail = String(localized: "Loading the AI model (first time only)…")
                     }
                     setPhase(.transforming)
                     // Fallback kickoff: normally the read already started at stop (above).
@@ -926,6 +984,33 @@ final class DictationController {
         }
     }
 
+    private func installActivationObserverIfNeeded() {
+        guard activationObserver == nil else { return }
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            self.noteActivation(app)
+        }
+    }
+
+    /// An app came forward during a session: follow it if the user did that while dictating
+    /// or right after stopping, ignore it if it merely popped up during processing.
+    private func noteActivation(_ app: NSRunningApplication) {
+        guard isRecording || isBusy,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier,
+              app.activationPolicy == .regular, !app.isTerminated else { return }
+        sessionActivations.append((app, Date()))
+        let graceEnd = (recordingEndedAt ?? .distantFuture).addingTimeInterval(Self.switchGraceAfterStop)
+        guard isRecording || Date() <= graceEnd else {
+            yapdiag("target: \(app.localizedName ?? "?") came forward during processing - ignored, delivering to \(sessionTargetApp?.localizedName ?? "nil")")
+            return
+        }
+        guard app.processIdentifier != sessionTargetApp?.processIdentifier else { return }
+        yapdiag("target: following you to \(app.localizedName ?? "?") (\(isRecording ? "while dictating" : "right after stop"))")
+        sessionTargetApp = app
+        sessionBundleID = app.bundleIdentifier
+    }
+
     /// Re-activate the app captured at record-start and wait (up to ~1.2s, via activate()) until it
     /// is actually frontmost, so a paste can't miss. No-op if we never had a target or it's already frontmost.
     /// Bring the session's target app forward. Returns false only when there IS a known target
@@ -940,6 +1025,10 @@ final class DictationController {
     /// so a paste/type can't miss. Returns true once it's frontmost (or already was).
     private func activate(_ app: NSRunningApplication) async -> Bool {
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return true }
+        // Cooperative activation: when YapToText itself is the active app (the user clicked
+        // its window or the panel's button), hand activation over explicitly; a bare
+        // activate() from the active app is refused on macOS 14 and later.
+        if NSApp.isActive { NSApp.yieldActivation(to: app) }
         app.activate()
         for attempt in 0..<48 {
             try? await Task.sleep(nanoseconds: 25_000_000)
@@ -949,7 +1038,10 @@ final class DictationController {
                 try? await Task.sleep(nanoseconds: 60_000_000)
                 return true
             }
-            if attempt == 20 { app.activate() }   // second nudge halfway through
+            if attempt == 20 {   // second nudge halfway through
+                if NSApp.isActive { NSApp.yieldActivation(to: app) }
+                app.activate()
+            }
         }
         return false
     }
@@ -971,10 +1063,10 @@ final class DictationController {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                 }
                 await TextInserter.deliver(trimmed, target: target, method: method, restoreClipboard: restore)
-                self?.announce("Inserted")
+                self?.announce(String(localized: "Inserted"))
             }
         }, discard: { [weak self] in
-            self?.announce("Discarded")
+            self?.announce(String(localized: "Discarded"))
         })
     }
 
@@ -1024,7 +1116,7 @@ final class DictationController {
         case .scratch:
             TextInserter.deleteBackward(count: last.text.count)
             lastInsert = nil
-            announce("Scratched")
+            announce(String(localized: "Scratched"))
             yapdiag("quickEdit: scratched \(last.text.count) chars")
         case .replace(let from, let to):
             guard let range = last.text.range(of: from, options: [.caseInsensitive, .backwards]) else { return false }
@@ -1032,7 +1124,7 @@ final class DictationController {
             TextInserter.deleteBackward(count: last.text.count)
             TextInserter.typeLive(corrected)
             lastInsert = (text: corrected, date: Date(), pid: last.pid)
-            announce("Replaced")
+            announce(String(localized: "Replaced"))
             yapdiag("quickEdit: replaced '\(from)' -> '\(to)'")
             // Learn from it: a mishear the user fixes repeatedly becomes a suggested dictionary
             // entry, which then primes Whisper to hear it right in the first place.
@@ -1058,7 +1150,7 @@ final class DictationController {
             // In-app scratchpad (Utility hub): hand the text to the view; never type into another app.
             scratchpadSink = nil
             sink(text)
-            announce(text.isEmpty ? "Nothing heard" : "Ready")
+            announce(text.isEmpty ? String(localized: "Nothing heard") : String(localized: "Ready"))
         } else {
             let target: OutputTarget = (settings.autoInsert && !sessionStartedFromSelf)
                 ? sessionMode.outputTarget : .clipboardOnly
@@ -1129,21 +1221,19 @@ final class DictationController {
                     yapdiag("finish: no Accessibility permission; delivering to clipboard instead")
                     deliveryTarget = .clipboardOnly
                     announcedAXFallback = true
-                    announce("Copied to clipboard. Grant Accessibility in Settings to paste automatically.")
+                    announce(String(localized: "Copied to clipboard. Grant Accessibility in Settings to paste automatically."))
                 }
                 if deliveryTarget != .clipboardOnly {
-                    // If the user DELIBERATELY switched to another app mid-dictation, honor it:
-                    // paste where their cursor is now. Only drag focus back to the origin app
-                    // when the thing in front is YapToText itself (panel click) or nothing usable.
+                    // A deliberate switch was adopted the moment it happened (noteActivation),
+                    // so the target is where the user was last looking while dictating or just
+                    // after. Whatever is in front now is brought back to that app: a window
+                    // that popped up during the decode, or YapToText's own window, never
+                    // receives the text.
                     let front = NSWorkspace.shared.frontmostApplication
-                    let frontIsSelf = front?.bundleIdentifier == Bundle.main.bundleIdentifier
-                    let userSwitched = front != nil && !frontIsSelf
-                        && front!.processIdentifier != sessionTargetApp?.processIdentifier
-                        && front!.activationPolicy == .regular
-                    if userSwitched {
-                        yapdiag("finish: user switched to \(front!.localizedName ?? "?") mid-dictation; pasting there")
+                    if let front, front.processIdentifier != sessionTargetApp?.processIdentifier {
+                        yapdiag("finish: \(front.localizedName ?? "?") is in front; returning to \(sessionTargetApp?.localizedName ?? "nil")")
                     }
-                    let focused = userSwitched ? true : await focusTargetApp()
+                    let focused = await focusTargetApp()
                     if !focused {
                         // The target never came forward. Pasting now would dump the text into
                         // whatever IS forward - worse than not pasting. Keep it on the clipboard
@@ -1174,7 +1264,13 @@ final class DictationController {
                 // the probe and with a short settle: about 150ms when the app answers.
                 if let p = presurround, p.retryAtDelivery, deliveryTargetIsFrontmost() {
                     yapdiag("insertctx: pre-read got no usable answer during the decode - reading again now that the Mac is quiet")
-                    presurround = await InsertionContext.readSurroundings(retry: true)
+                    // A pre-read whose selection check went unanswered sent no selection keys;
+                    // the check runs again here, when the app can answer, so a selected word is
+                    // replaced instead of pasted after.
+                    if p.probeUnanswered, InsertionContext.unansweredRead != nil {
+                        _ = await InsertionContext.settleUnansweredRead(budget: 0.4)
+                    }
+                    presurround = await InsertionContext.readSurroundings(retry: true, probeOnRetry: p.probeUnanswered)
                 }
                 // No usable pre-read: the user switched apps mid-dictation (the read never
                 // started, or ran in the wrong app). Read the app that is in front NOW, before
@@ -1224,7 +1320,7 @@ final class DictationController {
                     ? (announcedAXFallback ? "failed: needs Accessibility, copied instead" : "copied to clipboard")
                     : (method == .type ? "typed" : "pasted")
                 if deliveryTarget == .clipboardOnly, target != .clipboardOnly, !announcedAXFallback {
-                    announce("Copied to clipboard")
+                    announce(String(localized: "Copied to clipboard"))
                 }
                 if deliveryTarget != .clipboardOnly {
                     // Remember what just landed on screen so a follow-up "scratch that" /
@@ -1256,11 +1352,11 @@ final class DictationController {
                 }
             }
             if text.isEmpty {
-                announce("Nothing heard")
+                announce(String(localized: "Nothing heard"))
             } else if reviewHandled {
-                announce("Ready to review")
+                announce(String(localized: "Ready to review"))
             } else if !quickEditHandled {
-                announce(target == .clipboardOnly ? "Copied to clipboard" : "Inserted")
+                announce(target == .clipboardOnly ? String(localized: "Copied to clipboard") : String(localized: "Inserted"))
             }
             // Say it the moment it happens, not on a settings page later: under the measured
             // floor the words on screen may be wrong, and the fix is the microphone, not a retry.
@@ -1268,7 +1364,7 @@ final class DictationController {
                loudRoomNoticeAt.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
                 loudRoomNoticeAt = Date()
                 yapdiag(String(format: "input: loud room, %.1f dB margin, under the %.0f dB floor", InputHealth.lastSNR, InputHealth.lowMarginDB))
-                announce("Loud room: this microphone is struggling to hear you, so check the words. The Dictation page explains.")
+                announce(String(localized: "Loud room: this microphone is struggling to hear you, so check the words. The Dictation page explains."))
             }
         }
         clearRecoveryMarker()   // clean end: this session no longer needs crash recovery
@@ -1307,7 +1403,7 @@ final class DictationController {
             // Say so, visibly - and HOLD the panel open long enough to actually read it. The
             // old order dismissed the panel first, so the message flashed for a blink and
             // vanished before anyone could see what went wrong.
-            setError("Didn't catch that. Nothing was transcribed.")
+            setError(String(localized: "Didn't catch that. Nothing was transcribed."))
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 guard let self else { return }
@@ -1401,7 +1497,7 @@ final class DictationController {
         level = 0
         closeIsCancel = true
         onDismissPanel?()   // unconditional: if the setting was toggled off mid-session, the panel must still go away
-        announce(archiveCancelled ? "Cancelled, saved to History" : "Cancelled")
+        announce(archiveCancelled ? String(localized: "Canceled, saved to History") : String(localized: "Canceled"))
     }
 
     // MARK: Pause / resume
@@ -1415,7 +1511,7 @@ final class DictationController {
         pauseStartedAt = Date()
         stopAutoStopMonitor()
         level = 0
-        announce("Paused")
+        announce(String(localized: "Paused"))
     }
 
     func resume() {
@@ -1425,8 +1521,12 @@ final class DictationController {
         pausedAccumulated += Date().timeIntervalSince(pauseStartedAt)
         lastVoiceAt = Date()   // don't let the silence timer fire on the gap we just skipped
         startAutoStopMonitor()
-        announce("Resumed")
+        announce(String(localized: "Resumed"))
     }
+
+    #if DEBUG
+    func debugSimulateStall() { recorder.debugSimulateStall() }
+    #endif
 
     func togglePause() {
         guard !isPreviewInstance else { return }   // preview panels are inert
@@ -1593,7 +1693,7 @@ final class DictationController {
             return engine
         }
         yapdiag("makeEngine: no Whisper model on disk at all")
-        return UnavailableEngine(message: "No speech model is installed. Download one on the AI Models page.")
+        return UnavailableEngine(message: String(localized: "No speech model is installed. Download one on the AI Models page."))
     }
 
     /// Hard ceiling on a single dictation, independent of the user's own limits. Nobody
@@ -1618,7 +1718,7 @@ final class DictationController {
                 let elapsed = now.timeIntervalSince(self.sessionStart) - self.pausedAccumulated
                 if elapsed >= Self.runawaySessionSeconds {
                     yapdiag("autostop: RUNAWAY session hit \(Int(elapsed))s - stopping and keeping the audio")
-                    self.flashStatus("Dictation ran for \(Int(elapsed / 60)) minutes and was stopped automatically")
+                    self.flashStatus(String(localized: "Dictation ran for \(Int(elapsed / 60)) minutes and was stopped automatically"))
                     self.stop()
                     return
                 }
@@ -1711,14 +1811,14 @@ final class DictationController {
                     history.add(DictationRecord(
                         date: marker.startedAt, rawText: text, finalText: text,
                         modeName: mode.name, modeID: mode.id, durationSeconds: duration,
-                        appName: "Recovered after a crash", appBundleID: nil,
+                        appName: String(localized: "Recovered after a crash"), appBundleID: nil,
                         localeIdentifier: marker.localeIdentifier,
                         usedAI: mode.usesAI && FoundationModelsTransformer.isAvailable,
                         audioFileName: keep ? marker.audioFileName : nil))
                 }
                 if !keep { AudioStore.delete(marker.audioFileName) }
                 TextInserter.setClipboard(text)
-                announce("Recovered your last dictation. It's in History and on the clipboard.")
+                announce(String(localized: "Recovered your last dictation. It's in History and on the clipboard."))
                 yapdiag("recovery: rescued \(text.count) chars")
             } catch {
                 yapdiag("recovery: transcription failed: \(error)")
@@ -1757,7 +1857,7 @@ final class DictationController {
 
     func regenerate(_ record: DictationRecord) {
         guard let mode = regenerationMode(for: record) else {
-            announce("Turn on Apple Intelligence or download a cleanup model to regenerate.")
+            announce(String(localized: "Turn on Apple Intelligence or download a cleanup model to regenerate."))
             return
         }
         performRegenerate(record, mode: mode)
@@ -1768,7 +1868,7 @@ final class DictationController {
     func regenerateLast(using mode: Mode) {
         guard let last = history.records.first else { return }
         guard mode.usesAI, cleanupAvailable(for: mode) else {
-            announce("That mode has no cleanup engine available right now.")
+            announce(String(localized: "That mode has no cleanup engine available right now."))
             return
         }
         performRegenerate(last, mode: mode)
@@ -1794,17 +1894,17 @@ final class DictationController {
                 // insert, swap it in place - regenerate should visibly produce output, not
                 // silently park it on the clipboard (the old behavior read as "nothing happened").
                 if record.id == history.records.first?.id, await replaceLastInsert(with: text) {
-                    announce("Regenerated and replaced")
+                    announce(String(localized: "Regenerated and replaced"))
                 } else {
                     TextInserter.setClipboard(text)
-                    announce("Regenerated. Copied to clipboard.")
+                    announce(String(localized: "Regenerated. Copied to clipboard."))
                 }
                 // Brief green "updated" flash on the row / the menu-bar "Copied" state.
                 lastRegeneratedID = record.id
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 if lastRegeneratedID == record.id { lastRegeneratedID = nil }
             } catch {
-                announce("Couldn't regenerate. \(Self.message(for: error))")
+                announce(String(localized: "Couldn't regenerate. \(Self.message(for: error))"))
             }
         }
     }
@@ -1837,7 +1937,7 @@ final class DictationController {
     /// pipeline, and insert the fresh result in its place. One key, whole loop.
     func redoLastInsertion() {
         guard canRegenerateLast else {
-            announce("Nothing recent to redo")
+            announce(String(localized: "Nothing recent to redo"))
             return
         }
         regenerateLast()
@@ -1998,7 +2098,7 @@ final class DictationController {
            models.downloads.localURL(for: model) != nil {
             return model.displayName
         }
-        if FoundationModelsTransformer.isAvailable { return "Apple Intelligence" }
+        if FoundationModelsTransformer.isAvailable { return String(localized: "Apple Intelligence") }
         if let fallback = models.languageModels.first(where: { $0.runtime == .llamaCpp && models.downloads.localURL(for: $0) != nil }) {
             return fallback.displayName
         }
@@ -2206,6 +2306,29 @@ final class DictationController {
             yapdiag("cleanup: discarded output that dropped content (\(inWords)->\(outWords) words), using raw transcript")
             return text
         }
+        // LOOP guards (preserving modes): a looping transcript made the model copy the loop
+        // forty times over, garble the end, and stop mid-sentence at its token limit (Oct 3
+        // 2026, 465 words in, 1,132 out). Growth past 1.3x plus 20 words, any sentence
+        // repeated more than the raw text repeats it, or a long output that ends mid-sentence
+        // when the raw text did not, all mean the raw transcript is the better text.
+        if preserving {
+            if CleanupGuards.growsTooMuch(inWords: inWords, outWords: outWords) {
+                yapdiag("cleanup: discarded output that grew too much (\(inWords)->\(outWords) words), using raw transcript")
+                return text
+            }
+            if CleanupGuards.repeatsMoreThanInput(raw: text, output: cleaned) {
+                yapdiag("cleanup: discarded output that repeats a sentence more than the dictation did, using raw transcript")
+                return text
+            }
+            if CleanupGuards.endsMidSentence(raw: text, output: cleaned) {
+                yapdiag("cleanup: discarded output that stopped mid-sentence, using raw transcript")
+                return text
+            }
+            if CleanupGuards.dropsTail(raw: text, output: cleaned) {
+                yapdiag("cleanup: discarded output that left the end of the dictation out, using raw transcript")
+                return text
+            }
+        }
         // PARAPHRASE-DRIFT guard (Clean Up only - other modes rewrite by design): cleanup
         // must PRESERVE the user's wording, but a small model on a long input slides into
         // formalizing paraphrase ("make sure to" -> "ensure that", invented connectives).
@@ -2275,7 +2398,7 @@ final class DictationController {
                 try await MediaAudioDecoder.decode(url: url) { buffer in engine.append(buffer) }
                 let raw = try await engine.endSession()
                 guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    setError("No speech found in \(url.lastPathComponent).")
+                    setError(String(localized: "No speech found in \(url.lastPathComponent)."))
                     return
                 }
                 setPhase(.transforming)
@@ -2301,11 +2424,11 @@ final class DictationController {
                         appName: url.lastPathComponent, appBundleID: nil, localeIdentifier: locale,
                         usedAI: mode.usesAI && FoundationModelsTransformer.isAvailable, audioFileName: nil))
                 }
-                announce(inserted ? "Transcribed \(url.lastPathComponent). Inserted."
-                                  : "Transcribed \(url.lastPathComponent). Copied to clipboard.")
+                announce(inserted ? String(localized: "Transcribed \(url.lastPathComponent). Inserted.")
+                                  : String(localized: "Transcribed \(url.lastPathComponent). Copied to clipboard."))
                 setPhase(.idle)
             } catch {
-                setError("Couldn't transcribe \(url.lastPathComponent). \(Self.message(for: error))")
+                setError(String(localized: "Couldn't transcribe \(url.lastPathComponent). \(Self.message(for: error))"))
             }
         }
     }
@@ -2386,7 +2509,7 @@ final class DictationController {
         try await MediaAudioDecoder.decode(url: url) { engine.append($0) }
         let raw = try await engine.endSession()
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw TranscriptionError.unavailable("No speech was found in \(url.lastPathComponent).")
+            throw TranscriptionError.unavailable(String(localized: "No speech was found in \(url.lastPathComponent)."))
         }
         return await polish(raw, mode: mode, context: TransformContext(userName: promptUserName(for: mode)))
     }
@@ -2474,10 +2597,10 @@ final class DictationController {
         updateMenuAnimation(for: new)
         if new == .idle { onDidBecomeIdle?() }
         switch new {
-        case .recording: announce("Listening")
-        case .transcribing: announce("Transcribing")
-        case .transforming: announce("Cleaning up")
-        case .error(let message): announce("Dictation error. \(message)")
+        case .recording: announce(String(localized: "Listening"))
+        case .transcribing: announce(String(localized: "Transcribing"))
+        case .transforming: announce(String(localized: "Cleaning up"))
+        case .error(let message): announce(String(localized: "Dictation error. \(message)"))
         case .inserting, .idle:
             break   // completion and cancel are announced with precise wording at the call site
         }

@@ -69,7 +69,7 @@ struct ModesView: View {
                         state.modeStore.undoLastChange()
                     } label: { Image(systemName: "arrow.uturn.backward") }
                         .disabled(!state.modeStore.canUndo)
-                        .help("Undo the last mode change (rename, prompt edit, reorder, delete)")
+                        .help("Undo the last mode change (rename, prompt edit, reorder, delete)").accessibilityLabel("Undo the last mode change (rename, prompt edit, reorder, delete)")
                 }
                 ToolbarItem {
                     Menu {
@@ -104,7 +104,7 @@ struct ModesView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                Toggle("", isOn: $settings.autoContextMode)
+                Toggle("Auto mode", isOn: $settings.autoContextMode)
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .onChange(of: settings.autoContextMode) { state.controller.refreshActiveMode() }
                 Image(systemName: "chevron.right")
@@ -141,7 +141,7 @@ struct ModesView: View {
                 }
                 Spacer(minLength: 6)
                 if isActive {
-                    StatusPill(text: "Current", tint: .green)
+                    StatusPill(text: String(localized: "Current"), tint: .green)
                         .accessibilityLabel("Current mode")
                 }
                 // AI cleanup, right on the row: one click to make any mode verbatim and
@@ -185,7 +185,7 @@ struct ModesView: View {
     // MARK: Actions
 
     private func newMode() {
-        let mode = Mode(name: "New Mode", iconSystemName: "wand.and.stars",
+        let mode = Mode(name: String(localized: "New Mode"), iconSystemName: "wand.and.stars",
                         summary: "", usesAI: true, instructions: "", isBuiltIn: false)
         state.modeStore.addCustomMode(mode)
         path = [mode.id]

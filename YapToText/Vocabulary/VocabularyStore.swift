@@ -98,11 +98,11 @@ final class VocabularyStore {
             learned = snap.learned ?? []
         } else if let legacy = Persistence.load(LegacySnapshot.self, from: VocabularyStore.fileName) {
             // Migrate the old flat replacement list into a default dictionary.
-            dictionaries = [VocabDictionary(name: "General", enabled: true, replacements: legacy.replacements)]
+            dictionaries = [VocabDictionary(name: String(localized: "General"), enabled: true, replacements: legacy.replacements)]
         } else {
             // True first run: start with the useful examples, which double as a demonstration
             // of what dictionaries are for.
-            dictionaries = [VocabDictionary(name: "General", enabled: true,
+            dictionaries = [VocabDictionary(name: String(localized: "General"), enabled: true,
                                             replacements: VocabularyStore.starterReplacements)]
         }
         // An install that has NEVER added a replacement gets the starters too (they lose
@@ -247,7 +247,7 @@ final class VocabularyStore {
 
     @discardableResult
     func addDictionary(name: String) -> VocabDictionary {
-        let dict = VocabDictionary(name: name.trimmingCharacters(in: .whitespaces).isEmpty ? "Dictionary" : name)
+        let dict = VocabDictionary(name: name.trimmingCharacters(in: .whitespaces).isEmpty ? String(localized: "Dictionary") : name)
         dictionaries.append(dict)
         save()
         return dict
@@ -267,7 +267,7 @@ final class VocabularyStore {
 
     func deleteDictionary(_ dict: VocabDictionary) {
         dictionaries.removeAll { $0.id == dict.id }
-        if dictionaries.isEmpty { dictionaries = [VocabDictionary(name: "General")] }
+        if dictionaries.isEmpty { dictionaries = [VocabDictionary(name: String(localized: "General"))] }
         save()
     }
 
@@ -320,7 +320,7 @@ final class VocabularyStore {
 
     /// Convenience: add to the first dictionary (used for quick adds and by tests).
     func addReplacement(_ r: Replacement) {
-        if dictionaries.isEmpty { dictionaries = [VocabDictionary(name: "General")] }
+        if dictionaries.isEmpty { dictionaries = [VocabDictionary(name: String(localized: "General"))] }
         dictionaries[0].replacements.append(r)
         save()
     }

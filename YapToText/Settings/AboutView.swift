@@ -43,7 +43,7 @@ struct AboutView: View {
                     ForEach(Changelog.entries) { entry in
                         VStack(alignment: .leading, spacing: 5) {
                             Text(entry.version).font(.subheadline.weight(.semibold))
-                            ForEach(entry.points, id: \.self) { point in
+                            ForEach(entry.texts, id: \.self) { point in
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text("\u{2022}").foregroundStyle(.secondary)
                                     ChangelogPoint(text: point)

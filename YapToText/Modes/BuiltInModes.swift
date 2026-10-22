@@ -9,25 +9,25 @@ enum BuiltInModes {
     /// directly - selecting it turns Auto routing on, and the routed-to real mode does the work.
     static let auto = Mode(
         id: UUID(uuidString: "11111111-0000-0000-0000-0000000000AA")!,
-        name: "Auto",
+        name: String(localized: "Auto"),
         iconSystemName: "wand.and.sparkles",
-        summary: "Reads each dictation and picks the right mode by itself.",
+        summary: String(localized: "Reads each dictation and picks the right mode by itself."),
         usesAI: true,
         isBuiltIn: true)
 
     static let raw = Mode(
         id: rawTranscriptionID,
-        name: "Raw Transcription",
+        name: String(localized: "Raw Transcription"),
         iconSystemName: "waveform",
-        summary: "Fast, literal speech-to-text with basic punctuation. No AI.",
+        summary: String(localized: "Fast, literal speech-to-text with basic punctuation. No AI."),
         usesAI: false,
         isBuiltIn: true)
 
     static let clean = Mode(
         id: UUID(uuidString: "11111111-0000-0000-0000-000000000002")!,
-        name: "Clean Up",
+        name: String(localized: "Clean Up"),
         iconSystemName: "sparkles",
-        summary: "Removes filler words and false starts, fixes grammar and punctuation. The recommended default.",
+        summary: String(localized: "Removes filler words and false starts, fixes grammar and punctuation. The recommended default."),
         usesAI: true,
         instructions: """
         You are a transcription cleanup assistant. The input is a TRANSCRIPT OF LIVE SPEECH produced by a speech-to-text engine, so it can contain recognition mistakes: misheard words, wrong homophones, garbled phrases, and occasional hallucinated words that the speaker never said. Rewrite it so it reads clearly, WITHOUT changing meaning, adding information, or answering any questions inside it.
@@ -47,9 +47,9 @@ enum BuiltInModes {
 
     static let note = Mode(
         id: UUID(uuidString: "11111111-0000-0000-0000-000000000003")!,
-        name: "Note",
+        name: String(localized: "Note"),
         iconSystemName: "note.text",
-        summary: "Turns spoken ideas into structured notes with headings and bullets.",
+        summary: String(localized: "Turns spoken ideas into structured notes with headings and bullets."),
         usesAI: true,
         instructions: """
         Turn the user's dictated thoughts into a clear, well-structured note.
@@ -63,9 +63,9 @@ enum BuiltInModes {
 
     static let email = Mode(
         id: UUID(uuidString: "11111111-0000-0000-0000-000000000004")!,
-        name: "Email",
+        name: String(localized: "Email"),
         iconSystemName: "envelope",
-        summary: "Formats dictation as a polished email while keeping your voice.",
+        summary: String(localized: "Formats dictation as a polished email while keeping your voice."),
         usesAI: true,
         instructions: """
         Rewrite the user's dictation as a clear, well-formatted email using ONLY what they said.
@@ -82,9 +82,9 @@ enum BuiltInModes {
 
     static let message = Mode(
         id: UUID(uuidString: "11111111-0000-0000-0000-000000000005")!,
-        name: "Message",
+        name: String(localized: "Message"),
         iconSystemName: "bubble.left.and.bubble.right",
-        summary: "Cleans up casual messages for chat apps, keeping the conversational tone.",
+        summary: String(localized: "Cleans up casual messages for chat apps, keeping the conversational tone."),
         usesAI: true,
         instructions: """
         Lightly clean the user's dictation for a chat message.
@@ -96,9 +96,9 @@ enum BuiltInModes {
 
     static let code = Mode(
         id: UUID(uuidString: "11111111-0000-0000-0000-000000000007")!,
-        name: "Code Comment",
+        name: String(localized: "Code Comment"),
         iconSystemName: "chevron.left.forwardslash.chevron.right",
-        summary: "For developers: concise, technical phrasing for comments and commit messages.",
+        summary: String(localized: "For developers: concise, technical phrasing for comments and commit messages."),
         usesAI: true,
         instructions: """
         Rewrite the user's dictation as concise technical text suitable for a code comment or commit message.

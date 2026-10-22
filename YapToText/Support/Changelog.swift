@@ -7,7 +7,8 @@ enum Changelog {
     struct Entry: Identifiable {
         var id: String { version }
         let version: String
-        let points: [String]
+        let points: [LocalizedStringResource]
+        var texts: [String] { points.map { String(localized: $0) } }
     }
 
     /// The running app's own version string, straight from the bundle: "1.0 (4)".
@@ -24,6 +25,19 @@ enum Changelog {
     }
 
     static let entries: [Entry] = [
+        Entry(version: "1.5.4 (22)", points: [
+            "YapToText is now in 27 languages: English, then Arabic, Chinese (Simplified and Traditional), Czech, Danish, Dutch, Finnish, French, German, Hebrew, Hungarian, Indonesian, Italian, Japanese, Korean, Norwegian, Polish, Portuguese (Brazil), Russian, Slovak, Spanish, Swedish, Thai, Turkish, Ukrainian, and Vietnamese. Pick one in Settings > General, or let it follow your Mac",
+            "Improved VoiceOver and Voice Control support: every control, slider, color swatch, and pop-up element now has a spoken name, the dictation pop-up and Quick Edit card are announced by name, and the keyboard focus ring is back for Full Keyboard Access",
+            "Fixed a crash when Intelligent Insert put your clipboard back after a slow app, such as Gmail in Safari",
+            "Fixed long dictations going silent partway through: if the microphone stops sending audio, YapToText restarts it within seconds and the dictation keeps going",
+            "Your words land in the app you switched to while talking, and never in a window that only popped up while they were being transcribed",
+            "Inserting into an empty text field, such as a Slack or Messages composer, no longer waits several seconds: Intelligent Insert's read of the surrounding text returns at once when the field answers with nothing",
+            "Dictating over a selected word in a web app replaces the word again, instead of landing after it when the page is slow to answer",
+            "Digits spoken one at a time, such as a verification code, go in as bare digits",
+            "A long dictation that loops a pair of sentences is caught, and cleanup output that grows past the dictation, repeats it, or stops mid-sentence is replaced by the raw transcript",
+            "Dictations longer than 30 seconds no longer lose words at each 30-second mark, or their final second: the audio is now cut at pauses before transcription",
+            "Clean Up output that leaves off the end of a dictation is replaced by the full transcript, for increased precision on long passages",
+        ]),
         Entry(version: "1.5.3 (21)", points: [
             "The dictation pop-up and the Quick Edit pop-up can be dragged again on macOS 27",
             "Rebuilt media pausing: a paused video stays paused when you dictate, and videos in Safari and web-based apps now pause and resume too",

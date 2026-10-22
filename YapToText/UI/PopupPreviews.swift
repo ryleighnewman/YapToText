@@ -28,7 +28,7 @@ enum PreviewSpeech {
 /// The recording pop-up's card, a flat translucent fill instead of Liquid Glass. The live
 /// panel keeps its glass in a separate never-re-rendering graph because per-frame renders
 /// inside a glass hierarchy are the macOS 26.5 crash path, and a system material inside a
-/// scrolled page ghosts neighbouring controls. Shape, rim, tint, and shadow match.
+/// scrolled page ghosts neighboring controls. Shape, rim, tint, and shadow match.
 struct PreviewChrome: View {
     var size: CGSize
     var alignment: Alignment
@@ -74,7 +74,7 @@ struct DictationPopupPreview: View {
     @State private var rgbPhase = 0.0
     @State private var rgbTick = 0
 
-    private static let script = "The waveform follows your voice, and your words land here while you are still talking."
+    private static let script = String(localized: "The waveform follows your voice, and your words land here while you are still talking.")
 
     private var tint: Color? {
         _ = rgbTick
@@ -215,7 +215,7 @@ struct QuickEditPopupPreview: View {
     @State private var fake = AudioVisualData(bands: 26)
     @State private var driver: Task<Void, Never>?
 
-    private static let request = "make this sound formal"
+    private static let request = String(localized: "make this sound formal")
 
     var body: some View {
         QuickEditPopupView(model: model, controller: state.controller, settings: settings, previewData: fake)
@@ -251,7 +251,7 @@ struct QuickEditPopupPreview: View {
                 case 110:
                     model.stage = .working(Self.request)
                 case 170:
-                    model.stage = .result("Done", success: true)
+                    model.stage = .result(String(localized: "Done"), success: true)
                 default:
                     break
                 }

@@ -122,13 +122,13 @@ final class ModelDownloadManager {
         }
         guard let destination = destinations[id] else {
             try? FileManager.default.removeItem(at: stagedURL)
-            states[id] = .failed("Missing destination")
+            states[id] = .failed(String(localized: "Missing destination"))
             return
         }
         if let expected = expectedHashes[id] ?? nil, let actual = Self.sha256(of: stagedURL),
            actual.caseInsensitiveCompare(expected) != .orderedSame {
             try? FileManager.default.removeItem(at: stagedURL)
-            states[id] = .failed("Checksum mismatch")
+            states[id] = .failed(String(localized: "Checksum mismatch"))
             return
         }
         do {

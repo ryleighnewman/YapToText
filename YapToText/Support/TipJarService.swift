@@ -117,5 +117,5 @@ final class TipJarService: ObservableObject {
 
 enum TipJarError: LocalizedError {
     case unverified
-    var errorDescription: String? { "The App Store returned an unverified transaction. Tip was not processed." }
+    var errorDescription: String? { String(localized: "The App Store returned an unverified transaction. Tip was not processed.") }
 }

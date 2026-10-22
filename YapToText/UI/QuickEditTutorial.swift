@@ -20,7 +20,7 @@ struct QuickEditTutorial: View {
             HStack(spacing: 8) {
                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                 Text("Quick Edit key").font(.callout.weight(.medium))
-                Toggle("", isOn: Binding(
+                Toggle("Quick Edit key", isOn: Binding(
                     get: { settings.quickEditTrigger != .off },
                     set: { on in
                         settings.quickEditTrigger = on ? settings.quickEditPreferredTrigger : .off
@@ -28,7 +28,7 @@ struct QuickEditTutorial: View {
                     }))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 if settings.quickEditTrigger != .off {
-                    Picker("", selection: $settings.quickEditTrigger) {
+                    Picker("Quick Edit key behavior", selection: $settings.quickEditTrigger) {
                         ForEach(ModifierTrigger.allCases.filter { $0 != .off }) { Text($0.label).tag($0) }
                     }
                     .labelsHidden().fixedSize().controlSize(.small)
@@ -58,10 +58,10 @@ struct QuickEditTutorial: View {
             QuickEditPopupPreview(settings: settings)
 
             VStack(alignment: .leading, spacing: 5) {
-                exampleRow("\u{201C}Capitalize this word\u{201D}")
-                exampleRow("\u{201C}Make this past tense\u{201D}")
-                exampleRow("\u{201C}Make it sound more friendly\u{201D}")
-                exampleRow("\u{201C}Add this to my dictionary\u{201D}", note: "so it's always spelled and capitalized this way")
+                exampleRow(String(localized: "\u{201C}Capitalize this word\u{201D}"))
+                exampleRow(String(localized: "\u{201C}Make this past tense\u{201D}"))
+                exampleRow(String(localized: "\u{201C}Make it sound more friendly\u{201D}"))
+                exampleRow(String(localized: "\u{201C}Add this to my dictionary\u{201D}"), note: String(localized: "so it's always spelled and capitalized this way"))
             }
             .padding(10)
             .innerWell(radius: Metrics.sectionRadius)
@@ -155,14 +155,14 @@ struct AppearanceQuickPicker: View {
                 }
                 .buttonStyle(.plain).help("Follow the system accent color")
                 presetRow(selected: settings.accentColorHex) { hex in choose { settings.accentColorHex = hex } }
-                ColorPicker("", selection: Binding(
+                ColorPicker("Custom accent color", selection: Binding(
                     get: { state.settings.customAccent ?? .accentColor },
                     set: { c in choose { settings.accentColorHex = c.hexString } }),
                             supportsOpacity: false)
                     .labelsHidden().controlSize(.small).help("Pick any color")
             }
 
-            Picker("", selection: $which) {
+            Picker("Preview", selection: $which) {
                 Text("Dictation pop-up").tag(Which.dictation)
                 Text("Quick Edit card").tag(Which.quickEdit)
             }
@@ -195,13 +195,13 @@ struct AppearanceQuickPicker: View {
                         Text("Background color").font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         presetRow(selected: settings.panelTintHex) { hex in choose { settings.panelTintHex = hex } }
-                        ColorPicker("", selection: Binding(
+                        ColorPicker("Background color", selection: Binding(
                             get: { state.settings.panelTint ?? .blue },
                             set: { c in choose { settings.panelTintHex = c.hexString } }), supportsOpacity: false)
                             .labelsHidden().controlSize(.small)
                     }
                 }
-                // The third colour: the wave itself, separate from the app accent and from the
+                // The third color: the wave itself, separate from the app accent and from the
                 // glass it floats on - with its own vividness dial and RGB controls.
                 Picker("Pop-up waveform", selection: Binding(
                     get: { settings.waveColorStyle },
@@ -214,7 +214,7 @@ struct AppearanceQuickPicker: View {
                         Text("Wave color").font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         presetRow(selected: settings.waveColorHex) { hex in choose { settings.waveColorHex = hex } }
-                        ColorPicker("", selection: Binding(
+                        ColorPicker("Wave color", selection: Binding(
                             get: { state.settings.waveTint ?? state.settings.customAccent ?? .accentColor },
                             set: { c in choose { settings.waveColorHex = c.hexString } }),
                                     supportsOpacity: false)
@@ -225,17 +225,20 @@ struct AppearanceQuickPicker: View {
                     Text("Wave strength").font(.caption).foregroundStyle(.secondary)
                     Slider(value: Binding(get: { settings.waveStrength },
                                           set: { v in choose { settings.waveStrength = v } }), in: 0.15...1)
+                        .accessibilityLabel("Wave strength")
                 }
                 if settings.waveColorStyle == .rgb {
                     HStack {
                         Text("RGB speed").font(.caption).foregroundStyle(.secondary)
                         Slider(value: Binding(get: { settings.waveRGBSpeed },
                                               set: { v in choose { settings.waveRGBSpeed = v } }), in: 0.2...3)
+                            .accessibilityLabel("RGB speed")
                     }
                     HStack {
                         Text("RGB spread").font(.caption).foregroundStyle(.secondary)
                         Slider(value: Binding(get: { settings.waveRGBSpread },
                                               set: { v in choose { settings.waveRGBSpread = v } }), in: 0...0.33)
+                            .accessibilityLabel("RGB spread")
                     }
                 }
             } else {
@@ -252,7 +255,7 @@ struct AppearanceQuickPicker: View {
                         Text("Background color").font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         presetRow(selected: settings.quickEditTintHex) { hex in choose { settings.quickEditTintHex = hex } }
-                        ColorPicker("", selection: Binding(
+                        ColorPicker("Background color", selection: Binding(
                             get: { state.settings.quickEditTintHex.flatMap { Color(hexString: $0) } ?? .purple },
                             set: { c in choose { settings.quickEditTintHex = c.hexString } }), supportsOpacity: false)
                             .labelsHidden().controlSize(.small)
@@ -269,7 +272,7 @@ struct AppearanceQuickPicker: View {
                         Text("Wave color").font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         presetRow(selected: settings.quickEditWaveColorHex) { hex in choose { settings.quickEditWaveColorHex = hex } }
-                        ColorPicker("", selection: Binding(
+                        ColorPicker("Wave color", selection: Binding(
                             get: { state.settings.quickEditWaveColorHex.flatMap { Color(hexString: $0) } ?? .purple },
                             set: { c in choose { settings.quickEditWaveColorHex = c.hexString } }), supportsOpacity: false)
                             .labelsHidden().controlSize(.small)
@@ -279,6 +282,7 @@ struct AppearanceQuickPicker: View {
                     Text("Wave strength").font(.caption).foregroundStyle(.secondary)
                     Slider(value: Binding(get: { settings.quickEditWaveStrength },
                                           set: { v in choose { settings.quickEditWaveStrength = v } }), in: 0.15...1)
+                        .accessibilityLabel("Wave strength")
                 }
                 Text("Its own colors, so an edit never looks like a dictation. Position, snap-back, and more live on the Quick Edit page.")
                     .font(.caption2).foregroundStyle(.tertiary)
@@ -325,7 +329,7 @@ struct AppearanceQuickPicker: View {
                 Circle().fill(preset.color).frame(width: 16, height: 16)
                     .overlay(Circle().strokeBorder(.primary.opacity(selected == preset.hex ? 0.6 : 0), lineWidth: 1.5))
             }
-            .buttonStyle(.plain).help(preset.name)
+            .buttonStyle(.plain).help(preset.name).accessibilityLabel(Text(verbatim: preset.name))
         }
     }
 
@@ -373,10 +377,10 @@ struct WhatsNewView: View {
             }
             if let latest = Changelog.entries.first {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(latest.points.prefix(10), id: \.self) { point in
+                    ForEach(Array(latest.points.prefix(10).enumerated()), id: \.offset) { _, point in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text("\u{2022}").foregroundStyle(.secondary)
-                            ChangelogPoint(text: point, font: .caption)
+                            ChangelogPoint(text: String(localized: point), font: .caption)
                         }
                     }
                     Text("The full list is under the version number on the Home page.")

@@ -29,75 +29,86 @@ inside the app, so it works offline from the first launch. Auto mode reads each 
 and shapes it for where it is going, Quick Edit rewrites any selected text by voice, and
 everything else in the sidebar is optional.
 
-## What's new in 1.5.3
+## What's new in 1.5.4
 
-- The dictation pop-up and the Quick Edit pop-up can be dragged again on macOS 27
-- Rebuilt media pausing: a paused video stays paused when you dictate, and videos in Safari and web-based apps now pause and resume too
+- YapToText is now in 27 languages: English, then Arabic, Chinese (Simplified and Traditional), Czech, Danish, Dutch, Finnish, French, German, Hebrew, Hungarian, Indonesian, Italian, Japanese, Korean, Norwegian, Polish, Portuguese (Brazil), Russian, Slovak, Spanish, Swedish, Thai, Turkish, Ukrainian, and Vietnamese. Pick one in Settings > General, or let it follow your Mac
+- Improved VoiceOver and Voice Control support: every control, slider, color swatch, and pop-up element now has a spoken name, the dictation pop-up and Quick Edit card are announced by name, and the keyboard focus ring is back for Full Keyboard Access
+- Fixed a crash when Intelligent Insert put your clipboard back after a slow app, such as Gmail in Safari
+- Fixed long dictations going silent partway through: if the microphone stops sending audio, YapToText restarts it within seconds and the dictation keeps going
+- Your words land in the app you switched to while talking, and never in a window that only popped up while they were being transcribed
+- Inserting into an empty text field, such as a Slack or Messages composer, no longer waits several seconds: Intelligent Insert's read of the surrounding text returns at once when the field answers with nothing
+- Dictating over a selected word in a web app replaces the word again, instead of landing after it when the page is slow to answer
+- Digits spoken one at a time, such as a verification code, go in as bare digits
+- A long dictation that loops a pair of sentences is caught, and cleanup output that grows past the dictation, repeats it, or stops mid-sentence is replaced by the raw transcript
+- Dictations longer than 30 seconds no longer lose words at each 30-second mark, or their final second: the audio is now cut at pauses before transcription
+- Clean Up output that leaves off the end of a dictation is replaced by the full transcript, for increased precision on long passages
 
 Full release history in [CHANGELOG.md](CHANGELOG.md), and the notes for every version are in the
 [release notes on yaptotext.com](https://yaptotext.com/whats-new).
 
 ## A tour
 
-![Yap it. Bam. It's typed!](Marketing/posters-v5/01-hero.jpg)
+![Powerful local dictation. Yap it. Bam. It's typed!](Marketing/posters/01-hero.jpg)
 
 Open YapToText and the whole app is on one screen: your dictation and Quick Edit keys,
 Intelligent Insert, the after-transcription switches, and your stats. The floating panel
 shows your voice as a live wave while you talk, in whichever layout and color you like.
 
-![I created this because my hands don't work](Marketing/posters-v5/02-punchline.jpg)
+![I created this because my hands don't work](Marketing/posters/02-punchline.jpg)
 
 YapToText is an accessibility tool first. One key runs everything, that key can be any
-key, and dictation can fully replace typing. It works alongside VoiceOver and Voice
-Control, and it was built by someone who depends on it every day.
+key, and dictation can fully replace typing. It works alongside VoiceOver, Voice Control,
+and Full Keyboard Access, and it was built by someone who depends on it every day.
 
-![Edit anything by voice](Marketing/posters-v5/03-quick-edit.jpg)
+![Edit anything by voice](Marketing/posters/03-quick-edit.jpg)
 
 Select some text in any app, tap your Quick Edit key, and say the change: shorten it,
 fix the tone, capitalize it, translate it. The result lands right where the selection
-was. Small, exact requests like "change this to hearing aids" are instant and skip the AI.
+was. Small, exact requests like "change this to Thursday" are instant and skip the AI.
 
-![It hears you through anything](Marketing/posters-v5/04-listening-engine.jpg)
+![It hears you through anything](Marketing/posters/04-listening-engine.jpg)
 
 Background noise is removed before transcription, quiet voices are lifted to full
 clarity by measuring your voice against the room, and the decoder digs deeper when the
 room gets loud. Whispering next to a running 3D printer transcribes cleanly.
 
-![The whole app, right in your menu bar](Marketing/posters-v5/05-menubar.jpg)
+![It fits right in](Marketing/posters/05-intelligent-insert.jpg)
+
+Intelligent Insert reads the words around your cursor before your text lands. Dictate a
+phrase into the middle of a sentence and it starts lowercase, takes one clean space, and
+leaves no stray period behind.
+
+![Teach it your words](Marketing/posters/06-personalize.jpg)
+
+Dictionaries fix the names it mishears, and fixing the same word twice makes the app
+offer to remember it. Commands type anything you say: "insert phone number" types your
+real number, "insert smiley face" types the emoji.
+
+![The whole app, right in your menu bar](Marketing/posters/07-menubar.jpg)
 
 Click the capybara to start a dictation, switch mode or microphone, transcribe a file,
 regenerate your last dictation as any mode, or insert it again. His speech bubble turns
 red while recording, spins while transcribing, and flashes green when your text lands.
 
-![AI pipelines, tuned your way](Marketing/posters-v5/06-ai-pipelines.jpg)
+![AI pipelines, tuned your way](Marketing/posters/08-ai-pipelines.jpg)
 
 Every mode is its own pipeline: transcription, dictionaries, cleanup model, output style.
 Raw Transcription, Clean Up, Note, Email, Message, and Code Comment are built in, every one is
 editable in plain language, and you can press 1 to 9 mid-dictation to switch, or let
 Auto pick for you.
 
-![Watch the pipeline work](Marketing/posters-v5/07-pipeline-live.jpg)
+![Watch the pipeline work](Marketing/posters/09-pipeline-live.jpg)
 
 Every dictation keeps its receipts: the audio, what the speech model heard, what the AI
-delivered, and the model, mode, and timings behind it. Nothing is a mystery.
+delivered, and the model, mode, and timings behind it. Every dictation is saved on your
+Mac with playback, search, and export, and if the app or the Mac dies mid-sentence, the
+audio survives and is transcribed on the next launch.
 
-![Nothing leaves your Mac](Marketing/posters-v5/08-privacy.jpg)
+![Nothing leaves your Mac](Marketing/posters/10-privacy.jpg)
 
 On-device speech recognition, local AI models built in, no analytics, no tracking, no
 accounts. The code is open source under GPL-3.0, so every one of those claims can be
 checked instead of trusted.
-
-![Teach it your words](Marketing/posters-v5/09-personalize.jpg)
-
-Dictionaries fix the names it mishears, and fixing the same word twice makes the app
-offer to remember it. Commands type anything you say: "insert phone number" types your
-real number, "insert smiley face" types the emoji.
-
-![Never lose a word. Ever.](Marketing/posters-v5/10-history.jpg)
-
-Every dictation is saved on your Mac with playback, search, and export. If the
-app or the Mac dies mid-sentence, the audio survives and is transcribed on the next
-launch, so the words are waiting for you in History.
 
 ## How it compares
 
@@ -138,8 +149,7 @@ The dated comparison lives at [yaptotext.com/compare](https://yaptotext.com/comp
 - **Send it for me.** Choose a key per app (Return or Command Return) that is pressed the
   moment your words land, so a dictated message goes out on its own.
 - **Hears you through anything.** Background-noise removal, adaptive amplification that
-  measures your voice against the room, and deeper decoding when it gets loud. Bluetooth
-  hearing aids and headsets keep their full sound quality.
+  measures your voice against the room, and deeper decoding when it gets loud.
 - **Fully on device.** The speech model and the cleanup model ship inside the app. It
   works offline from the first launch. Bring your own Whisper or GGUF model if you like,
   and let the models follow your power source on the Energy page.
@@ -148,8 +158,9 @@ The dated comparison lives at [yaptotext.com/compare](https://yaptotext.com/comp
 - **Never lose a word.** Crash recovery rescues interrupted dictations. Full history with
   playback, search, export, and statistics, all computed locally.
 - **Transcribe any file.** Drop in audio or video, get the text.
-- **Built for accessibility.** Works with VoiceOver and Voice Control, one key runs
-  everything, and dictation can fully replace typing.
+- **27 languages.** The app speaks yours: pick one in Settings, or let it follow your Mac.
+- **Built for accessibility.** Works with VoiceOver, Voice Control, and Full Keyboard
+  Access, one key runs everything, and dictation can fully replace typing.
 
 ## Requirements
 
@@ -248,7 +259,7 @@ Yes, from the first launch. The speech model and the AI cleanup model are inside
 
 **Does my voice get sent anywhere?**
 No. There are no network calls at all unless you click a button to download an optional
-model. The Privacy section below documents every byte.
+model. The Privacy section above documents every byte.
 
 **Is it really free? What is the catch?**
 No catch. No paid tier, no locked features, no ads, no data collection. There is a tip jar

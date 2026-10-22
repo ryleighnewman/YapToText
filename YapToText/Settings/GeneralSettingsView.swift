@@ -16,7 +16,7 @@ struct GeneralSettingsView: View {
                 // The dictation key and the Quick Edit key live on their own pages, where their
                 // behavior is explained; this card holds everything else, one visual grammar.
                 LinkCaption("The dictation key is on the [Dictation page](yap://dictation) and the Quick Edit key on the [Quick Edit page](yap://quickEdit).")
-                hotkeyRow("Backup shortcut", combo: startStop, allowsEmpty: false,
+                hotkeyRow(String(localized: "Backup shortcut"), combo: startStop, allowsEmpty: false,
                           defaultCombo: .default,
                           onChange: { AppDelegate.shared?.reloadHotkey() })
                 SubOptions {
@@ -34,16 +34,16 @@ struct GeneralSettingsView: View {
                 Divider().opacity(0.25).padding(.vertical, 6)
 
                 // GROUP 2 - editing by voice.
-                hotkeyRow("Redo last dictation", combo: $settings.redoLastHotkey, allowsEmpty: true,
+                hotkeyRow(String(localized: "Redo last dictation"), combo: $settings.redoLastHotkey, allowsEmpty: true,
                           onChange: { AppDelegate.shared?.reloadRedoHotkey() })
 
                 Divider().opacity(0.25).padding(.vertical, 6)
 
                 // GROUP 3 - while dictating.
-                hotkeyRow("Pause / resume", combo: $settings.pauseHotkey, allowsEmpty: true,
-                          placeholder: "Space (default)",
+                hotkeyRow(String(localized: "Pause / resume"), combo: $settings.pauseHotkey, allowsEmpty: true,
+                          placeholder: String(localized: "Space (default)"),
                           onChange: { AppDelegate.shared?.reloadPauseHotkey() })
-                hotkeyRow("Cycle mode", combo: $settings.cycleModeHotkey, allowsEmpty: true,
+                hotkeyRow(String(localized: "Cycle mode"), combo: $settings.cycleModeHotkey, allowsEmpty: true,
                           onChange: { AppDelegate.shared?.reloadCycleHotkey() })
                 Toggle("Number keys switch modes", isOn: $settings.digitModeSwitching)
                     .toggleStyle(.switch).controlSize(.small)
@@ -54,7 +54,7 @@ struct GeneralSettingsView: View {
                 Divider().opacity(0.25).padding(.vertical, 6)
 
                 // GROUP 4 - afterwards.
-                hotkeyRow("Paste recent dictation", combo: $settings.historyPaletteHotkey, allowsEmpty: true,
+                hotkeyRow(String(localized: "Paste recent dictation"), combo: $settings.historyPaletteHotkey, allowsEmpty: true,
                           onChange: { AppDelegate.shared?.reloadHistoryHotkey() })
                 Caption("Click any field and press keys to record; right-click it to clear or reset.")
             }
@@ -116,7 +116,7 @@ struct GeneralSettingsView: View {
                     if settings.keepMicWarm {
                         HStack {
                             Text("Stay warm for").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.micWarmMinutes, in: 1...30, step: 1)
+                            Slider(value: $settings.micWarmMinutes, in: 1...30, step: 1).accessibilityLabel("Stay warm for")
                             Text("\(Int(settings.micWarmMinutes)) min").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                 .frame(width: 48, alignment: .trailing)
                         }
@@ -128,7 +128,7 @@ struct GeneralSettingsView: View {
                 LinkCaption("Noise reduction and auto-amplify are on the [Dictation page](yap://dictation).")
                 HStack(spacing: Space.m) {
                     Text("Input boost").frame(width: 84, alignment: .leading)
-                    Slider(value: $settings.inputGain, in: 1...12)
+                    Slider(value: $settings.inputGain, in: 1...12).accessibilityLabel("Input boost")
                         .onChange(of: settings.inputGain) { InputLevelMonitor.shared.gain = Float(settings.inputGain) }
                     Text(String(format: "%.1f\u{00D7}", settings.inputGain))
                         .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
@@ -148,13 +148,15 @@ struct GeneralSettingsView: View {
                 Toggle("Play start and stop sounds", isOn: $settings.playSounds).toggleStyle(.switch).controlSize(.small)
                 if settings.playSounds {
                     SubOptions {
-                        soundPicker("Start sound", $settings.soundStart)
-                        soundPicker("Stop sound", $settings.soundStop)
-                        soundPicker("Error sound", $settings.soundError)
+                        soundPicker(String(localized: "Start sound"), $settings.soundStart)
+                        soundPicker(String(localized: "Stop sound"), $settings.soundStop)
+                        soundPicker(String(localized: "Error sound"), $settings.soundError)
                         Caption("Picking a sound plays it, so you can audition each one.")
                     }
                 }
             }
+
+            LanguageCard()
 
             CardSection("Appearance") {
                 HStack {
@@ -168,9 +170,9 @@ struct GeneralSettingsView: View {
                                 .overlay(Circle().strokeBorder(.primary.opacity(
                                     settings.accentColorHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
                         }
-                        .buttonStyle(.plain).help(preset.name)
+                        .buttonStyle(.plain).help(preset.name).accessibilityLabel(Text(verbatim: preset.name))
                     }
-                    ColorPicker("", selection: accentBinding, supportsOpacity: false)
+                    ColorPicker("Custom accent color", selection: accentBinding, supportsOpacity: false)
                         .labelsHidden().controlSize(.small).help("Pick any color")
                 }
                 SubOptions {
@@ -211,7 +213,7 @@ struct GeneralSettingsView: View {
                                 }
                                     .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
                             }
-                            ColorPicker("", selection: visualizerColorBinding, supportsOpacity: false)
+                            ColorPicker("Custom visualizer color", selection: visualizerColorBinding, supportsOpacity: false)
                                 .labelsHidden().controlSize(.small)
                         }
                         Caption(settings.visualizerColorHex == nil
@@ -220,8 +222,8 @@ struct GeneralSettingsView: View {
                     }
                 }
                 HStack(spacing: 12) {
-                    permissionPill(granted: state.permissions.microphoneGranted, on: "Microphone", off: "Microphone needed")
-                    permissionPill(granted: state.permissions.accessibilityGranted, on: "Accessibility on", off: "Accessibility needed to paste", optional: true)
+                    permissionPill(granted: state.permissions.microphoneGranted, on: String(localized: "Microphone"), off: String(localized: "Microphone needed"))
+                    permissionPill(granted: state.permissions.accessibilityGranted, on: String(localized: "Accessibility on"), off: String(localized: "Accessibility needed to paste"), optional: true)
                     Spacer()
                     Button("Review setup") { NotificationCenter.default.post(name: .yapShowHome, object: nil) }
                         .buttonStyle(.solidSecondary).controlSize(.small)
@@ -235,12 +237,12 @@ struct GeneralSettingsView: View {
     // MARK: Appearance helpers
 
     static let accentPresets: [(name: String, hex: String, color: Color)] = [
-        ("Blue", "#0A84FF", Color(hexString: "#0A84FF") ?? .blue),
-        ("Purple", "#BF5AF2", Color(hexString: "#BF5AF2") ?? .purple),
-        ("Pink", "#FF375F", Color(hexString: "#FF375F") ?? .pink),
-        ("Orange", "#FF9F0A", Color(hexString: "#FF9F0A") ?? .orange),
-        ("Green", "#30D158", Color(hexString: "#30D158") ?? .green),
-        ("Teal", "#64D2FF", Color(hexString: "#64D2FF") ?? .teal),
+        (String(localized: "Blue"), "#0A84FF", Color(hexString: "#0A84FF") ?? .blue),
+        (String(localized: "Purple"), "#BF5AF2", Color(hexString: "#BF5AF2") ?? .purple),
+        (String(localized: "Pink"), "#FF375F", Color(hexString: "#FF375F") ?? .pink),
+        (String(localized: "Orange"), "#FF9F0A", Color(hexString: "#FF9F0A") ?? .orange),
+        (String(localized: "Green"), "#30D158", Color(hexString: "#30D158") ?? .green),
+        (String(localized: "Teal"), "#64D2FF", Color(hexString: "#64D2FF") ?? .teal),
     ]
 
     private var accentBinding: Binding<Color> {
@@ -275,7 +277,7 @@ struct GeneralSettingsView: View {
     }
 
     private func hotkeyRow(_ title: String, combo: Binding<KeyCombo?>, allowsEmpty: Bool,
-                           placeholder: String = "Not set",
+                           placeholder: String = String(localized: "Not set"),
                            defaultCombo: KeyCombo? = nil,
                            onChange: @escaping () -> Void) -> some View {
         HStack {
@@ -286,7 +288,7 @@ struct GeneralSettingsView: View {
                 .frame(width: 110, height: 24)
                 .onChange(of: combo.wrappedValue) { onChange() }
                 .accessibilityLabel("\(title) shortcut")
-                .accessibilityValue(combo.wrappedValue?.displayString ?? "Not set")
+                .accessibilityValue(combo.wrappedValue?.displayString ?? String(localized: "Not set"))
         }
     }
 
@@ -297,6 +299,42 @@ struct GeneralSettingsView: View {
                 .fill(granted ? Color.green : (optional ? Color.secondary.opacity(0.5) : Color.orange))
                 .frame(width: 7, height: 7)
             Text(granted ? on : off).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+
+/// Settings > General > Language: the app's own language among the ones it is translated
+/// into. "Same as the system" follows System Settings; a choice applies at the next launch,
+/// and Restart Now does that on the spot.
+private struct LanguageCard: View {
+    @State private var choice: String = AppLanguage.chosen ?? ""
+    @State private var showRestart = false
+
+    var body: some View {
+        CardSection("Language") {
+            HStack {
+                Picker("Language", selection: $choice) {
+                    Text("Same as the system").tag("")
+                    ForEach(AppLanguage.codes, id: \.self) { code in
+                        Text(verbatim: AppLanguage.nativeName(code)).tag(code)
+                    }
+                }
+                .frame(maxWidth: 320)
+                .onChange(of: choice) { _, new in
+                    AppLanguage.choose(new.isEmpty ? nil : new)
+                    showRestart = AppLanguage.nextLaunch != AppLanguage.current
+                }
+                Spacer()
+                if showRestart {
+                    Button("Restart Now") { AppLanguage.relaunch() }
+                        .controlSize(.small)
+                }
+            }
+            .onAppear { showRestart = AppLanguage.nextLaunch != AppLanguage.current }
+            Caption(showRestart
+                    ? "The new language shows after YapToText restarts."
+                    : "YapToText is translated into every language listed here.")
         }
     }
 }

@@ -65,7 +65,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     /// which the app looked stuck on "Transcribing…". nil once the model is warm.
     var modelLoadingDetail: String? {
         guard let path = modelURL?.path, Self.cachedPath != path else { return nil }
-        return "Loading the speech model…"
+        return String(localized: "Loading the speech model…")
     }
 
     private var modelIsOnDisk: Bool {
@@ -76,7 +76,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
     func isAvailable() async -> Bool { modelIsOnDisk }
 
     private func unavailableError() -> TranscriptionError {
-        .unavailable("'\(displayName)' isn't downloaded yet. Download it on the AI Models page.")
+        .unavailable(String(localized: "'\(displayName)' isn't downloaded yet. Download it on the AI Models page."))
     }
 
     func prepare(localeIdentifier: String, progress: (@Sendable (Double) -> Void)?) async throws {
@@ -835,7 +835,13 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         _ = runStart
         if removed > 0 {
             yapdiag("whisper: collapsed a repetition loop (\(removed) repeated sentences removed)")
-            return out.joined().trimmingCharacters(in: .whitespaces)
+            return RepetitionGuard.collapseBlocks(out.joined().trimmingCharacters(in: .whitespaces)).text
+        }
+        // Blocks of two or three sentences looping (the single-sentence pass above cannot see them).
+        let blocks = RepetitionGuard.collapseBlocks(text)
+        if blocks.removed > 0 {
+            yapdiag("whisper: collapsed a repeated block (\(blocks.removed) sentences removed)")
+            return blocks.text.trimmingCharacters(in: .whitespaces)
         }
         return text
     }
@@ -962,7 +968,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         // Flash attention: same math, fused kernels - a large Metal speedup for free.
         contextParams.flash_attn = true
         guard let context = whisper_init_from_file_with_params(modelPath, contextParams) else {
-            throw TranscriptionError.unavailable("The model file couldn't be loaded. Try re-downloading it on the AI Models page.")
+            throw TranscriptionError.unavailable(String(localized: "The model file couldn't be loaded. Try re-downloading it on the AI Models page."))
         }
         cachedContext = context
         cachedPath = modelPath
@@ -998,12 +1004,52 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
         return 20 * log10(Double(speech / floorLevel))
     }
 
+    /// whisper.cpp decodes in fixed 30 s windows. Without timestamp tokens (never wanted in
+    /// the text) it cannot shift a window to where the words ended, so it cuts hard at 30 s,
+    /// mid-word, and after the last full window it drops whatever is left when under a
+    /// second remains ("if only 1 second left, then stop"). A dictation over 30 s lost words
+    /// at every 30 s mark and sometimes its last second (reported Oct 21 2026: "the last
+    /// section will be left out", "the whole passage might get garbled"). Audio longer than
+    /// one window is cut at pauses into pieces of at most 30 s and each piece is decoded as
+    /// a single window. no_context is on, so independent pieces are what whisper did anyway,
+    /// minus the mid-word cuts.
+    static let windowSeconds: Double = 30
+    static func windowPieces(_ audio: [Float]) -> [Range<Int>] {
+        let limit = Int(sampleRate * windowSeconds)
+        guard audio.count > limit else { return [0..<audio.count] }
+        // Target 24 s: segmentBounds may cut up to 25% later, which is 30 s, never past it.
+        var pieces = segmentBounds(audio, sampleRate: sampleRate, target: windowSeconds * 0.8)
+        // A final sliver under a second joins the piece before it when that still fits.
+        if pieces.count >= 2, let last = pieces.last, last.count < Int(sampleRate),
+           let prev = pieces.dropLast().last, prev.count + last.count <= limit {
+            pieces.removeLast(2)
+            pieces.append(prev.lowerBound..<last.upperBound)
+        }
+        return pieces
+    }
+
     private static func transcribe(modelPath: String, audio: [Float], language: String,
                                    allowBeam: Bool = true, initialPrompt: String? = nil,
                                    isCancelled: @escaping () -> Bool) throws -> String {
-        try transcribeScored(modelPath: modelPath, audio: audio, language: language,
-                             allowBeam: allowBeam, initialPrompt: initialPrompt,
-                             isCancelled: isCancelled).text
+        let pieces = windowPieces(audio)
+        guard pieces.count > 1 else {
+            return try transcribeScored(modelPath: modelPath, audio: audio, language: language,
+                                        allowBeam: allowBeam, initialPrompt: initialPrompt,
+                                        isCancelled: isCancelled).text
+        }
+        yapdiag(String(format: "whisper: %.1fs cut at pauses into %d windows", Double(audio.count) / sampleRate, pieces.count))
+        let minSamples = Int(sampleRate * 1.2)
+        var parts: [String] = []
+        for range in pieces {
+            if isCancelled() { break }
+            var piece = Array(audio[range])
+            if piece.count < minSamples { piece.append(contentsOf: repeatElement(0, count: minSamples - piece.count)) }
+            let text = try transcribeScored(modelPath: modelPath, audio: piece, language: language,
+                                            allowBeam: allowBeam, initialPrompt: initialPrompt,
+                                            isCancelled: isCancelled).text
+            if !text.isEmpty { parts.append(text) }
+        }
+        return parts.joined(separator: " ")
     }
 
     /// Like transcribe, but also reports whisper's OWN mean per-token probability - the
@@ -1083,7 +1129,7 @@ final class WhisperEngine: TranscriptionEngine, @unchecked Sendable {
             whisper_full(context, params, pointer.baseAddress, Int32(pointer.count))
         }
         guard status == 0 else {
-            throw TranscriptionError.unavailable("Transcription failed (whisper error \(status)). Try again or switch models.")
+            throw TranscriptionError.unavailable(String(localized: "Transcription failed (whisper error \(status)). Try again or switch models."))
         }
         if isCancelled() { return ("", 0) }
 

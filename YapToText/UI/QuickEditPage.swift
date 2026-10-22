@@ -28,7 +28,7 @@ struct QuickEditPage: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "pencil.line").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                                 Text("Responds to")
-                                Picker("", selection: $settings.quickEditTrigger) {
+                                Picker("Responds to", selection: $settings.quickEditTrigger) {
                                     ForEach(ModifierTrigger.allCases.filter { $0 != .off }) { Text($0.label).tag($0) }
                                 }
                                 .labelsHidden().fixedSize()
@@ -45,8 +45,8 @@ struct QuickEditPage: View {
                                     .onChange(of: settings.quickEditTriggerKey) { AppDelegate.shared?.reloadQuickEditKey() }
                             }
                             Caption(settings.quickEditTrigger == .pushToTalk
-                                    ? "Hold the key while you speak the change; release to apply. Double-tap to cancel a running edit."
-                                    : "Tap to start listening, tap again to apply. Double-tap to cancel a running edit.")
+                                    ? "Hold the key while you speak the change; release to apply. Press Escape to cancel a running edit."
+                                    : "Tap to start listening, tap again to apply. Press Escape to cancel a running edit.")
                         }
                     } else {
                         SubOptions {
@@ -72,7 +72,7 @@ struct QuickEditPage: View {
                     HStack(spacing: 8) {
                         Image(systemName: "rectangle.bottomthird.inset.filled").font(.caption).iconTint(Color.accentColor).frame(width: 16)
                         Text("Pop-up opens at")
-                        Picker("", selection: $settings.quickEditPosition) {
+                        Picker("Pop-up opens at", selection: $settings.quickEditPosition) {
                             ForEach(PanelPosition.allCases) { Text($0.label).tag($0) }
                         }
                         .labelsHidden().fixedSize()
@@ -120,20 +120,20 @@ struct QuickEditPage: View {
                                                 .overlay(Circle().strokeBorder(.primary.opacity(
                                                     settings.quickEditTintHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
                                         }
-                                        .buttonStyle(.plain).help(preset.name)
+                                        .buttonStyle(.plain).help(preset.name).accessibilityLabel(Text(verbatim: preset.name))
                                     }
-                                    ColorPicker("", selection: quickEditTintBinding, supportsOpacity: false)
+                                    ColorPicker("Card color", selection: quickEditTintBinding, supportsOpacity: false)
                                         .labelsHidden().controlSize(.small).help("Pick any color")
                                 }
                             }
                             HStack {
                                 Text("Strength").font(.caption).foregroundStyle(.secondary)
-                                Slider(value: $settings.quickEditTintStrength, in: 0.05...1)
+                                Slider(value: $settings.quickEditTintStrength, in: 0.05...1).accessibilityLabel("Tint strength")
                             }
                             if settings.quickEditTintStyle == .rainbow {
                                 HStack {
                                     Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                                    Slider(value: $settings.quickEditRGBSpeed, in: 0.2...3)
+                                    Slider(value: $settings.quickEditRGBSpeed, in: 0.2...3).accessibilityLabel("Tint RGB speed")
                                 }
                             }
                         }
@@ -152,24 +152,24 @@ struct QuickEditPage: View {
                                             .overlay(Circle().strokeBorder(.primary.opacity(
                                                 settings.quickEditWaveColorHex == preset.hex ? 0.6 : 0), lineWidth: 1.5))
                                     }
-                                    .buttonStyle(.plain).help(preset.name)
+                                    .buttonStyle(.plain).help(preset.name).accessibilityLabel(Text(verbatim: preset.name))
                                 }
-                                ColorPicker("", selection: quickEditWaveColorBinding, supportsOpacity: false)
+                                ColorPicker("Wave color", selection: quickEditWaveColorBinding, supportsOpacity: false)
                                     .labelsHidden().controlSize(.small).help("Pick any color")
                             }
                         }
                         HStack {
                             Text("Strength").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.quickEditWaveStrength, in: 0.15...1)
+                            Slider(value: $settings.quickEditWaveStrength, in: 0.15...1).accessibilityLabel("Wave strength")
                         }
                         if settings.quickEditWaveColorStyle == .rgb {
                             HStack {
                                 Text("RGB speed").font(.caption).foregroundStyle(.secondary)
-                                Slider(value: $settings.quickEditWaveRGBSpeed, in: 0.2...3)
+                                Slider(value: $settings.quickEditWaveRGBSpeed, in: 0.2...3).accessibilityLabel("Wave RGB speed")
                             }
                             HStack {
                                 Text("RGB spread").font(.caption).foregroundStyle(.secondary)
-                                Slider(value: $settings.quickEditWaveRGBSpread, in: 0...0.33)
+                                Slider(value: $settings.quickEditWaveRGBSpread, in: 0...0.33).accessibilityLabel("Wave RGB spread")
                             }
                         }
                         Caption("These colors belong to the Quick Edit card alone, so it never looks like a dictation. Purple out of the box.")

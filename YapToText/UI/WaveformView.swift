@@ -12,7 +12,7 @@ import AppKit
 ///   energy so the shape is alive; speech feeds the flicker rate.
 /// - The voice envelope (verified adaptive-SNR spectrum) is computed ONCE per frame and
 ///   shared by all ribbons.
-/// The wave's colour treatment: which palette, how vivid, and the RGB dials.
+/// The wave's color treatment: which palette, how vivid, and the RGB dials.
 /// THE ONE CONDENSE CLOCK: the pill's glass shrink and the wave's winding must flow as
 /// one motion, so both read this single timestamp - set exactly once when the condense
 /// begins. Two independent stopwatches (SwiftUI's onChange delivery vs a task sleep on
@@ -25,7 +25,7 @@ enum CondenseClock {
 
 /// THE ONE RGB CLOCK. Every wave on screen must show the SAME hue at the same instant, and
 /// a layout switch (which remounts the view and its motion state) must never snap the
-/// colour back to red. Integrated shared phase: the forward-most frame advances it, every
+/// color back to red. Integrated shared phase: the forward-most frame advances it, every
 /// other reader just samples it.
 @MainActor
 enum WaveRGBClock {
@@ -61,7 +61,7 @@ struct WaveformView: View {
     var scale: CGFloat = 1
     /// Rainbow mode: the ribbons cycle through the spectrum instead of the accent palette.
     /// (The user-requested RGB effect lives HERE, on the wave - never on the glass behind it.)
-    /// Everything about how the wave is COLOURED, in one value.
+    /// Everything about how the wave is COLORED, in one value.
     var style: WaveStyle = .plain
     /// Hold the LAST LIVE shape instead of decaying to the idle wave. Used while the mini
     /// condenses into the spinner: the dancing lines must stay visible so they can be seen
@@ -379,7 +379,7 @@ struct WaveformView: View {
         let opacity: Double
     }
 
-    /// Scale a colour's vividness. Fading saturation alone goes grey and muddy, so the
+    /// Scale a color's vividness. Fading saturation alone goes gray and muddy, so the
     /// brightness lifts as saturation drops - the wave turns pastel, never dirty.
     static func vivid(_ c: Color, _ strength: Double) -> Color {
         let k = max(0, min(1, strength))
@@ -391,7 +391,7 @@ struct WaveformView: View {
             .opacity(Double(a))
     }
 
-    /// Three analogous steps from one colour: the chosen hue, then +0.06 and +0.12 turns,
+    /// Three analogous steps from one color: the chosen hue, then +0.06 and +0.12 turns,
     /// with saturation/brightness floored so the wave always glows against the dark glass.
     static func family(_ tint: Color) -> (Color, Color, Color) {
         let ns = NSColor(tint).usingColorSpace(.deviceRGB) ?? .systemBlue
@@ -535,7 +535,7 @@ struct WaveformView: View {
 
         // Advance the SHARED integrated RGB clock (base cycle 6s at speed 1). Shared, not
         // per-view: a per-view phase restarted at red on every layout switch, and two waves
-        // visible at once (panel + settings preview) drifted to different colours.
+        // visible at once (panel + settings preview) drifted to different colors.
         let rgbPhase = now > 0 ? WaveRGBClock.advance(to: now, speed: style.rgbSpeed) : WaveRGBClock.phase
 
         // Stroke weight follows the same canonical rule as the geometry above: while the
@@ -551,27 +551,27 @@ struct WaveformView: View {
             if style.rainbow, index < 3 {
                 // RGB: the ribbons ride a shared spectrum sweep. Speed sets the cycle rate,
                 // spread sets how far apart the ribbons sit in hue - 0 pulses the whole wave
-                // as one colour, high fans a full rainbow across it.
+                // as one color, high fans a full rainbow across it.
                 let hue = (rgbPhase + Double(index) * style.rgbSpread).truncatingRemainder(dividingBy: 1)
                 let hue2 = (hue + max(0.04, style.rgbSpread * 1.5)).truncatingRemainder(dividingBy: 1)
                 ribbonColors = [Color(hue: hue < 0 ? hue + 1 : hue, saturation: 0.85, brightness: 1),
                                 Color(hue: hue2 < 0 ? hue2 + 1 : hue2, saturation: 0.85, brightness: 1)]
             } else if let tint = style.tint, index < 3 {
                 if style.uniformFamily {
-                    // Verdict ring: the exact colour, every ribbon - no spread.
+                    // Verdict ring: the exact color, every ribbon - no spread.
                     ribbonColors = [tint, tint]
                 } else {
-                    // A custom wave colour spreads into the same three-step analogous family the
+                    // A custom wave color spreads into the same three-step analogous family the
                     // stock palette uses (accent -> cyan -> mint), so the ribbons keep their
-                    // depth instead of collapsing into one flat colour.
+                    // depth instead of collapsing into one flat color.
                     let fam = Self.family(tint)
                     ribbonColors = [[fam.0, fam.1], [fam.1, fam.2], [fam.2, fam.0.opacity(0.8)]][index]
                 }
             } else {
                 ribbonColors = ribbon.colors
             }
-            // STRENGTH: one dial over every style. Below 1 the colours ease toward a soft
-            // pastel (saturation down, brightness up) instead of turning grey; the white
+            // STRENGTH: one dial over every style. Below 1 the colors ease toward a soft
+            // pastel (saturation down, brightness up) instead of turning gray; the white
             // highlight ribbon is left alone so the wave keeps its definition.
             let shaded = style.strength >= 0.999 || index >= 3
                 ? ribbonColors : ribbonColors.map { Self.vivid($0, style.strength) }

@@ -8,9 +8,9 @@ enum OutputTarget: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .insertAtCursor: return "Insert at cursor"
-        case .clipboardOnly: return "Copy to clipboard"
-        case .sendAndSubmit: return "Insert and press Return"
+        case .insertAtCursor: return String(localized: "Insert at cursor")
+        case .clipboardOnly: return String(localized: "Copy to clipboard")
+        case .sendAndSubmit: return String(localized: "Insert and press Return")
         }
     }
 }

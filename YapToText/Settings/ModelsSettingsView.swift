@@ -13,7 +13,7 @@ struct ModelsSettingsView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.data]
-        panel.message = "Choose a whisper.cpp speech model (.bin) or a llama.cpp cleanup model (.gguf)"
+        panel.message = String(localized: "Choose a whisper.cpp speech model (.bin) or a llama.cpp cleanup model (.gguf)")
         guard panel.runModalInFront() == .OK, let url = panel.url else { return }
         do {
             try state.models.addUserModel(from: url)
@@ -36,7 +36,7 @@ struct ModelsSettingsView: View {
             // The models actually doing the work today, pinned first, each under a plain
             // label saying what job it does - the two roles are the whole mental model.
             CardSection("Your defaults") {
-                roleLabel("Dictation model", "Turns your voice into words")
+                roleLabel(String(localized: "Dictation model"), String(localized: "Turns your voice into words"))
                 ForEach(state.models.speechModels.filter { state.models.downloads.isBundled($0) }) { modelRow($0) }
                 // The language belongs WITH the dictation model: it is not an Apple-only
                 // setting, it is the language hint every speech model receives.
@@ -48,7 +48,7 @@ struct ModelsSettingsView: View {
 
                 Divider().padding(.vertical, 4)
 
-                roleLabel("Cleanup model", "Turns those words into finished text")
+                roleLabel(String(localized: "Cleanup model"), String(localized: "Turns those words into finished text"))
                 ForEach(state.models.languageModels.filter { state.models.downloads.isBundled($0) }) { modelRow($0) }
             }
 
@@ -75,7 +75,7 @@ struct ModelsSettingsView: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help("Remove this model and its file")
+                        .help("Remove this model and its file").accessibilityLabel("Remove this model and its file")
                     }
                 }
                 HStack {
@@ -88,7 +88,7 @@ struct ModelsSettingsView: View {
                     Spacer()
                 }
                 if let message = addModelError {
-                    Caption(message).foregroundStyle(.orange)
+                    Caption(verbatim: message).foregroundStyle(.orange)
                 }
                 Caption("A model that isn't a supported architecture is automatically rejected.")
             }
@@ -143,7 +143,7 @@ struct ModelsSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if ratingsShown.contains(model.id) { ratingLine(model) }
                 HStack(spacing: 8) {
-                    Text(model.provider); Text("·"); Text(model.languages); Text("·"); Text(model.sizeDescription)
+                    Text(verbatim: "\(model.provider), \(model.languages), \(model.sizeDescription)")
                 }
                 .font(.caption2).foregroundStyle(.tertiary)
                 // Apple Intelligence is the one model whose availability is out of the
@@ -176,11 +176,11 @@ struct ModelsSettingsView: View {
         return HStack(spacing: 6) {
             Text(model.accuracyRating.accuracyLabel)
                 .foregroundStyle(tint(model.accuracyRating).opacity(0.55))
-            Text("\u{00B7}").foregroundStyle(.quaternary)
+            Text(",").foregroundStyle(.quaternary)
             Text(model.speedRating.speedLabel)
                 .foregroundStyle(tint(model.speedRating).opacity(0.55))
             if model.recommended {
-                Text("\u{00B7}").foregroundStyle(.quaternary)
+                Text(",").foregroundStyle(.quaternary)
                 Text("Recommended").foregroundStyle(Color.accentColor.opacity(0.6))
             }
         }
@@ -197,7 +197,7 @@ struct ModelsSettingsView: View {
                 Button("Show in Finder") { revealModel(model) }
             } label: {
                 HStack(spacing: 4) {
-                    StatusPill(text: "Included", tint: .accentColor)
+                    StatusPill(text: String(localized: "Included"), tint: .accentColor)
                     Image(systemName: "chevron.down").font(.system(size: 8)).foregroundStyle(.secondary)
                 }
             }
@@ -210,7 +210,7 @@ struct ModelsSettingsView: View {
                     Button("Remove download", role: .destructive) { state.models.downloads.delete(model) }
                 } label: {
                     HStack(spacing: 4) {
-                        StatusPill(text: "Installed", tint: .green)
+                        StatusPill(text: String(localized: "Installed"), tint: .green)
                         Image(systemName: "chevron.down").font(.system(size: 8)).foregroundStyle(.secondary)
                     }
                 }
@@ -236,7 +236,7 @@ struct ModelsSettingsView: View {
                 }
                 .buttonStyle(.solidSecondary)
                 .controlSize(.small)
-                .help("Download \(model.displayName) (\(model.sizeDescription))")
+                .help("Download \(model.displayName) (\(model.sizeDescription))").accessibilityLabel("Download \(model.displayName) (\(model.sizeDescription))")
             }
         }
     }
@@ -284,7 +284,7 @@ struct ModelsSettingsView: View {
 
     private var localeOptions: [(String, String)] {
         let current = Locale.current
-        var options: [(String, String)] = [("auto", "Auto-detect language")]
+        var options: [(String, String)] = [("auto", String(localized: "Auto-detect language"))]
 
         var seenIDs = Set<String>()
         var allIDs: [String] = []
@@ -311,7 +311,7 @@ struct ModelsSettingsView: View {
             options[i] = (stored, options[i].1)
             return options
         }
-        let customName = stored == "auto" ? "Auto-detect language" : (current.localizedString(forIdentifier: stored) ?? stored)
+        let customName = stored == "auto" ? String(localized: "Auto-detect language") : (current.localizedString(forIdentifier: stored) ?? stored)
         return options + [(stored, customName)]
     }
 }

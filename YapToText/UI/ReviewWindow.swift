@@ -66,7 +66,7 @@ private struct ReviewSheet: View {
                 Image(systemName: "text.badge.checkmark").iconTint(Color.accentColor)
                 Text("Review").font(.headline)
                 Spacer()
-                Text(appName.map { "Return inserts into \($0)" } ?? "Return inserts")
+                Text(appName.map { String(localized: "Return inserts into \($0)") } ?? String(localized: "Return inserts"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             TextEditor(text: $text)
@@ -81,7 +81,7 @@ private struct ReviewSheet: View {
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Text("Esc discards \u{00B7} \u{2318}Return inserts").font(.caption2).foregroundStyle(.tertiary)
+                Text("Esc discards, \u{2318}Return inserts").font(.caption2).foregroundStyle(.tertiary)
                 Button("Insert") { onCommit(text) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)

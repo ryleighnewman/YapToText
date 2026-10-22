@@ -80,7 +80,7 @@ final class QuickEditWindow {
         position(panel)
         panel.alphaValue = 1
         panel.orderFrontRegardless()
-        // Failsafe: a session that never delivers a command (cancelled with Esc, engine error)
+        // Failsafe: a session that never delivers a command (canceled with Esc, engine error)
         // must not leave "Listening…" floating forever.
         dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 30_000_000_000)
@@ -161,9 +161,9 @@ final class QuickEditWindow {
         if let c = AppDelegate.shared?.state.controller, c.isRecording || c.isBusy { return }
         if isShowing, !isInfoStage { return }
         let snaps = AppDelegate.shared?.state.settings.quickEditSnapsBack == true
-        showInfo("Quick Edit pops up here",
-                 snaps ? "It opens here every time. It closes on its own."
-                       : "Drag this card anywhere and it opens there next time. It closes on its own.",
+        showInfo(String(localized: "Quick Edit pops up here"),
+                 snaps ? String(localized: "It opens here every time. It closes on its own.")
+                       : String(localized: "Drag this card anywhere and it opens there next time. It closes on its own."),
                  seconds: 10)
         isPreviewing = true   // after showInfo, which clears it through beginShow()
     }
@@ -259,6 +259,8 @@ final class QuickEditWindow {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        // Borderless panels have no title, so VoiceOver would announce an unnamed system dialog.
+        panel.setAccessibilityTitle(String(localized: "Quick Edit card"))
         if let settings = AppDelegate.shared?.state.settings {
             let root = QuickEditPopupView(model: model, controller: controller, settings: settings, previewData: previewData)
             panel.contentView = NSHostingView(rootView: AnyView(root.yapAccent(settings)))
@@ -396,7 +398,7 @@ struct QuickEditPopupView: View {
         .background {
             ZStack {
                 // The settings-page preview uses a flat fill: a system material inside a
-                // scrolled page leaves ghost copies of neighbouring controls behind it.
+                // scrolled page leaves ghost copies of neighboring controls behind it.
                 if previewData != nil {
                     RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.08))
                 } else {
@@ -421,8 +423,8 @@ struct QuickEditPopupView: View {
 
     private var title: String {
         switch model.stage {
-        case .listening: return "Listening for your edit\u{2026}"
-        case .working(let command): return command.isEmpty ? "Got it" : "Applying your edit"
+        case .listening: return String(localized: "Listening for your edit\u{2026}")
+        case .working(let command): return command.isEmpty ? String(localized: "Got it") : String(localized: "Applying your edit")
         case .result(let message, _): return message
         case .info(let heading, _): return heading
         }
@@ -432,9 +434,9 @@ struct QuickEditPopupView: View {
         switch model.stage {
         case .listening:
             let live = (previewData != nil ? model.liveCommand : controller.liveText).trimmingCharacters(in: .whitespacesAndNewlines)
-            return live.isEmpty ? "Say what to change, then release the key." : "\u{201C}\(live)\u{201D}"
+            return live.isEmpty ? String(localized: "Say what to change, then release the key.") : "\u{201C}\(live)\u{201D}"
         case .working(let command):
-            return command.isEmpty ? "Working on your edit\u{2026}" : "\u{201C}\(command)\u{201D}"
+            return command.isEmpty ? String(localized: "Working on your edit\u{2026}") : "\u{201C}\(command)\u{201D}"
         case .result:
             return ""
         case .info(_, let explanation):

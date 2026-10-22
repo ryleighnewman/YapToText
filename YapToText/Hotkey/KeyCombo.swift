@@ -41,11 +41,11 @@ struct KeyCombo: Codable, Equatable, Hashable {
         if code == 63 { return "" }   // bare Fn/Globe: the 🌐 prefix IS the name
         if let named = specialKeys[code] { return named }
         if let letter = letterKeys[code] { return letter }
-        return "Key \(code)"
+        return String(localized: "Key \(code)")
     }
 
     private static let specialKeys: [UInt32: String] = [
-        49: "Space", 36: "Return", 48: "Tab", 53: "Esc", 51: "Delete",
+        49: String(localized: "Space"), 36: String(localized: "Return"), 48: String(localized: "Tab"), 53: String(localized: "Esc"), 51: String(localized: "Delete"),
         123: "←", 124: "→", 125: "↓", 126: "↑",
         122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6",
     ]

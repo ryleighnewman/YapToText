@@ -43,7 +43,7 @@ struct ModeDetailView: View {
             testBench
             footerActions
         }
-        .navigationTitle(draft.name.isEmpty ? "Mode" : draft.name)
+        .navigationTitle(draft.name.isEmpty ? String(localized: "Mode") : draft.name)
         .onChange(of: draft) {
             state.modeStore.update(draft)
             if state.settings.activeModeID == mode.id { state.controller.refreshActiveMode() }
@@ -65,8 +65,8 @@ struct ModeDetailView: View {
                 IconBadge(symbol: draft.iconSystemName, size: 44)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text(draft.name.isEmpty ? "Untitled Mode" : draft.name).font(.title2.weight(.semibold))
-                        if isActive { StatusPill(text: "Current", tint: .green) }
+                        Text(draft.name.isEmpty ? String(localized: "Untitled Mode") : draft.name).font(.title2.weight(.semibold))
+                        if isActive { StatusPill(text: String(localized: "Current"), tint: .green) }
                     }
                     Text(draft.usesAI ? "Cleans up your words with AI before typing them"
                                       : "Types exactly what you say, word for word")
@@ -85,10 +85,10 @@ struct ModeDetailView: View {
     /// A compact "voice -> text -> where it lands" flow so the whole mode reads at a glance.
     private var pipelineSummary: some View {
         HStack(spacing: 6) {
-            stepChip("waveform", "Listen")
+            stepChip("waveform", String(localized: "Listen"))
             stepArrow
             if draft.usesAI {
-                stepChip("sparkles", "AI cleanup")
+                stepChip("sparkles", String(localized: "AI cleanup"))
                 stepArrow
             }
             stepChip(outputIcon, outputShort)
@@ -112,9 +112,9 @@ struct ModeDetailView: View {
 
     private var outputShort: String {
         switch draft.outputTarget {
-        case .insertAtCursor: return "Type at cursor"
-        case .clipboardOnly: return "Copy"
-        case .sendAndSubmit: return "Type + Return"
+        case .insertAtCursor: return String(localized: "Type at cursor")
+        case .clipboardOnly: return String(localized: "Copy")
+        case .sendAndSubmit: return String(localized: "Type + Return")
         }
     }
 
@@ -131,14 +131,14 @@ struct ModeDetailView: View {
     private var basics: some View {
         CardSection("Basics", subtitle: "Name this mode and how it appears.") {
             LabeledContent("Name") {
-                TextField("", text: $draft.name).labelsHidden()
+                TextField("", text: $draft.name).labelsHidden().accessibilityLabel("Name")
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .innerWell(radius: 7)
                     .frame(maxWidth: 260)
             }
             LabeledContent("Icon") {
-                Picker("", selection: $draft.iconSystemName) {
+                Picker("Icon", selection: $draft.iconSystemName) {
                     ForEach(icons, id: \.self) { Image(systemName: $0).tag($0) }
                 }
                 .labelsHidden().pickerStyle(.menu).frame(maxWidth: 90)
@@ -156,7 +156,7 @@ struct ModeDetailView: View {
             .toggleStyle(.switch).controlSize(.small)
             LabeledContent("Activation shortcut") {
                 HotkeyRecorderField(combo: $draft.activationHotkey, allowsEmpty: true,
-                                    placeholder: "Not set")
+                                    placeholder: String(localized: "Not set"))
                     .frame(width: 110, height: 24)
             }
             Caption("Press this shortcut anywhere and dictation starts in this mode; press it again to stop. Delete clears it.")
@@ -193,7 +193,7 @@ struct ModeDetailView: View {
                             Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("Stop using this mode in \(AppCatalog.name(for: bundleID))")
+                        .help("Stop using this mode in \(AppCatalog.name(for: bundleID))").accessibilityLabel("Stop using this mode in \(AppCatalog.name(for: bundleID))")
                     }
                 }
             }
@@ -286,11 +286,11 @@ struct ModeDetailView: View {
                     modeSlider("Auto-stop after silence",
                                value: overrideBinding(\.silenceTimeout, default: state.settings.silenceTimeout),
                                range: 0...5, step: 0.5,
-                               display: (draft.silenceTimeout ?? 0) == 0 ? "Off" : String(format: "%.1fs", draft.silenceTimeout ?? 0))
+                               display: (draft.silenceTimeout ?? 0) == 0 ? String(localized: "Off") : String(format: String(localized: "%.1fs"), draft.silenceTimeout ?? 0))
                     modeSlider("Maximum length",
                                value: overrideBinding(\.maxRecordingSeconds, default: state.settings.maxRecordingSeconds),
                                range: 0...300, step: 15,
-                               display: (draft.maxRecordingSeconds ?? 0) == 0 ? "Off" : "\(Int(draft.maxRecordingSeconds ?? 0))s")
+                               display: (draft.maxRecordingSeconds ?? 0) == 0 ? String(localized: "Off") : String(localized: "\(Int(draft.maxRecordingSeconds ?? 0))s"))
                 }
             }
         }
@@ -332,11 +332,11 @@ struct ModeDetailView: View {
     // MARK: 3. Cleanup (AI)
 
     private static let templates: [(String, String)] = [
-        ("Clean Up", BuiltInModes.clean.instructions),
-        ("Note", BuiltInModes.note.instructions),
-        ("Email", BuiltInModes.email.instructions),
-        ("Message", BuiltInModes.message.instructions),
-        ("Code", BuiltInModes.code.instructions),
+        (String(localized: "Clean Up"), BuiltInModes.clean.instructions),
+        (String(localized: "Note"), BuiltInModes.note.instructions),
+        (String(localized: "Email"), BuiltInModes.email.instructions),
+        (String(localized: "Message"), BuiltInModes.message.instructions),
+        (String(localized: "Code"), BuiltInModes.code.instructions),
     ]
 
     /// What "App default" resolves to right now, mirroring the controller's pick order:
@@ -427,7 +427,7 @@ struct ModeDetailView: View {
                 ForEach(OutputTarget.allCases) { Text($0.label).tag($0) }
             }
             SubOptions {
-                Caption(outputDescription(draft.outputTarget))
+                Caption(verbatim: outputDescription(draft.outputTarget))
                 if draft.outputTarget != .clipboardOnly {
                     Picker("Method", selection: $draft.insertionMethod) {
                         Text("Default (\((state.settings.insertionMethod).label))").tag(InsertionMethod?.none)
@@ -435,7 +435,7 @@ struct ModeDetailView: View {
                     }
                 }
                 Picker("Trim trailing whitespace", selection: $draft.trimTrailingNewlines) {
-                    Text("Default (\(state.settings.trimTrailingNewlines ? "on" : "off"))").tag(Bool?.none)
+                    Text("Default (\(state.settings.trimTrailingNewlines ? String(localized: "on") : String(localized: "off")))").tag(Bool?.none)
                     Text("On").tag(Optional(true))
                     Text("Off").tag(Optional(false))
                 }
@@ -445,9 +445,9 @@ struct ModeDetailView: View {
 
     private func outputDescription(_ target: OutputTarget) -> String {
         switch target {
-        case .insertAtCursor: return "Types the text into whatever field your cursor is in."
-        case .clipboardOnly: return "Copies the text to the clipboard; nothing is typed."
-        case .sendAndSubmit: return "Types the text, then presses Return. Handy for chat apps."
+        case .insertAtCursor: return String(localized: "Types the text into whatever field your cursor is in.")
+        case .clipboardOnly: return String(localized: "Copies the text to the clipboard; nothing is typed.")
+        case .sendAndSubmit: return String(localized: "Types the text, then presses Return. Handy for chat apps.")
         }
     }
 
@@ -476,7 +476,7 @@ struct ModeDetailView: View {
             if let previewOutput {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Result").font(.caption).foregroundStyle(.secondary)
-                    Text(previewOutput.isEmpty ? "(empty)" : previewOutput)
+                    Text(previewOutput.isEmpty ? String(localized: "(empty)") : previewOutput)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
@@ -484,7 +484,7 @@ struct ModeDetailView: View {
                 }
             }
             if let previewError {
-                Caption(previewError)
+                Caption(verbatim: previewError)
             }
         }
     }
